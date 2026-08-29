@@ -1,0 +1,20 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+data:
+  IGNITION_ENV: "staging"
+  IGNITION_OIDC_AUDIENCE: "https://api.staging.ignition.dev"
+  IGNITION_GATEWAY_URL: "https://gateway.staging.ignition.dev"
+  IGNITION_MAX_ACTIVE_SANDBOXES: "20"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-controller
+  namespace: ignition-system
+data:
+  IGNITION_ENV: "staging"
+  IGNITION_GCP_PROJECT: "ignition-staging"
+  IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/ignition-staging/sandboxes"

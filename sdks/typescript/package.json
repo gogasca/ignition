@@ -1,0 +1,8 @@
+{
+  "name": "@ignition/sandbox",
+  "version": "0.1.0",
+  "private": true,
+  "description": "TypeScript SDK for Ignition sandboxes",
+  "type": "module",
+  "main": "src/index.ts"
+}

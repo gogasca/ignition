@@ -1,0 +1,13 @@
+version: v2
+modules:
+  - path: .
+    name: buf.build/ignition/api
+lint:
+  use:
+    - STANDARD
+  except:
+    # AIP-style Get/Create return the resource or a dedicated response.
+    - RPC_RESPONSE_STANDARD_NAME
+breaking:
+  use:
+    - FILE

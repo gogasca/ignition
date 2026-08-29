@@ -1,0 +1,145 @@
+syntax = "proto3";
+
+package ignition.v1;
+
+option go_package = "ignition.dev/ignition/api/gen/ignition/v1;ignitionv1";
+
+import "google/protobuf/timestamp.proto";
+import "ignition/v1/common.proto";
+
+// Process inside a sandbox. Public states:
+// CREATING → STARTING → RUNNING → EXITED
+//                    ↘ CANCELLING → EXITED
+// any pre-terminal → FAILED
+//
+// RPCs: sandbox_service.proto (SandboxService).
+// Attach tokens are used on ignition-gateway; the control plane does not
+// carry stdout/stderr payloads.
+message Process {
+  string id = 1;
+  string project_id = 2;
+  string sandbox_id = 3;
+  ProcessState state = 4;
+  repeated string command = 5;
+  string working_directory = 6;
+  map<string, string> environment = 7;
+  bool pty = 8;
+  google.protobuf.Timestamp create_time = 9;
+  google.protobuf.Timestamp start_time = 10;
+  google.protobuf.Timestamp exit_time = 11;
+  // Set when state is EXITED.
+  optional int32 exit_code = 12;
+  // Terminating signal name, if the process was signaled.
+  string terminating_signal = 13;
+  Status error = 14;
+}
+
+enum ProcessState {
+  PROCESS_STATE_UNSPECIFIED = 0;
+  PROCESS_STATE_CREATING = 1;
+  PROCESS_STATE_STARTING = 2;
+  PROCESS_STATE_RUNNING = 3;
+  PROCESS_STATE_CANCELLING = 4;
+  PROCESS_STATE_EXITED = 5;
+  PROCESS_STATE_FAILED = 6;
+}
+
+message CreateProcessRequest {
+  string project_id = 1;
+  string sandbox_id = 2;
+  Idempotency idempotency = 3;
+  repeated string command = 4;
+  string working_directory = 5;
+  map<string, string> environment = 6;
+  bool pty = 7;
+  int32 pty_rows = 8;
+  int32 pty_cols = 9;
+}
+
+message GetProcessRequest {
+  string project_id = 1;
+  string sandbox_id = 2;
+  string process_id = 3;
+}
+
+message ListProcessesRequest {
+  string project_id = 1;
+  string sandbox_id = 2;
+  PageRequest page = 3;
+}
+
+message ListProcessesResponse {
+  repeated Process processes = 1;
+  PageResponse page = 2;
+}
+
+message SignalProcessRequest {
+  string project_id = 1;
+  string sandbox_id = 2;
+  string process_id = 3;
+  Idempotency idempotency = 4;
+  string signal = 5;
+}
+
+message CancelProcessRequest {
+  string project_id = 1;
+  string sandbox_id = 2;
+  string process_id = 3;
+  Idempotency idempotency = 4;
+}
+
+message AttachProcessRequest {
+  string project_id = 1;
+  string sandbox_id = 2;
+  string process_id = 3;
+  Idempotency idempotency = 4;
+}
+
+message AttachProcessResponse {
+  // Short-lived exec stream token. Distinct audience from API access JWTs.
+  string stream_token = 1;
+  string gateway_url = 2;
+  google.protobuf.Timestamp expire_time = 3;
+  int64 stream_epoch = 4;
+}
+
+// Bidirectional exec frame used on ignition-gateway (WebSocket in v1;
+// this message is the canonical payload schema).
+message ExecFrame {
+  int32 version = 1;
+  string sandbox_id = 2;
+  int64 generation = 3;
+  string process_id = 4;
+  int64 stream_epoch = 5;
+  ExecChannel channel = 6;
+  ExecKind kind = 7;
+  int64 byte_start = 8;
+  int64 byte_end = 9;
+  int64 ack_through = 10;
+  bytes payload = 11;
+  optional int32 exit_code = 12;
+  string signal = 13;
+  string reason = 14;
+}
+
+enum ExecChannel {
+  EXEC_CHANNEL_UNSPECIFIED = 0;
+  EXEC_CHANNEL_STDIN = 1;
+  EXEC_CHANNEL_STDOUT = 2;
+  EXEC_CHANNEL_STDERR = 3;
+  EXEC_CHANNEL_CONTROL = 4;
+}
+
+enum ExecKind {
+  EXEC_KIND_UNSPECIFIED = 0;
+  EXEC_KIND_DATA = 1;
+  EXEC_KIND_ACK = 2;
+  EXEC_KIND_EOF = 3;
+  EXEC_KIND_EXIT = 4;
+  EXEC_KIND_TRUNCATED = 5;
+  EXEC_KIND_GAP = 6;
+  EXEC_KIND_RESIZE_PTY = 7;
+  EXEC_KIND_SIGNAL = 8;
+  EXEC_KIND_HEARTBEAT = 9;
+  EXEC_KIND_ERROR = 10;
+}

@@ -1,0 +1,88 @@
+syntax = "proto3";
+
+package ignition.v1;
+
+option go_package = "ignition.dev/ignition/api/gen/ignition/v1;ignitionv1";
+
+import "google/protobuf/timestamp.proto";
+import "ignition/v1/common.proto";
+
+// Long-running operation returned by sandbox create/terminate and other async mutations.
+// REST: GET /v1/projects/{project_id}/operations/{operation_id}
+message Operation {
+  string id = 1;
+  string project_id = 2;
+  OperationKind kind = 3;
+  OperationState state = 4;
+  // Affected resource id (sandbox, image, secret, ...).
+  string resource_id = 5;
+  google.protobuf.Timestamp create_time = 6;
+  google.protobuf.Timestamp start_time = 7;
+  google.protobuf.Timestamp end_time = 8;
+  string trace_id = 9;
+  Status error = 10;
+  string progress_message = 11;
+}
+
+enum OperationKind {
+  OPERATION_KIND_UNSPECIFIED = 0;
+  OPERATION_KIND_CREATE_SANDBOX = 1;
+  OPERATION_KIND_TERMINATE_SANDBOX = 2;
+  OPERATION_KIND_IMPORT_IMAGE = 3;
+  OPERATION_KIND_ROTATE_SECRET = 4;
+  OPERATION_KIND_DELETE_SECRET = 5;
+}
+
+enum OperationState {
+  OPERATION_STATE_UNSPECIFIED = 0;
+  OPERATION_STATE_PENDING = 1;
+  OPERATION_STATE_RUNNING = 2;
+  OPERATION_STATE_SUCCEEDED = 3;
+  OPERATION_STATE_FAILED = 4;
+  OPERATION_STATE_CANCELLED = 5;
+}
+
+service OperationService {
+  // GET /v1/projects/{project_id}/operations/{operation_id}
+  rpc GetOperation(GetOperationRequest) returns (Operation);
+
+  // GET /v1/projects/{project_id}/operations
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse);
+
+  // GET /v1/projects/{project_id}/operations/{operation_id}:watch
+  // Server stream (SSE on the public HTTP API).
+  rpc WatchOperation(WatchOperationRequest) returns (stream Operation);
+
+  // POST /v1/projects/{project_id}/operations/{operation_id}:cancel
+  rpc CancelOperation(CancelOperationRequest) returns (Operation);
+}
+
+message GetOperationRequest {
+  string project_id = 1;
+  string operation_id = 2;
+}
+
+message ListOperationsRequest {
+  string project_id = 1;
+  PageRequest page = 2;
+  // Optional filter, e.g. resource_id=sbx_...
+  string filter = 3;
+}
+
+message ListOperationsResponse {
+  repeated Operation operations = 1;
+  PageResponse page = 2;
+}
+
+message WatchOperationRequest {
+  string project_id = 1;
+  string operation_id = 2;
+  // Last-Event-ID for resume.
+  string last_event_id = 3;
+}
+
+message CancelOperationRequest {
+  string project_id = 1;
+  string operation_id = 2;
+  Idempotency idempotency = 3;
+}

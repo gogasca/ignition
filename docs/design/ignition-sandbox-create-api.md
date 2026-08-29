@@ -1,0 +1,402 @@
+# Ignition Create Sandbox API Specification
+
+**Status:** Draft v0.2 — implemented slice notes added 2026-08-28  
+**Parent designs:** [Client API and Identity](ignition-design-client-api-identity.md), [Control Plane](ignition-design-control-plane.md), [Scheduler](ignition-design-scheduler-leasing.md)  
+**Machine-readable schema:** [`api/proto/ignition/v1/sandbox.proto`](../../api/proto/ignition/v1/sandbox.proto) and [`sandbox_service.proto`](../../api/proto/ignition/v1/sandbox_service.proto). How to implement and deploy: [Implementation guide](../guides/ignition-implementation.md).
+
+## Purpose
+
+Defines the public API for asynchronously creating one sandbox on pre-warmed GPU capacity. This request/response schema, the state machine, idempotency rules, and error model are the canonical public contract and are runtime-agnostic.
+
+The first implementation slice is this create/get/list/terminate/watch surface plus process exec and operations.
+
+**What the Go API implements today** (see [Implementation guide](../guides/ignition-implementation.md)):
+
+- `gpu.count` is `1`; `gpu.type` is the GpuType enum (`NVIDIA_L4`); platform allowlist `IGNITION_ALLOWED_GPU_TYPES` (default `NVIDIA_L4`).
+- `imageId` must match `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`.
+- CPU ≤ 8000m, memory ≤ 32768 MiB; timeout/command/env/label caps in `internal/api/limits.go`.
+- `ALLOW_LIST` egress requires at least one TLS domain or valid CIDR.
+- `secretRefs` are stored on the sandbox and injected by the controller from Secret Manager at Pod create. `readOnlyDatasets` are not honored.
+- Cancel of an in-flight create fails the sandbox (`CANCELLED`) and releases quota.
+- Terminate/cancel permission deny is `404`; create/exec deny stays `403`.
+- Watch is one SSE snapshot + heartbeats (~60s), not `Last-Event-ID` push-on-change yet.
+
+Provisioning behavior behind the API is owned by the active runtime design:
+
+- **MVP (recommended):** the [GKE Sandbox MVP](ignition-design-gke-sandbox.md) design is normative. `ignition-controller` reconciles admitted sandboxes into gVisor Pods on pre-warmed one-GPU GKE nodes; the warm-capacity startup SLO (p95 API-to-`READY` ≤ 9 seconds) and its exclusions are defined there.
+- **Custom runtime (future, gated):** the scheduler/worker flow described in [Processing flow](#processing-flow) and [Detailed control-plane behavior](#detailed-control-plane-behavior) below applies when the custom GCE/MIG runtime replaces GKE provisioning.
+
+Sandbox creation normally selects existing warm capacity. It never synchronously creates a GPU VM. When no compatible capacity is available, the request remains queued while the fleet layer (GKE Cluster Autoscaler in the MVP; `ignition-fleet` in the custom runtime) replenishes the warm pool.
+
+## Endpoint
+
+```http
+POST /v1/projects/{project_id}/sandboxes
+Authorization: Bearer ACCESS_TOKEN
+Idempotency-Key: UUID
+Content-Type: application/json
+```
+
+Required OAuth permission: `sandbox.create`.
+
+`Idempotency-Key` is required and retained for at least 24 hours. Reusing it with the same canonical request returns the original sandbox and operation. Reusing it with different content returns `409 IDEMPOTENCY_KEY_REUSED`.
+
+## Request
+
+```json
+{
+  "name": "model-runner",
+  "imageId": "img_01J...",
+  "command": ["python", "-m", "server"],
+  "workingDirectory": "/workspace",
+  "environment": {
+    "LOG_LEVEL": "info"
+  },
+  "secretRefs": [
+    {
+      "secretId": "sec_01J...",
+      "version": "latest",
+      "environmentName": "MODEL_TOKEN"
+    }
+  ],
+  "resources": {
+    "cpuMilli": 4000,
+    "memoryMiB": 16384,
+    "gpu": {
+      "count": 1,
+      "type": "NVIDIA_L4"
+    }
+  },
+  "placement": {
+    "region": "us-central1",
+    "provisioningPreference": "ON_DEMAND"
+  },
+  "timeouts": {
+    "startupSeconds": 120,
+    "maximumRuntimeSeconds": 3600,
+    "idleSeconds": 600,
+    "terminationGraceSeconds": 20
+  },
+  "network": {
+    "egress": {
+      "mode": "DENY_ALL",
+      "allowedTlsDomains": [],
+      "allowedCidrs": []
+    }
+  },
+  "readOnlyDatasets": [
+    {
+      "datasetId": "data_01J...",
+      "mountPath": "/models"
+    }
+  ],
+  "labels": {
+    "team": "inference",
+    "workload": "reference-model"
+  }
+}
+```
+
+### Fields
+
+- `name`: optional display name, unique only when project policy requires it.
+- `imageId`: required admitted image. This slice requires `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`; mutable OCI tags are not accepted on create.
+- `command`: optional argv array. It is never evaluated by a shell. When omitted, Ignition starts its sandbox init supervisor and waits for later `exec` requests.
+- `workingDirectory`: optional absolute path inside the image.
+- `environment`: optional non-secret values with project-configured count and size limits.
+- `secretRefs`: stored on create; the controller resolves Secret Manager at Pod create and injects env. Values never enter SQL.
+- `cpuMilli`: required, positive, max 8000 in this slice.
+- `memoryMiB`: required, positive, max 32768 in this slice.
+- `gpu.count`: exactly `1` in initial production.
+- `gpu.type`: required `GpuType` enum. Public JSON drops the proto prefix (`GPU_TYPE_NVIDIA_L4` → `"NVIDIA_L4"`). This slice allowlists `NVIDIA_L4` via `IGNITION_ALLOWED_GPU_TYPES`. GCE accelerator name `nvidia-l4` is infra-only, not the API value.
+- `region`: must be enabled for the project. Initial production is single-region.
+- `provisioningPreference`: `ON_DEMAND`, `SPOT_ALLOWED`, or `SPOT_ONLY`. Strict availability defaults to `ON_DEMAND`.
+- `startupSeconds`: maximum queue plus worker activation time before creation fails (max 600).
+- `maximumRuntimeSeconds`: hard sandbox lifetime (max 86400).
+- `idleSeconds`: inactivity period before termination; active processes or streams count as activity (max 3600).
+- `terminationGraceSeconds`: graceful stop period before forced termination (max 120).
+- `network.egress`: defaults to `DENY_ALL`. `ALLOW_LIST` requires `allowedTlsDomains` and/or valid `allowedCidrs`. Domain rules mean TLS port 443 through the approved egress proxy.
+- `readOnlyDatasets`: specified for v1; **not implemented** in this slice.
+- `labels`: optional bounded client metadata (max 32); reserved `ignition.*` keys are rejected.
+
+Public Session/runtime snapshots and user-supplied OCI hooks, host mounts, devices, CDI records, capabilities, namespaces, and readiness probes are not accepted.
+
+## Success response
+
+```http
+HTTP/1.1 202 Accepted
+Location: /v1/projects/prj_01J.../sandboxes/sbx_01J...
+Retry-After: 1
+```
+
+```json
+{
+  "sandbox": {
+    "id": "sbx_01J...",
+    "projectId": "prj_01J...",
+    "name": "model-runner",
+    "state": "CREATING",
+    "stateReason": "ADMITTED",
+    "imageId": "img_01J...",
+    "operationId": "op_01J...",
+    "createdAt": "2026-08-27T04:00:00Z",
+    "generation": 1
+  },
+  "operation": {
+    "id": "op_01J...",
+    "kind": "CREATE_SANDBOX",
+    "state": "PENDING",
+    "resourceId": "sbx_01J...",
+    "createdAt": "2026-08-27T04:00:00Z"
+  }
+}
+```
+
+The response confirms durable admission, not readiness.
+
+## Observing progress
+
+```text
+GET /v1/projects/{project}/sandboxes/{sandbox}
+GET /v1/projects/{project}/operations/{operation}
+GET /v1/projects/{project}/operations/{operation}:watch
+GET /v1/projects/{project}/events:watch
+```
+
+Watch uses authenticated Server-Sent Events. This slice emits one snapshot and heartbeats (~60s). `Last-Event-ID` remains the v1 contract.
+
+Public state progression:
+
+```text
+CREATING → SCHEDULED → STARTED → READY
+any nonterminal state → FAILED
+READY → TERMINATING → FINISHED
+```
+
+- `CREATING`: admission is durable and request is queued.
+- `SCHEDULED`: GPU lease and worker assignment are committed.
+- `STARTED`: worker runtime exists but GPU/ingress verification is incomplete.
+- `READY`: runtime and exact GPU visibility are verified, and ingress route registration has completed so exec can attach.
+- `FAILED`: terminal creation failure; includes a stable reason.
+
+## Processing flow
+
+This sequence describes the custom GCE/MIG runtime (future, gated). For the MVP, the equivalent sequence — controller reconciliation onto pre-warmed GKE Sandbox nodes — is defined in the [GKE Sandbox MVP](ignition-design-gke-sandbox.md) design.
+
+```mermaid
+sequenceDiagram
+    participant Client
+    participant API as ignition-api on GKE
+    participant DB as Cloud SQL Postgres
+    participant Scheduler as ignition-scheduler
+    participant Fleet as ignition-fleet
+    participant Control as ignition-worker-control
+    participant Worker as ignitiond on GCE VM
+    participant Host as ignition-hostd
+    participant Runtime as runsc and nvproxy
+    participant Gateway as ignition-gateway
+
+    Client->>API: POST sandbox with JWT and idempotency key
+    API->>API: authenticate, authorize, validate
+    API->>DB: atomic admission transaction
+    API-->>Client: 202 sandbox and operation
+    Scheduler->>DB: claim queue row and find compatible GPU
+    alt compatible warm worker available
+        Scheduler->>DB: commit GPU lease and assignment
+    else no compatible warm worker
+        Scheduler->>DB: leave queued and publish pool demand
+        Fleet->>Fleet: increase warm MIG capacity if policy permits
+        Scheduler->>DB: retry until startup deadline
+    end
+    Scheduler->>Control: desired sandbox available
+    Control->>Worker: DesiredSandbox over SPIFFE mTLS
+    Worker->>Worker: validate epochs, lease, tuple, credentials
+    Worker->>Host: typed CreateSandbox request
+    Host->>Runtime: mount image or restore golden snapshot
+    Runtime->>Runtime: create gVisor sandbox and bind leased GPU
+    Worker->>Worker: verify GPU UUID and runtime health
+    Worker->>Control: observed STARTED then READY
+    Control->>DB: commit observed state and route generation
+    Gateway->>DB: receive route update
+    API-->>Client: READY event
+```
+
+## Detailed control-plane behavior
+
+### 1. Authenticate and authorize
+
+`ignition-api` validates the RFC 9068 access JWT, exact issuer/audience, expiry, client, scopes, and emergency denylist. It loads the project under organization scope and checks `sandbox.create`.
+
+Cross-project IDs return indistinguishable `404 NOT_FOUND`. In-project create/exec deny returns `403 PERMISSION_DENIED`. Terminate/cancel deny returns `404`.
+
+### 2. Validate references and policy
+
+The API verifies:
+
+- image state is `READY`;
+- image digest and GPU workload contract are immutable;
+- secrets and datasets belong to the project and principal may use them;
+- CPU/RAM/GPU, region, timeouts, and egress satisfy project policy;
+- project has quota for one additional GPU sandbox;
+- request contains no unsupported v1 fields.
+
+### 3. Commit admission
+
+In one serializable Cloud SQL transaction, `ignition-api` writes:
+
+1. idempotency key plus canonical request hash;
+2. sandbox row in `CREATING`;
+3. create operation;
+4. quota-ledger reservation;
+5. scheduler queue row;
+6. lifecycle event;
+7. transactional outbox event.
+
+All seven commit or none commit. API retries the complete transaction after serialization, deadlock, or failover errors.
+
+### 4. Select capacity
+
+`ignition-scheduler` fairly claims a committed queue row. It filters workers by:
+
+- heartbeat and `READY` state;
+- one-hostile-tenant-per-VM availability;
+- healthy unleased GPU;
+- GPU SKU and complete compatibility tuple;
+- CPU, RAM, disk, region, and provisioning model;
+- image/golden-artifact locality.
+
+The scheduler transaction creates the GPU lease, increments its fencing token, assigns the worker, advances the sandbox to `SCHEDULED`, and emits desired-state/outbox events.
+
+### 5. Replenish warm VMs
+
+`ignition-fleet` observes pool demand independently. If the compatible warm buffer is below target, it increases the appropriate GCE MIG.
+
+The new VM boots from an immutable Ubuntu image, initializes the pinned NVIDIA driver and runtime services, registers through `ignition-worker-control`, performs GPU burn-in, and only then becomes schedulable.
+
+Sandbox creation does not wait inside an API request for this process; the asynchronous operation remains queued until capacity appears or `startupSeconds` expires.
+
+### 6. Deliver desired state
+
+`ignition-worker-control` sends `DesiredSandbox` over the worker's current SPIFFE-mTLS stream. The command includes:
+
+- sandbox and desired-state generation;
+- worker owner epoch;
+- GPU lease fencing token;
+- immutable image and startup-policy identity;
+- resource and network policy;
+- operation-scoped artifact URLs;
+- operation-scoped secret delivery references.
+
+The worker rejects stale epochs, generations, tokens, or tuple mismatches.
+
+### 7. Create the sandbox
+
+`ignitiond` journals the operation and invokes privileged `ignition-hostd` through its typed local API.
+
+`ignition-hostd` is the sole lifecycle owner. It:
+
+1. configures cgroups, namespaces, scratch, and network;
+2. requests the image rootfs from containerd content/lazy snapshot services;
+3. generates the server-owned OCI specification;
+4. selects the pinned, validated NVIDIA CDI device by GPU UUID;
+5. restores a compatible golden startup snapshot or performs a cold start;
+6. invokes direct `runsc` lifecycle commands;
+7. never grants tenant access to the containerd root socket.
+
+`runsc` creates the gVisor sentry/netstack and `nvproxy` exposes only the leased GPU. The host NVIDIA driver remains part of the trusted computing base.
+
+### 8. Verify and publish the route
+
+Before `READY`, the worker confirms:
+
+- expected process/runtime state;
+- exact leased GPU UUID is visible;
+- no other GPU is visible;
+- managed-memory and unsupported CUDA behavior are absent for the allowlisted workload;
+- local ingress is registered;
+- resource limits are applied.
+
+Worker-control atomically writes observed `READY`, route generation, lifecycle event, and outbox event. The authoritative route is:
+
+```text
+(sandbox_id, generation)
+→ worker SPIFFE ID
+→ private worker endpoint
+→ ingress epoch
+→ route state
+```
+
+`ignition-gateway` updates its route cache and rejects stale generations.
+
+### 9. Client interaction
+
+After `READY`, clients create Process resources and attach via `ignition-gateway`. If create omitted `command`, the sandbox init supervisor waits for exec.
+
+## Failure behavior
+
+- **No capacity before startup deadline:** sandbox becomes `FAILED` with retryable `CAPACITY_UNAVAILABLE`; quota reservation is released through an append-only ledger entry.
+- **Image, secret, dataset, policy, or quota error:** reject before admission with a stable 4xx error.
+- **Worker lost before readiness:** lease becomes `SUSPECT`; the VM is recreated before GPU reuse. Scheduler may retry another worker within the original startup deadline.
+- **Runtime or GPU validation failure:** remove any route, quarantine the VM when device state is ambiguous, and fail or retry according to typed reason.
+- **Client disconnect:** creation continues because it is operation-based.
+- **Duplicate request:** idempotency returns the original sandbox/operation.
+- **Cancellation:** cancelling an in-flight `CREATE_SANDBOX` fails the sandbox (`CANCELLED`) and releases quota so the controller does not create a Pod. Otherwise cleanup and fencing still apply.
+- **Control-plane replica failure:** durable Postgres state and owner epochs allow another replica to continue.
+
+## Representative errors
+
+```text
+400 INVALID_ARGUMENT
+401 UNAUTHENTICATED
+403 PERMISSION_DENIED
+404 NOT_FOUND
+409 IDEMPOTENCY_KEY_REUSED
+409 IMAGE_NOT_READY
+422 WORKLOAD_NOT_SUPPORTED
+429 QUOTA_EXCEEDED
+429 RATE_LIMITED
+503 CAPACITY_UNAVAILABLE
+503 UNAVAILABLE
+```
+
+Error body:
+
+```json
+{
+  "error": {
+    "code": "CAPACITY_UNAVAILABLE",
+    "message": "No compatible L4 worker became ready before the startup deadline.",
+    "requestId": "req_01J...",
+    "retryable": true,
+    "retryAfterSeconds": 10,
+    "details": {
+      "region": "us-central1",
+      "gpuType": "NVIDIA_L4"
+    }
+  }
+}
+```
+
+## Security invariants
+
+- One hostile project sandbox per GPU VM.
+- Exactly one active lease per GPU.
+- No worker is reused after ambiguous process/device cleanup.
+- Client input cannot add hooks, devices, host mounts, capabilities, or namespaces.
+- Worker receives no broad project artifact or Secret Manager credential.
+- `READY` is impossible before GPU verification (and route verification once the data plane exists).
+- Sandbox traffic never uses the control-plane API path.
+- GCE metadata, management sockets, and other sandbox addresses are unreachable.
+
+## Launch acceptance tests
+
+1. Create 100 identical requests with one idempotency key; assert one sandbox and operation.
+2. Race concurrent creates for one GPU; assert one active lease.
+3. Create with no warm capacity; assert asynchronous queueing, MIG demand, and bounded timeout.
+4. Kill API, scheduler, worker-control, and gateway replicas at each state transition; assert convergence.
+5. Disconnect a scheduled worker; assert `SUSPECT` and VM recreation before GPU reuse.
+6. Inject wrong GPU UUID, stale owner epoch, and stale fencing token; assert rejection.
+7. Verify a sandbox cannot see another GPU, metadata service, host mounts, or worker credentials.
+8. Restore from locally cached golden state and meet scoped p95 application-ready target of 20 seconds for the validated L4 workload with at most 8 GiB captured VRAM.
+9. Cold start the validated L4 image and meet p95 application-ready target of 120 seconds.
+10. Verify exec attachment succeeds within p95 1 second after `READY`.

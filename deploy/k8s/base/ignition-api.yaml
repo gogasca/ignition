@@ -1,0 +1,158 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-api
+data:
+  IGNITION_LISTEN_ADDR: ":8080"
+  IGNITION_REGION: "us-central1"
+  IGNITION_OIDC_AUDIENCE: "https://api.ignition.dev"
+  IGNITION_GATEWAY_URL: "https://gateway.us-central1.ignition.dev"
+  IGNITION_MAX_ACTIVE_SANDBOXES: "100"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ignition-api
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: ignition
+        app.kubernetes.io/name: ignition-api
+        app: ignition-api
+    spec:
+      serviceAccountName: ignition-api
+      # Stay false in base: no kube API. Cloud SQL Auth Proxy overlays set true for Workload Identity only.
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      terminationGracePeriodSeconds: 25
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: ignition-api
+      containers:
+        - name: api
+          image: ignition-api
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: ignition-api
+          env:
+            - name: IGNITION_STREAM_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ignition-control-plane
+                  key: STREAM_TOKEN_SECRET
+            - name: IGNITION_OIDC_ISSUER
+              valueFrom:
+                secretKeyRef:
+                  name: ignition-control-plane
+                  key: OIDC_ISSUER
+                  optional: true
+            - name: DATABASE_URL
+              valueFrom:
+                secretKeyRef:
+                  name: ignition-control-plane
+                  key: DATABASE_URL
+                  optional: true
+            - name: IGNITION_DEV_BEARER
+              valueFrom:
+                secretKeyRef:
+                  name: ignition-control-plane
+                  key: DEV_BEARER
+                  optional: true
+          resources:
+            requests:
+              cpu: 250m
+              memory: 256Mi
+            limits:
+              cpu: "1"
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 20
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+            periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-api
+  annotations:
+    cloud.google.com/backend-config: '{"default":"ignition-api"}'
+    cloud.google.com/neg: '{"ingress":true}'
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ignition-api
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-api
+spec:
+  healthCheck:
+    type: HTTP
+    requestPath: /healthz
+    port: 8080
+  timeoutSec: 60
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-api
+spec:
+  minAvailable: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ignition-api

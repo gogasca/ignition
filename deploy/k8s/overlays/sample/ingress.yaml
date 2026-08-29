@@ -1,0 +1,16 @@
+# External HTTP(S) load balancer in front of ignition-api.
+# Sample uses HTTP and the ephemeral Ingress IP (no domain, no cert).
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+  annotations:
+    kubernetes.io/ingress.class: gce
+    kubernetes.io/ingress.allow-http: "true"
+spec:
+  defaultBackend:
+    service:
+      name: ignition-api
+      port:
+        number: 8080

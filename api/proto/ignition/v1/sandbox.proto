@@ -1,0 +1,166 @@
+syntax = "proto3";
+
+package ignition.v1;
+
+option go_package = "ignition.dev/ignition/api/gen/ignition/v1;ignitionv1";
+
+import "google/protobuf/timestamp.proto";
+import "ignition/v1/common.proto";
+import "ignition/v1/operation.proto";
+
+// Isolated GPU sandbox. Public states:
+// CREATING → SCHEDULED → STARTED → READY → TERMINATING → FINISHED
+// any nonterminal → FAILED
+//
+// RPCs: sandbox_service.proto (SandboxService). Process messages: process.proto.
+message Sandbox {
+  string id = 1;
+  string project_id = 2;
+  string name = 3;
+  SandboxState state = 4;
+  // Machine-readable reason, e.g. ADMITTED, CAPACITY_UNAVAILABLE.
+  string state_reason = 5;
+  string image_id = 6;
+  string operation_id = 7;
+  int64 generation = 8;
+  google.protobuf.Timestamp create_time = 9;
+  google.protobuf.Timestamp ready_time = 10;
+  google.protobuf.Timestamp finish_time = 11;
+  ResourceSpec resources = 12;
+  PlacementSpec placement = 13;
+  TimeoutSpec timeouts = 14;
+  NetworkSpec network = 15;
+  map<string, string> labels = 16;
+  Status error = 17;
+}
+
+enum SandboxState {
+  SANDBOX_STATE_UNSPECIFIED = 0;
+  SANDBOX_STATE_CREATING = 1;
+  SANDBOX_STATE_SCHEDULED = 2;
+  SANDBOX_STATE_STARTED = 3;
+  SANDBOX_STATE_READY = 4;
+  SANDBOX_STATE_TERMINATING = 5;
+  SANDBOX_STATE_FINISHED = 6;
+  SANDBOX_STATE_FAILED = 7;
+}
+
+message ResourceSpec {
+  int32 cpu_milli = 1;
+  int32 memory_mib = 2;
+  GpuSpec gpu = 3;
+}
+
+message GpuSpec {
+  // Initial production: exactly 1.
+  int32 count = 1;
+  GpuType type = 2;
+}
+
+// Public JSON drops the prefix: GPU_TYPE_NVIDIA_L4 → "NVIDIA_L4".
+enum GpuType {
+  GPU_TYPE_UNSPECIFIED = 0;
+  GPU_TYPE_NVIDIA_L4 = 1;
+}
+
+message PlacementSpec {
+  string region = 1;
+  ProvisioningPreference provisioning_preference = 2;
+}
+
+enum ProvisioningPreference {
+  PROVISIONING_PREFERENCE_UNSPECIFIED = 0;
+  PROVISIONING_PREFERENCE_ON_DEMAND = 1;
+  PROVISIONING_PREFERENCE_SPOT_ALLOWED = 2;
+  PROVISIONING_PREFERENCE_SPOT_ONLY = 3;
+}
+
+message TimeoutSpec {
+  int32 startup_seconds = 1;
+  int32 maximum_runtime_seconds = 2;
+  int32 idle_seconds = 3;
+  int32 termination_grace_seconds = 4;
+}
+
+message NetworkSpec {
+  EgressSpec egress = 1;
+}
+
+message EgressSpec {
+  EgressMode mode = 1;
+  // TLS port 443 via the approved egress proxy.
+  repeated string allowed_tls_domains = 2;
+  repeated string allowed_cidrs = 3;
+}
+
+enum EgressMode {
+  EGRESS_MODE_UNSPECIFIED = 0;
+  EGRESS_MODE_DENY_ALL = 1;
+  EGRESS_MODE_ALLOW_LIST = 2;
+}
+
+message SecretRef {
+  string secret_id = 1;
+  string version = 2;
+  string environment_name = 3;
+}
+
+message DatasetMount {
+  string dataset_id = 1;
+  string mount_path = 2;
+}
+
+message CreateSandboxRequest {
+  string project_id = 1;
+  Idempotency idempotency = 2;
+  string name = 3;
+  string image_id = 4;
+  repeated string command = 5;
+  string working_directory = 6;
+  map<string, string> environment = 7;
+  repeated SecretRef secret_refs = 8;
+  ResourceSpec resources = 9;
+  PlacementSpec placement = 10;
+  TimeoutSpec timeouts = 11;
+  NetworkSpec network = 12;
+  repeated DatasetMount read_only_datasets = 13;
+  map<string, string> labels = 14;
+}
+
+message CreateSandboxResponse {
+  Sandbox sandbox = 1;
+  Operation operation = 2;
+}
+
+message GetSandboxRequest {
+  string project_id = 1;
+  string sandbox_id = 2;
+}
+
+message ListSandboxesRequest {
+  string project_id = 1;
+  PageRequest page = 2;
+  string filter = 3;
+}
+
+message ListSandboxesResponse {
+  repeated Sandbox sandboxes = 1;
+  PageResponse page = 2;
+}
+
+message TerminateSandboxRequest {
+  string project_id = 1;
+  string sandbox_id = 2;
+  Idempotency idempotency = 3;
+}
+
+message TerminateSandboxResponse {
+  Sandbox sandbox = 1;
+  Operation operation = 2;
+}
+
+message WatchSandboxRequest {
+  string project_id = 1;
+  string sandbox_id = 2;
+  string last_event_id = 3;
+}

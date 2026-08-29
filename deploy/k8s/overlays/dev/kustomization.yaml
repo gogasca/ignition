@@ -1,0 +1,18 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+resources:
+  - ../../base
+components:
+  - ../../components/cloud-sql-proxy-private
+images:
+  - name: ignition-api
+    newName: us-central1-docker.pkg.dev/ignition-dev/ignition/ignition-api
+    newTag: dev
+  - name: ignition-controller
+    newName: us-central1-docker.pkg.dev/ignition-dev/ignition/ignition-controller
+    newTag: dev
+patches:
+  - path: replicas.yaml
+  - path: config.yaml
+  - path: serviceaccount-wi.yaml
+  - path: cloud-sql-instance.yaml

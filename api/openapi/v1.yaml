@@ -1,0 +1,349 @@
+openapi: 3.1.0
+info:
+  title: Ignition API
+  version: 0.1.0
+  description: >
+    HTTP/JSON view of api/proto/ignition/v1 (SandboxService + OperationService).
+    Process create/get/list/attach/signal/cancel are on SandboxService.
+    Exec bytes travel on ignition-gateway after AttachProcess.
+    Implemented behavior: docs/guides/ignition-implementation.md
+    Full v1 contract: docs/design/ignition-sandbox-create-api.md
+servers:
+  - url: https://api.ignition.dev
+paths:
+  /v1/projects/{project}/sandboxes:
+    get:
+      operationId: listSandboxes
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - name: pageSize
+          in: query
+          schema: { type: integer }
+        - name: pageToken
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: List sandboxes
+    post:
+      operationId: createSandbox
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateSandboxRequest"
+      responses:
+        "202":
+          description: Admission accepted; sandbox is CREATING.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CreateSandboxResponse"
+  /v1/projects/{project}/sandboxes/{sandbox}:
+    get:
+      operationId: getSandbox
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/SandboxId"
+      responses:
+        "200":
+          description: Sandbox resource
+  /v1/projects/{project}/sandboxes/{sandbox}:terminate:
+    post:
+      operationId: terminateSandbox
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/SandboxId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "202":
+          description: Termination accepted
+  /v1/projects/{project}/sandboxes/{sandbox}:watch:
+    get:
+      operationId: watchSandbox
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/SandboxId"
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string }
+      responses:
+        "200":
+          description: SSE stream of Sandbox snapshots
+  /v1/projects/{project}/sandboxes/{sandbox}/processes:
+    get:
+      operationId: listProcesses
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/SandboxId"
+        - name: pageSize
+          in: query
+          schema: { type: integer }
+        - name: pageToken
+          in: query
+          schema: { type: string }
+      responses:
+        "200":
+          description: List processes
+    post:
+      operationId: createProcess
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/SandboxId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CreateProcessRequest"
+      responses:
+        "200":
+          description: Process resource (state CREATING or STARTING)
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Process"
+  /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:
+    get:
+      operationId: getProcess
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/SandboxId"
+        - $ref: "#/components/parameters/ProcessId"
+      responses:
+        "200":
+          description: Process resource
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Process"
+  /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:attach:
+    post:
+      operationId: attachProcess
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/SandboxId"
+        - $ref: "#/components/parameters/ProcessId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Exec stream token for ignition-gateway
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AttachProcessResponse"
+  /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:signal:
+    post:
+      operationId: signalProcess
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/SandboxId"
+        - $ref: "#/components/parameters/ProcessId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [signal]
+              properties:
+                signal: { type: string }
+      responses:
+        "200":
+          description: Process resource after signal
+  /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:cancel:
+    post:
+      operationId: cancelProcess
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/SandboxId"
+        - $ref: "#/components/parameters/ProcessId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Process cancellation accepted
+  /v1/projects/{project}/operations:
+    get:
+      operationId: listOperations
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: List operations
+  /v1/projects/{project}/operations/{operation}:
+    get:
+      operationId: getOperation
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/OperationId"
+      responses:
+        "200":
+          description: Operation resource
+  /v1/projects/{project}/operations/{operation}:watch:
+    get:
+      operationId: watchOperation
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/OperationId"
+      responses:
+        "200":
+          description: SSE stream of Operation snapshots
+  /v1/projects/{project}/operations/{operation}:cancel:
+    post:
+      operationId: cancelOperation
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+        - $ref: "#/components/parameters/OperationId"
+        - $ref: "#/components/parameters/IdempotencyKey"
+      responses:
+        "200":
+          description: Cancel accepted or already terminal
+components:
+  parameters:
+    ProjectId:
+      name: project
+      in: path
+      required: true
+      schema: { type: string }
+    SandboxId:
+      name: sandbox
+      in: path
+      required: true
+      schema: { type: string }
+    OperationId:
+      name: operation
+      in: path
+      required: true
+      schema: { type: string }
+    ProcessId:
+      name: process
+      in: path
+      required: true
+      schema: { type: string }
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      schema: { type: string, format: uuid }
+  schemas:
+    CreateSandboxRequest:
+      type: object
+      required: [imageId, resources]
+      properties:
+        name: { type: string }
+        imageId: { type: string }
+        command:
+          type: array
+          items: { type: string }
+        workingDirectory: { type: string }
+        environment:
+          type: object
+          additionalProperties: { type: string }
+        resources:
+          type: object
+          required: [cpuMilli, memoryMiB, gpu]
+          properties:
+            cpuMilli: { type: integer, minimum: 1 }
+            memoryMiB: { type: integer, minimum: 1 }
+            gpu:
+              type: object
+              required: [count, type]
+              properties:
+                count: { type: integer, enum: [1] }
+                type:
+                  type: string
+                  enum: [NVIDIA_L4]
+                  description: Public JSON of proto GpuType (GPU_TYPE_ prefix stripped).
+        placement:
+          type: object
+          properties:
+            region: { type: string }
+            provisioningPreference:
+              type: string
+              enum: [ON_DEMAND, SPOT_ALLOWED, SPOT_ONLY]
+        timeouts:
+          type: object
+          properties:
+            startupSeconds: { type: integer }
+            maximumRuntimeSeconds: { type: integer }
+            idleSeconds: { type: integer }
+            terminationGraceSeconds: { type: integer }
+        network:
+          type: object
+          properties:
+            egress:
+              type: object
+              properties:
+                mode: { type: string, enum: [DENY_ALL, ALLOW_LIST] }
+                allowedTlsDomains:
+                  type: array
+                  items: { type: string }
+                allowedCidrs:
+                  type: array
+                  items: { type: string }
+        secretRefs:
+          type: array
+          items:
+            type: object
+            required: [secretId, environmentName]
+            properties:
+              secretId: { type: string }
+              version: { type: string }
+              environmentName: { type: string }
+        labels:
+          type: object
+          additionalProperties: { type: string }
+    CreateSandboxResponse:
+      type: object
+      required: [sandbox, operation]
+      properties:
+        sandbox:
+          type: object
+          additionalProperties: true
+        operation:
+          type: object
+          additionalProperties: true
+    Process:
+      type: object
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        sandboxId: { type: string }
+        state:
+          type: string
+          enum: [CREATING, STARTING, RUNNING, CANCELLING, EXITED, FAILED]
+        command:
+          type: array
+          items: { type: string }
+        workingDirectory: { type: string }
+        pty: { type: boolean }
+        exitCode: { type: integer }
+        terminatingSignal: { type: string }
+    CreateProcessRequest:
+      type: object
+      required: [command]
+      properties:
+        command:
+          type: array
+          items: { type: string }
+        workingDirectory: { type: string }
+        environment:
+          type: object
+          additionalProperties: { type: string }
+        pty: { type: boolean }
+        ptyRows: { type: integer }
+        ptyCols: { type: integer }
+    AttachProcessResponse:
+      type: object
+      required: [streamToken, gatewayUrl]
+      properties:
+        streamToken: { type: string }
+        gatewayUrl: { type: string }
+        expireTime: { type: string, format: date-time }
+        streamEpoch: { type: integer, format: int64 }

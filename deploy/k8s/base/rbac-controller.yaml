@@ -1,0 +1,67 @@
+# Controller is the only identity with Pod RBAC. Nodes are cluster-scoped;
+# a namespaced Role cannot grant them. ClusterRole is still cluster-wide
+# because RBAC cannot select nodes by label; CordonAndDelete GETs the node
+# and refuses unless ignition.io/node-pool=gpu-sandbox-l4.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: sandbox-pods
+  namespace: ignition-sandboxes
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-controller
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [create, get, list, watch, delete, patch]
+  - apiGroups: [""]
+    resources: [pods/status]
+    verbs: [get]
+  - apiGroups: ["networking.k8s.io"]
+    resources: [networkpolicies]
+    verbs: [create, get, list, update, patch, delete]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: sandbox-pods
+  namespace: ignition-sandboxes
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: sandbox-pods
+subjects:
+  - kind: ServiceAccount
+    name: ignition-controller
+    namespace: ignition-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ignition-controller-nodes
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-controller
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ignition-controller-nodes
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-controller
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ignition-controller-nodes
+subjects:
+  - kind: ServiceAccount
+    name: ignition-controller
+    namespace: ignition-system

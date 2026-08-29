@@ -1,0 +1,21 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+data:
+  IGNITION_ENV: "sample"
+  IGNITION_OIDC_AUDIENCE: "http://ignition-api.example"
+  IGNITION_GATEWAY_URL: "http://ignition-gateway.example"
+  IGNITION_MAX_ACTIVE_SANDBOXES: "1"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-controller
+  namespace: ignition-system
+data:
+  IGNITION_ENV: "sample"
+  IGNITION_MIN_WARM: "0"
+  IGNITION_MAX_WARM: "0"
+  IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/PROJECT/sandboxes"

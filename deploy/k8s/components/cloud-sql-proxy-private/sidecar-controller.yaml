@@ -1,0 +1,29 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ignition-controller
+  namespace: ignition-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: cloud-sql-proxy
+          image: gcr.io/cloud-sql-connectors/cloud-sql-proxy:2.15.2
+          args:
+            - "--structured-logs"
+            - "--private-ip"
+            - "--port=5432"
+            - "PROJECT:us-central1:ignition-sql"
+          securityContext:
+            allowPrivilegeEscalation: false
+            runAsNonRoot: true
+            runAsUser: 65532
+            capabilities:
+              drop: ["ALL"]
+          resources:
+            requests:
+              cpu: 30m
+              memory: 32Mi
+            limits:
+              cpu: 200m
+              memory: 64Mi

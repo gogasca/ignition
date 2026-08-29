@@ -1,0 +1,50 @@
+syntax = "proto3";
+
+package ignition.v1;
+
+option go_package = "ignition.dev/ignition/api/gen/ignition/v1;ignitionv1";
+
+import "ignition/v1/process.proto";
+import "ignition/v1/sandbox.proto";
+
+// All public RPCs under /v1/projects/{project}/sandboxes/...
+// Resource messages live in sandbox.proto and process.proto.
+// OperationService remains separate: operations are a generic LRO, not sandbox-only.
+//
+// Byte payloads for exec traverse ignition-gateway, not this service.
+service SandboxService {
+  // POST /v1/projects/{project_id}/sandboxes
+  // Returns 202 with sandbox CREATING and a CREATE_SANDBOX operation.
+  rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse);
+
+  // GET /v1/projects/{project_id}/sandboxes/{sandbox_id}
+  rpc GetSandbox(GetSandboxRequest) returns (Sandbox);
+
+  // GET /v1/projects/{project_id}/sandboxes
+  rpc ListSandboxes(ListSandboxesRequest) returns (ListSandboxesResponse);
+
+  // POST /v1/projects/{project_id}/sandboxes/{sandbox_id}:terminate
+  rpc TerminateSandbox(TerminateSandboxRequest) returns (TerminateSandboxResponse);
+
+  // GET /v1/projects/{project_id}/sandboxes/{sandbox_id}:watch
+  rpc WatchSandbox(WatchSandboxRequest) returns (stream Sandbox);
+
+  // POST /v1/projects/{project_id}/sandboxes/{sandbox_id}/processes
+  rpc CreateProcess(CreateProcessRequest) returns (Process);
+
+  // GET /v1/projects/{project_id}/sandboxes/{sandbox_id}/processes/{process_id}
+  rpc GetProcess(GetProcessRequest) returns (Process);
+
+  // GET /v1/projects/{project_id}/sandboxes/{sandbox_id}/processes
+  rpc ListProcesses(ListProcessesRequest) returns (ListProcessesResponse);
+
+  // POST /v1/projects/{project_id}/sandboxes/{sandbox_id}/processes/{process_id}:signal
+  rpc SignalProcess(SignalProcessRequest) returns (Process);
+
+  // POST /v1/projects/{project_id}/sandboxes/{sandbox_id}/processes/{process_id}:cancel
+  rpc CancelProcess(CancelProcessRequest) returns (Process);
+
+  // POST /v1/projects/{project_id}/sandboxes/{sandbox_id}/processes/{process_id}:attach
+  // Mints a short-lived exec stream token. The client then attaches via gateway.
+  rpc AttachProcess(AttachProcessRequest) returns (AttachProcessResponse);
+}

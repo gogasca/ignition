@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: cloud-sql-proxy
+          args:
+            - "--structured-logs"
+            - "--private-ip"
+            - "--port=5432"
+            - "ignition-dev:us-central1:ignition-sql"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ignition-controller
+  namespace: ignition-system
+spec:
+  template:
+    spec:
+      containers:
+        - name: cloud-sql-proxy
+          args:
+            - "--structured-logs"
+            - "--private-ip"
+            - "--port=5432"
+            - "ignition-dev:us-central1:ignition-sql"
