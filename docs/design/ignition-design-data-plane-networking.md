@@ -1,13 +1,26 @@
 # Ignition Data Plane and Networking Design
 
-**Status:** Draft v0.2  
+**Status:** Draft v0.2 — target architecture; not the current deploy path  
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
+
+> **Implementation status.** This document specifies the full data plane for the
+> custom GCE worker runtime: `ignition-ingress` as a per-worker proxy,
+> `worker-control` as the sole route-state writer, a Postgres route table with a
+> transactional outbox, SPIFFE mTLS, and a Local-SSD exec spool. **None of that
+> is built.** The [GKE Sandbox MVP](ignition-design-gke-sandbox.md) collapses the
+> data plane to `ignition-gateway` validating an `ignition-api`-minted attach
+> token and proxying a WebSocket to the sandbox init supervisor over the Pod
+> network; there is no `ignition-ingress`, no route table, and no outbox. In the
+> current code `ignition-gateway` and `sandbox-init` are stubs and neither is
+> deployed — see the [Implementation guide](../guides/ignition-implementation.md).
+> The egress policy, credential-audience separation, and attach-token shape in
+> this document are runtime-agnostic and do apply to the MVP.
 
 ## Scope
 
 Defines `ignition-gateway`, `ignition-ingress`, authoritative routing, exec reconnect, readiness, VPC boundaries, egress controls, draining, and availability.
 
-This module covers `ignition-gateway` and exec attach. The first implementation slice deploys `ignition-api`, `ignition-controller`, and `ignition-gateway`. See the [Implementation guide](../guides/ignition-implementation.md).
+This module covers `ignition-gateway` and exec attach. See the [Implementation guide](../guides/ignition-implementation.md) for what the first slice actually deploys (`ignition-api` and `ignition-controller` only).
 
 ## Components and network boundary
 
@@ -85,6 +98,8 @@ On attach/reconnect the client presents a newly minted exec stream token and its
 ## Readiness
 
 The worker reports a sandbox `READY` only after runtime start, GPU/device visibility, ingress local registration, and the Postgres route/outbox transaction commits. Gateway independently validates generation and route state. Initial production has no user application readiness probe; it does not infer that a user application is healthy.
+
+In the MVP there is no ingress registration or route/outbox commit: `ignition-controller` marks a sandbox `READY` when the Pod is scheduled and running, the init supervisor has set `ignition.io/init-healthy=true`, and exactly one GPU UUID is annotated (`ignition.io/gpu-uuid`). See the state-mapping table in [API and Controller proposal](ignition-design-api-controller.md) §6.2.
 
 ## Egress policy
 

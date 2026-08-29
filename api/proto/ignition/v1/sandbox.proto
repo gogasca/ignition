@@ -105,11 +105,6 @@ message SecretRef {
   string environment_name = 3;
 }
 
-message DatasetMount {
-  string dataset_id = 1;
-  string mount_path = 2;
-}
-
 message CreateSandboxRequest {
   string project_id = 1;
   Idempotency idempotency = 2;
@@ -123,7 +118,8 @@ message CreateSandboxRequest {
   PlacementSpec placement = 10;
   TimeoutSpec timeouts = 11;
   NetworkSpec network = 12;
-  repeated DatasetMount read_only_datasets = 13;
+  reserved 13;
+  reserved "read_only_datasets";
   map<string, string> labels = 14;
 }
 

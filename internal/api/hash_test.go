@@ -16,10 +16,10 @@ func TestCanonicalHashStable(t *testing.T) {
 	}
 }
 
-func TestCanonicalHashInvalidJSONEqualsNull(t *testing.T) {
+func TestCanonicalHashInvalidJSONDoesNotEqualNull(t *testing.T) {
 	invalid := canonicalHash("POST", "/x", []byte(`{`))
 	asNull := canonicalHash("POST", "/x", []byte(`null`))
-	if invalid != asNull {
-		t.Fatalf("invalid JSON hashed as %s, null as %s", invalid, asNull)
+	if invalid == asNull {
+		t.Fatalf("invalid JSON and null both hashed as %s", invalid)
 	}
 }

@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"strings"
 	"time"
 
@@ -37,9 +36,9 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	raw, err := readBody(w, r, 1<<20)
 	if err != nil {
-		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid body", false, 0)
+		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error(), false, 0)
 		return
 	}
 	in, err := s.parseCreate(raw)
@@ -82,7 +81,7 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 	var body createSandboxBody
-	if err := json.Unmarshal(raw, &body); err != nil {
+	if err := decodeJSON(raw, &body); err != nil {
 		return store.CreateSandboxInput{}, fmt.Errorf("invalid JSON")
 	}
 	if body.ImageID == "" {
@@ -221,7 +220,10 @@ func (s *Server) listSandboxes(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(w, r, project, auth.PermSandboxGet, false) {
 		return
 	}
-	size, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	size, ok := pageSize(w, r, s.requestID(r.Context()))
+	if !ok {
+		return
+	}
 	items, next, err := s.store.ListSandboxes(r.Context(), project, size, r.URL.Query().Get("pageToken"))
 	if err != nil {
 		writeStoreError(w, s.requestID(r.Context()), err)

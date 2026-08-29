@@ -6,8 +6,14 @@ lint:
   use:
     - STANDARD
   except:
-    # AIP-style Get/Create return the resource or a dedicated response.
+    # AIP-style Get/Create/Watch return the resource or a dedicated response.
+    # Reusing the resource for Get, Watch, and mutations preserves the public
+    # HTTP/JSON body instead of adding RPC-specific response envelopes.
+    - RPC_REQUEST_RESPONSE_UNIQUE
     - RPC_RESPONSE_STANDARD_NAME
 breaking:
+  # The public contract is wire + JSON compatibility. Removing a field or message
+  # is allowed when its number and name are reserved (see CreateProcessRequest,
+  # CreateSandboxRequest), which keeps every serialized payload readable.
   use:
-    - FILE
+    - WIRE_JSON

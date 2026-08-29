@@ -1,6 +1,7 @@
 bin/
 dist/
 .gotmp/
+.tools/
 .idea/
 .vscode/
 *.exe
@@ -13,6 +14,7 @@ coverage.out
 vendor/
 node_modules/
 __pycache__/
+.ipynb_checkpoints/
 *.pyc
 .venv/
 sdks/python/.venv/

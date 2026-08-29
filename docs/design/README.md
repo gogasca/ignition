@@ -1,6 +1,6 @@
 # Design documents
 
-Normative architecture for Ignition. **The implementation guide and the API/controller proposal match the running binaries.** Older module designs (scheduler, fleet, hostd, checkpoint) describe the gated custom GCE runtime and are not the current deploy path.
+Normative architecture for Ignition. **The implementation guide and the API/controller proposal match the running binaries.** Older module designs (scheduler, fleet, hostd, checkpoint) describe the gated custom GCE runtime and are not the current deploy path. The [data plane design](ignition-design-data-plane-networking.md) likewise specifies the custom-runtime target (`ignition-ingress`, Postgres route table, exec spool); the MVP data plane is a reduced `ignition-gateway`-only path and `ignition-gateway` is not yet shipped.
 
 Start here:
 

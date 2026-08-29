@@ -2,6 +2,7 @@ package config
 
 import (
 	"fmt"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -42,6 +43,10 @@ func Load() (Config, error) {
 		}
 	}
 	env := strings.ToLower(strings.TrimSpace(os.Getenv("IGNITION_ENV")))
+	maxWarm := atoiEnv("IGNITION_MAX_WARM", 8)
+	// Default the warm floor relative to the ceiling so IGNITION_MAX_WARM=0
+	// (warm pool disabled) does not collide with the default floor of 1.
+	minWarm := atoiEnv("IGNITION_MIN_WARM", min(1, maxWarm))
 	secret := strings.TrimSpace(os.Getenv("IGNITION_STREAM_TOKEN_SECRET"))
 	if secret == "" && !RequiresDatabase(env) {
 		secret = defaultStreamSecret
@@ -61,8 +66,8 @@ func Load() (Config, error) {
 		MaxActiveSandboxes: maxActive,
 		KubeconfigPath:     os.Getenv("KUBECONFIG"),
 		K8sNamespace:       getenv("IGNITION_K8S_NAMESPACE", "ignition-sandboxes"),
-		MinWarm:            atoiEnv("IGNITION_MIN_WARM", 1),
-		MaxWarm:            atoiEnv("IGNITION_MAX_WARM", 8),
+		MinWarm:            minWarm,
+		MaxWarm:            maxWarm,
 		GCPProject:         strings.TrimSpace(os.Getenv("IGNITION_GCP_PROJECT")),
 		SandboxImagePrefix: strings.TrimSpace(os.Getenv("IGNITION_SANDBOX_IMAGE_PREFIX")),
 	}
@@ -74,6 +79,12 @@ func Load() (Config, error) {
 
 // Validate fails closed for staging/prod misconfiguration.
 func (c Config) Validate() error {
+	if c.MinWarm < 0 || c.MaxWarm < 0 || c.MinWarm > c.MaxWarm {
+		return fmt.Errorf("IGNITION_MIN_WARM (%d) and IGNITION_MAX_WARM (%d) must satisfy 0 <= min <= max", c.MinWarm, c.MaxWarm)
+	}
+	// IGNITION_ENV is free-form: only staging/prod/production are database-backed
+	// (see RequiresDatabase). Any other label (dev, test, ci, local, a per-branch
+	// name, ...) runs the in-memory dev path with no further checks.
 	if !RequiresDatabase(c.Env) {
 		return nil
 	}
@@ -86,8 +97,20 @@ func (c Config) Validate() error {
 	if c.StreamTokenSecret == "" || c.StreamTokenSecret == defaultStreamSecret {
 		return fmt.Errorf("IGNITION_ENV=%s requires a non-default IGNITION_STREAM_TOKEN_SECRET", c.Env)
 	}
+	if len(c.StreamTokenSecret) < 32 {
+		return fmt.Errorf("IGNITION_STREAM_TOKEN_SECRET must contain at least 32 bytes")
+	}
 	if c.OIDCIssuer == "" {
 		return fmt.Errorf("IGNITION_ENV=%s requires IGNITION_OIDC_ISSUER", c.Env)
+	}
+	for name, raw := range map[string]string{"IGNITION_OIDC_ISSUER": c.OIDCIssuer, "IGNITION_OIDC_JWKS_URL": c.OIDCJWKSURL, "IGNITION_GATEWAY_URL": c.GatewayURL} {
+		if raw == "" {
+			continue
+		}
+		u, err := url.Parse(raw)
+		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
+			return fmt.Errorf("%s must be an absolute HTTPS URL without user info", name)
+		}
 	}
 	if strings.TrimSpace(c.SandboxImagePrefix) == "" && strings.TrimSpace(c.GCPProject) == "" {
 		return fmt.Errorf("IGNITION_ENV=%s requires IGNITION_SANDBOX_IMAGE_PREFIX or IGNITION_GCP_PROJECT", c.Env)

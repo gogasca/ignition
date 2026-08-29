@@ -13,7 +13,9 @@ func canonicalHash(method, route string, body []byte) string {
 	if trimmed == "" {
 		v = map[string]any{}
 	} else {
-		_ = json.Unmarshal(body, &v)
+		if err := json.Unmarshal(body, &v); err != nil {
+			v = map[string]any{"invalidJSON": string(body)}
+		}
 	}
 	canon, _ := json.Marshal(v)
 	sum := sha256.Sum256([]byte(method + "\n" + route + "\n" + string(canon)))

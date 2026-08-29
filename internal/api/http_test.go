@@ -133,6 +133,40 @@ func TestCreateSandboxAccepted(t *testing.T) {
 	}
 }
 
+func TestCreateSandboxIgnoresUnknownFields(t *testing.T) {
+	h := newHarness(t)
+	// A newer client field the server does not know must not fail the request.
+	body := `{
+		"imageId": "img_seed",
+		"resources": {"cpuMilli": 1000, "memoryMiB": 2048, "gpu": {"count": 1, "type": "NVIDIA_L4"}},
+		"futureClientField": {"nested": true}
+	}`
+	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "unknown-field", body)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d body=%v", resp.StatusCode, decode(t, resp))
+	}
+	resp.Body.Close()
+}
+
+func TestCreateSandboxAcceptsNonJSONContentType(t *testing.T) {
+	h := newHarness(t)
+	req, err := http.NewRequest(http.MethodPost, h.ts.URL+"/v1/projects/prj_dev/sandboxes", strings.NewReader(createBody))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer alice")
+	req.Header.Set("Idempotency-Key", "text-plain-ct")
+	req.Header.Set("Content-Type", "text/plain;charset=UTF-8")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status = %d, want 202", resp.StatusCode)
+	}
+}
+
 func TestCreateSandboxIdempotentReplay(t *testing.T) {
 	h := newHarness(t)
 	a := decode(t, h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "same-key", createBody))
