@@ -6,6 +6,7 @@ import (
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/util/intstr"
 )
 
 func toCorev1(p *Pod) (*corev1.Pod, error) {
@@ -129,6 +130,25 @@ func toContainer(c Container, spec PodSpec) (corev1.Container, error) {
 	if c.ReadOnlyRootFS {
 		ctr.SecurityContext.ReadOnlyRootFilesystem = boolPtr(true)
 	}
+	if c.Port > 0 {
+		ctr.Ports = append(ctr.Ports, corev1.ContainerPort{Name: "supervisor", ContainerPort: int32(c.Port)})
+	}
+	probe := func(path string) *corev1.Probe {
+		if path == "" || c.Port <= 0 {
+			return nil
+		}
+		return &corev1.Probe{
+			ProbeHandler: corev1.ProbeHandler{HTTPGet: &corev1.HTTPGetAction{
+				Path: path,
+				Port: intstr.FromInt(c.Port),
+			}},
+			PeriodSeconds:    5,
+			TimeoutSeconds:   2,
+			FailureThreshold: 3,
+		}
+	}
+	ctr.LivenessProbe = probe(c.LivenessPath)
+	ctr.ReadinessProbe = probe(c.ReadinessPath)
 	for k, v := range c.Env {
 		ctr.Env = append(ctr.Env, corev1.EnvVar{Name: k, Value: v})
 	}

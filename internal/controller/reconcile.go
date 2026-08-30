@@ -26,10 +26,13 @@ func rank(state string) int {
 }
 
 func observe(p *k8s.Pod) string {
-	if p.Annotations[k8s.AnnotInitHealthy] == "true" && p.Annotations[k8s.AnnotGPUUUID] != "" {
+	// PodReady is backed by sandbox-init /readyz, which verifies a single
+	// explicit GPU assignment. Legacy annotations remain accepted while old
+	// Pods roll out, but sandbox-init never receives Kubernetes credentials.
+	if p.Ready || (p.Annotations[k8s.AnnotInitHealthy] == "true" && p.Annotations[k8s.AnnotGPUUUID] != "") {
 		return "READY"
 	}
-	if p.Running || p.Ready {
+	if p.Running {
 		return "STARTED"
 	}
 	if p.Scheduled {

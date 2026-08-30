@@ -365,7 +365,7 @@ func TestBalloonsMatchMinWarm(t *testing.T) {
 	}
 }
 
-func TestKubeReadyIsNotPublicReady(t *testing.T) {
+func TestSupervisorBackedKubeReadyIsPublicReady(t *testing.T) {
 	m := store.NewMemory()
 	fake := k8s.NewFake()
 	c := controller.New(m, fake, fake, controller.Options{})
@@ -377,8 +377,8 @@ func TestKubeReadyIsNotPublicReady(t *testing.T) {
 	if err := c.Reconcile(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if mustGet(t, m, res.Sandbox.ID).State != "STARTED" {
-		t.Fatalf("kube Ready without init/GPU must be STARTED, got %s", mustGet(t, m, res.Sandbox.ID).State)
+	if mustGet(t, m, res.Sandbox.ID).State != "READY" {
+		t.Fatalf("supervisor-backed PodReady must be READY, got %s", mustGet(t, m, res.Sandbox.ID).State)
 	}
 }
 

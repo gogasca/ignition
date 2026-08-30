@@ -45,6 +45,12 @@ func TestToCorev1SandboxProfile(t *testing.T) {
 	if c.SecurityContext == nil || c.SecurityContext.ReadOnlyRootFilesystem == nil || !*c.SecurityContext.ReadOnlyRootFilesystem {
 		t.Fatal("sandbox root filesystem must be read-only")
 	}
+	if c.LivenessProbe == nil || c.LivenessProbe.HTTPGet == nil || c.LivenessProbe.HTTPGet.Path != "/healthz" {
+		t.Fatalf("liveness probe = %#v", c.LivenessProbe)
+	}
+	if c.ReadinessProbe == nil || c.ReadinessProbe.HTTPGet == nil || c.ReadinessProbe.HTTPGet.Path != "/readyz" {
+		t.Fatalf("readiness probe = %#v", c.ReadinessProbe)
+	}
 	for _, v := range core.Spec.Volumes {
 		if v.HostPath != nil {
 			t.Fatal("hostPath forbidden")

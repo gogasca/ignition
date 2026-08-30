@@ -77,6 +77,9 @@ GKE owns the GPU node pool's underlying MIGs; Ignition never resizes or mutates 
 ### Cluster and node pool configuration
 
 - GKE Standard, regional cluster, release channel pinned to a version with GA GKE Sandbox GPU support for the chosen SKU (L4 initially).
+- **GKE Dataplane V2** (`--enable-dataplane-v2`), set at creation. It enforces `NetworkPolicy` in-kernel (eBPF) with no add-on; the sandbox deny-by-default and per-sandbox `ALLOW_LIST` policies are part of the isolation boundary, so an enforcing dataplane is mandatory, not optional. The legacy datapath plus the Calico `NetworkPolicy` add-on is not an accepted alternative, and Dataplane V2 cannot be added to an existing cluster without a disruptive migration.
+- Dedicated minimal node service account (`roles/container.defaultNodeServiceAccount`), never the default Compute Engine service account.
+- Nodes: Shielded GKE nodes with Secure Boot and integrity monitoring; Workload Identity (`GKE_METADATA`); legacy metadata endpoints disabled.
 - CPU node pool: hosts `ignition-api`, `ignition-controller`, `ignition-gateway`, and system workloads. Three zones, topology spread, PodDisruptionBudgets.
 - GPU sandbox node pool:
   - machine type with exactly one NVIDIA L4 (`g2-standard-8` class);
@@ -240,7 +243,7 @@ spec:
 - **No GPU sharing.** GPU time-sharing, NVIDIA MPS, and NVIDIA MIG partitioning are disabled on the sandbox pool. `nvidia.com/gpu` is always exactly `1`.
 - **VM boundary.** A gVisor or driver compromise is contained to one GCE node hosting one customer sandbox — the configuration Google recommends for untrusted GPU workloads.
 - **No cluster credentials.** `automountServiceAccountToken: false`; the sandbox namespace's default service account has no RBAC grants.
-- **Metadata blocked.** A deny-by-default `NetworkPolicy` on the sandbox namespace (see the [implementation guide](../guides/ignition-implementation.md#3-namespaces-priorityclasses-networkpolicy)) blocks `169.254.169.254`, cluster-internal CIDRs, and other Pods. The controller emits a per-sandbox NetworkPolicy for `ALLOW_LIST` CIDRs (plus kube-dns). Ingress to sandbox Pods is intended only from `ignition-gateway`.
+- **Metadata blocked.** A deny-by-default `NetworkPolicy` on the sandbox namespace (see the [implementation guide](../guides/ignition-implementation.md#3-namespaces-priorityclasses-networkpolicy)) blocks `169.254.169.254`, cluster-internal CIDRs, and other Pods. The controller emits a per-sandbox NetworkPolicy for `ALLOW_LIST` CIDRs (plus kube-dns). Ingress to sandbox Pods is intended only from `ignition-gateway`. These policies are enforced by GKE Dataplane V2 (in-kernel eBPF); on the legacy datapath without a network-policy provider they are accepted by the API server but never applied, so the cluster **must** be Dataplane V2.
 - **Server-owned images and init.** This slice concatenates Artifact Registry `…/sandboxes/{imageId}` after a charset check; digest pin remains the v1 target. The entrypoint is Ignition's init supervisor, which brokers exec and signals for the gateway.
 - **Read-only root.** The sandbox container has `readOnlyRootFilesystem: true`; `/scratch` is a writable emptyDir.
 - **Secrets scoped per sandbox.** The controller resolves Secret Manager references at Pod creation and injects them as environment values in the Pod spec (not as cluster-visible Secret objects readable by other principals); nothing grants the sandbox a Google identity. Secret injection is not implemented in this slice.

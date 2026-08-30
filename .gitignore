@@ -4,6 +4,7 @@ dist/
 .tools/
 .idea/
 .vscode/
+.claude/settings.local.json
 *.exe
 *.test
 *.out
