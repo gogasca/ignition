@@ -149,11 +149,7 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 		if ref == "" {
 			return c.fail(ctx, sb, "IMAGE_UNAVAILABLE")
 		}
-		// Phase 0: only GPU accelerators are serviceable. CPU-only ("NONE")
-		// sandboxes are accepted by the API and persisted, then fail closed
-		// here until the accelerator profile lands.
-		accType := sb.Resources.Accelerator.Type
-		if !store.AcceleratorIsGPU(accType) || k8s.NodePoolForGPUType(accType) == "" {
+		if _, ok := k8s.ProfileFor(sb.Resources.Accelerator.Type); !ok {
 			return c.fail(ctx, sb, "WORKLOAD_NOT_SUPPORTED")
 		}
 		secretEnv, err := c.resolveSecrets(ctx, sb)

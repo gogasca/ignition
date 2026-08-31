@@ -89,6 +89,36 @@ func TestSandboxPodProfile(t *testing.T) {
 	}
 }
 
+func TestSandboxPodCPUProfile(t *testing.T) {
+	sb := store.Sandbox{
+		ID:        "sbx_cpu0000000000000000",
+		ProjectID: "prj_dev",
+		ImageID:   "img_seed",
+		Resources: store.ResourceSpec{CPUMilli: 2000, MemoryMiB: 4096, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+		Timeouts:  store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
+	}
+	p := k8s.SandboxPod(sb, "img@sha256:abc")
+	spec := p.Spec
+	if spec.RuntimeClassName != k8s.RuntimeClass {
+		t.Fatalf("CPU sandbox still runs on gVisor; runtime = %q", spec.RuntimeClassName)
+	}
+	if spec.Containers[0].GPU != "" {
+		t.Fatalf("CPU sandbox requested a GPU: %q", spec.Containers[0].GPU)
+	}
+	if spec.AntiAffinityHostname {
+		t.Fatal("CPU sandbox should not require one-per-node anti-affinity")
+	}
+	if spec.NodeSelector[k8s.NodePoolLabel] != k8s.CPUNodePoolValue {
+		t.Fatalf("node pool = %v", spec.NodeSelector)
+	}
+	if spec.Containers[0].Env[k8s.EnvAccelerator] != store.AcceleratorNone {
+		t.Fatalf("IGNITION_ACCELERATOR = %q", spec.Containers[0].Env[k8s.EnvAccelerator])
+	}
+	if len(spec.Tolerations) != 1 || spec.Tolerations[0].Key != "ignition.io/sandbox" {
+		t.Fatalf("tolerations = %v", spec.Tolerations)
+	}
+}
+
 func TestFakeCreateIdempotent(t *testing.T) {
 	f := k8s.NewFake()
 	p := &k8s.Pod{Name: "sbx-a", Namespace: k8s.Namespace}

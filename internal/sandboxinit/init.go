@@ -127,10 +127,18 @@ func detectAssignedGPU() (string, error) {
 
 // Run serves kubelet probes until SIGTERM/SIGINT. Process supervision is added
 // behind the same private listener in the next implementation slice.
+// detectNoAccelerator is the readiness probe for CPU-only sandboxes: the
+// supervisor being up is the entire readiness signal.
+func detectNoAccelerator() (string, error) { return "", nil }
+
 func Run() error {
+	var detector GPUDetector
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("IGNITION_ACCELERATOR")), "NONE") {
+		detector = detectNoAccelerator
+	}
 	srv := &http.Server{
 		Addr:              DefaultListenAddr,
-		Handler:           New(nil).Handler(),
+		Handler:           New(detector).Handler(),
 		ReadHeaderTimeout: 5 * time.Second,
 		IdleTimeout:       30 * time.Second,
 		MaxHeaderBytes:    8 << 10,

@@ -58,3 +58,12 @@ func TestDetectGPUFromEnvironment(t *testing.T) {
 		t.Fatal("multiple GPUs accepted")
 	}
 }
+
+func TestCPUReadinessNeedsNoAccelerator(t *testing.T) {
+	s := New(detectNoAccelerator)
+	rec := httptest.NewRecorder()
+	s.Handler().ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("CPU /readyz = %d, want 200", rec.Code)
+	}
+}

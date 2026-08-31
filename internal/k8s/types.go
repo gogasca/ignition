@@ -27,9 +27,15 @@ const (
 	RuntimeClass    = "gvisor"
 	GPUResource     = "nvidia.com/gpu"
 
-	GPUNodePoolLabel = "ignition.io/node-pool"
+	NodePoolLabel    = "ignition.io/node-pool"
+	GPUNodePoolLabel = NodePoolLabel // deprecated alias
 	GPUNodePoolValue = "gpu-sandbox-l4"
+	CPUNodePoolValue = "cpu-sandbox"
 	AnnotGPUType     = "ignition.io/gpu-type"
+
+	// EnvAccelerator tells sandbox-init which accelerator class to verify at
+	// readiness. "NONE" means CPU-only: readiness is just the supervisor.
+	EnvAccelerator = "IGNITION_ACCELERATOR"
 )
 
 var (
