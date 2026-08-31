@@ -36,6 +36,7 @@ func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /v1/projects/{project}/sandboxes", s.createSandbox)
 	mux.HandleFunc("GET /v1/projects/{project}/sandboxes", s.listSandboxes)
+	mux.HandleFunc("GET /v1/projects/{project}/runtimes/default", s.getDefaultRuntime)
 	mux.HandleFunc("GET /v1/projects/{project}/sandboxes/{sandbox}", s.getOrWatchSandbox)
 	mux.HandleFunc("POST /v1/projects/{project}/sandboxes/{sandbox}", s.postSandbox)
 	mux.HandleFunc("POST /v1/projects/{project}/sandboxes/{sandbox}/processes", s.createProcess)

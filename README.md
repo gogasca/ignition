@@ -1,6 +1,6 @@
 # Ignition
 
-Ignition is an early implementation of isolated, one-GPU sandboxes on GKE Standard. The current dev path schedules one tenant sandbox per `g2-standard-8` node with one NVIDIA L4 and GKE Sandbox (`gvisor`/`nvproxy`).
+Ignition is an early implementation of isolated sandboxes on GKE Standard with GKE Sandbox (`gvisor`/`nvproxy`). A sandbox is CPU-only or one whole NVIDIA L4; the L4 path schedules one tenant sandbox per `g2-standard-8` node. `CreateSandbox` needs only an `imageId` — compute, timeouts, and networking default to a system-managed [default runtime](docs/design/ignition-design-default-runtime.md) (CPU-only) and can be overridden per request.
 
 Architecture and public API contracts live in [`docs/design/`](docs/design/). Start with [`docs/design/ignition-design-gke-sandbox.md`](docs/design/ignition-design-gke-sandbox.md). Software design for the API and controller: [`docs/design/ignition-design-api-controller.md`](docs/design/ignition-design-api-controller.md). Build images, create the cluster, and deploy: [`docs/guides/ignition-implementation.md`](docs/guides/ignition-implementation.md).
 
@@ -25,7 +25,7 @@ docs/guides/          build and deploy runbook
 |---|---|
 | `ignition-api` | Implemented HTTP/JSON API for sandbox, process, and operation state. Owns auth, admission, quota, and idempotency; has no Kubernetes RBAC. |
 | `ignition-controller` | Implements the `STANDARD` GKE reconciliation path and is the only component with Pod/Node RBAC. `BARE_METAL` currently fails closed. |
-| `sandbox-init` | Implements in-sandbox liveness and single-GPU readiness on port 8081. Process supervision is not implemented yet. |
+| `sandbox-init` | In-sandbox liveness and accelerator readiness on port 8081 (`IGNITION_ACCELERATOR`: single-GPU check for `NVIDIA_L4`, supervisor-up for `NONE`). Process supervision is not implemented yet. |
 | `ignition-gateway` | Stub; exec-stream transport is not shipped. |
 | `ignitionctl` | Stub; use the implementation guide's `curl` commands. |
 

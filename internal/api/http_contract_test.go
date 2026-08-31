@@ -40,12 +40,34 @@ func TestCreateRejectsInvalidJSON(t *testing.T) {
 	}
 }
 
-func TestCreateRejectsMissingResources(t *testing.T) {
+func TestCreateWithoutRuntimeFieldsUsesDefaultRuntime(t *testing.T) {
 	h := newHarness(t)
 	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "no-res", `{"imageId":"img_seed"}`)
 	out := decode(t, resp)
-	if resp.StatusCode != http.StatusBadRequest || out["code"] != "INVALID_ARGUMENT" {
-		t.Fatalf("status=%d code=%v", resp.StatusCode, out["code"])
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status=%d body=%v", resp.StatusCode, out)
+	}
+	res := out["sandbox"].(map[string]any)["resources"].(map[string]any)
+	acc := res["accelerator"].(map[string]any)
+	if acc["type"] != "NONE" || res["cpuMilli"].(float64) != 1000 || res["memoryMiB"].(float64) != 2048 {
+		t.Fatalf("resources not from default runtime: %v", res)
+	}
+}
+
+func TestGetDefaultRuntime(t *testing.T) {
+	h := newHarness(t)
+	resp := h.do(t, http.MethodGet, "/v1/projects/prj_dev/runtimes/default", "viewer", "", "")
+	out := decode(t, resp)
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status=%d body=%v", resp.StatusCode, out)
+	}
+	acc := out["resources"].(map[string]any)["accelerator"].(map[string]any)
+	if acc["type"] != "NONE" {
+		t.Fatalf("default runtime accelerator = %v", acc)
+	}
+	net := out["network"].(map[string]any)
+	if net["internetAccess"] != "DISABLED" {
+		t.Fatalf("default runtime network = %v", net)
 	}
 }
 

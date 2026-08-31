@@ -223,8 +223,9 @@ with Client() as client:
         project="prj_...",
         image="img_...",
         command=["python", "-m", "server"],
-        gpu=GPU(type=GPUType.NVIDIA_L4, count=1),
-        internet_access=InternetAccess.DISABLED,
+        # resources/timeouts/network are optional; omitted fields come from
+        # the system default runtime (CPU-only). Pass an accelerator for GPU:
+        resources=Resources(accelerator=Accelerator(type="NVIDIA_L4", count=1)),
     )
     sandbox.wait_ready(timeout=120)
     process = sandbox.exec(["nvidia-smi"])

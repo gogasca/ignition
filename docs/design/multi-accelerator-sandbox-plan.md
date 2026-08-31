@@ -1,6 +1,10 @@
 # Multi-Accelerator Sandbox Plan (GPU + CPU)
 
-**Status:** Draft v0.1 — implementation plan
+**Status:** Superseded — the shipped design is [Default Runtime](ignition-design-default-runtime.md).
+This document is kept for context. The Phase 0 accelerator model landed as
+described; the project-level `SandboxTemplate` resource in the later sections was
+**not** built — a system-managed default runtime replaced it, and CreateSandbox
+keeps optional inline `resources`/`placement`/`timeouts`/`network` fields.
 **Date:** 2026-08-31
 **Parent:** [GKE Sandbox MVP](ignition-design-gke-sandbox.md)
 **Public API contract:** [Create Sandbox API](ignition-sandbox-create-api.md)

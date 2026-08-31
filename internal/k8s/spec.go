@@ -41,13 +41,56 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 		mem = 32768
 	}
 	cmdJSON, _ := json.Marshal(sb.Command)
-	gpuType := sb.Resources.Accelerator.Type
-	if gpuType == "" {
-		gpuType = store.AcceleratorNVIDIAL4
+	accel := sb.Resources.Accelerator.Type
+	if accel == "" {
+		accel = store.AcceleratorNVIDIAL4
+	}
+	// The caller (reconcile) fails closed when no profile exists; default to
+	// the L4 profile only so a mis-sequenced call still produces a valid Pod.
+	profile, ok := ProfileFor(accel)
+	if !ok {
+		profile = profiles[store.AcceleratorNVIDIAL4]
 	}
 	env := map[string]string{
 		"IGNITION_SANDBOX_ID": sb.ID,
 		"IGNITION_PROJECT_ID": sb.ProjectID,
+		EnvAccelerator:        accel,
+	}
+	spec := PodSpec{
+		RuntimeClassName:             RuntimeClass,
+		PriorityClassName:            PrioritySandbox,
+		AutomountServiceAccountToken: boolPtr(false),
+		EnableServiceLinks:           boolPtr(false),
+		RestartPolicy:                "Never",
+		ActiveDeadlineSeconds:        int64Ptr(deadline),
+		TerminationGraceSeconds:      int64Ptr(grace),
+		NodeSelector:                 map[string]string{NodePoolLabel: profile.NodePoolValue},
+		AntiAffinityHostname:         profile.AntiAffinity,
+		RunAsNonRoot:                 true,
+		SeccompRuntimeDefault:        true,
+		Containers: []Container{{
+			Name:            "sandbox",
+			Image:           imageRef,
+			Command:         []string{"/ignition/init"},
+			Env:             env,
+			WorkingDir:      sb.WorkingDir,
+			CPUMilli:        cpu,
+			MemoryMiB:       mem,
+			GPU:             profile.GPUQuantity,
+			AllowPrivEsc:    false,
+			DropAllCaps:     true,
+			ReadOnlyRootFS:  true,
+			VolumeMountPath: "/scratch",
+			Port:            8081,
+			LivenessPath:    "/healthz",
+			ReadinessPath:   "/readyz",
+		}},
+		Volumes: []Volume{{Name: "scratch", EmptyDir: true, SizeLimit: "20Gi"}},
+	}
+	if profile.TaintKey != "" {
+		spec.Tolerations = []Toleration{{
+			Key: profile.TaintKey, Operator: "Equal", Value: "true", Effect: "NoSchedule",
+		}}
 	}
 	return &Pod{
 		Name:      PodName(sb.ID),
@@ -60,43 +103,10 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 		Annotations: map[string]string{
 			AnnotImageID: sb.ImageID,
 			AnnotCommand: string(cmdJSON),
-			AnnotGPUType: gpuType,
+			AnnotGPUType: accel,
 		},
 		Phase: "Pending",
-		Spec: PodSpec{
-			RuntimeClassName:             RuntimeClass,
-			PriorityClassName:            PrioritySandbox,
-			AutomountServiceAccountToken: boolPtr(false),
-			EnableServiceLinks:           boolPtr(false),
-			RestartPolicy:                "Never",
-			ActiveDeadlineSeconds:        int64Ptr(deadline),
-			TerminationGraceSeconds:      int64Ptr(grace),
-			NodeSelector:                 map[string]string{GPUNodePoolLabel: NodePoolForGPUType(gpuType)},
-			Tolerations: []Toleration{{
-				Key: "ignition.io/gpu-sandbox", Operator: "Equal", Value: "true", Effect: "NoSchedule",
-			}},
-			AntiAffinityHostname:  true,
-			RunAsNonRoot:          true,
-			SeccompRuntimeDefault: true,
-			Containers: []Container{{
-				Name:            "sandbox",
-				Image:           imageRef,
-				Command:         []string{"/ignition/init"},
-				Env:             env,
-				WorkingDir:      sb.WorkingDir,
-				CPUMilli:        cpu,
-				MemoryMiB:       mem,
-				GPU:             "1",
-				AllowPrivEsc:    false,
-				DropAllCaps:     true,
-				ReadOnlyRootFS:  true,
-				VolumeMountPath: "/scratch",
-				Port:            8081,
-				LivenessPath:    "/healthz",
-				ReadinessPath:   "/readyz",
-			}},
-			Volumes: []Volume{{Name: "scratch", EmptyDir: true, SizeLimit: "20Gi"}},
-		},
+		Spec:  spec,
 	}
 }
 
@@ -139,16 +149,5 @@ func ApplySecretEnv(p *Pod, secrets map[string]string) {
 	}
 	for k, v := range secrets {
 		p.Spec.Containers[0].Env[k] = v
-	}
-}
-
-// NodePoolForGPUType maps a public GpuType to the GKE node-pool label value.
-// Unknown types return empty so the controller can fail closed.
-func NodePoolForGPUType(t string) string {
-	switch t {
-	case "", store.AcceleratorNVIDIAL4:
-		return GPUNodePoolValue
-	default:
-		return ""
 	}
 }

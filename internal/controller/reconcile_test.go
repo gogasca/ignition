@@ -97,7 +97,7 @@ func TestBareMetalFailsWithoutFallingBackToGKE(t *testing.T) {
 	}
 }
 
-func TestCPUAcceleratorFailsClosedUntilProfileShips(t *testing.T) {
+func TestCPUSandboxSchedulesAndReachesReady(t *testing.T) {
 	m := store.NewMemory()
 	fake := k8s.NewFake()
 	c := controller.New(m, fake, fake, controller.Options{})
@@ -115,14 +115,59 @@ func TestCPUAcceleratorFailsClosedUntilProfileShips(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	ctx := context.Background()
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	name := k8s.PodName(res.Sandbox.ID)
+	pod, err := fake.Get(name)
+	if err != nil {
+		t.Fatalf("CPU sandbox created no Pod: %v", err)
+	}
+	if pod.Spec.NodeSelector[k8s.NodePoolLabel] != k8s.CPUNodePoolValue {
+		t.Fatalf("node selector = %v", pod.Spec.NodeSelector)
+	}
+	if pod.Spec.Containers[0].GPU != "" {
+		t.Fatalf("CPU sandbox requested a GPU: %q", pod.Spec.Containers[0].GPU)
+	}
+	if pod.Spec.AntiAffinityHostname {
+		t.Fatal("CPU sandbox should not require one-per-node anti-affinity")
+	}
+	if pod.Spec.Containers[0].Env[k8s.EnvAccelerator] != store.AcceleratorNone {
+		t.Fatalf("IGNITION_ACCELERATOR = %q", pod.Spec.Containers[0].Env[k8s.EnvAccelerator])
+	}
+
+	fake.SetReady(name, "")
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if sb := mustGet(t, m, res.Sandbox.ID); sb.State != "READY" {
+		t.Fatalf("state = %s", sb.State)
+	}
+}
+
+func TestUnknownAcceleratorFailsClosed(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	m.SeedImage("prj_dev", "img_seed")
+	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
+		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
+		ImageID:   "img_seed",
+		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: "TPU_V5E"}},
+		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	if err := c.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if fake.Creates != 0 {
-		t.Fatalf("CPU request created %d Pods", fake.Creates)
+		t.Fatalf("unknown accelerator created %d Pods", fake.Creates)
 	}
-	sb := mustGet(t, m, res.Sandbox.ID)
-	if sb.State != "FAILED" || sb.StateReason != "WORKLOAD_NOT_SUPPORTED" {
+	if sb := mustGet(t, m, res.Sandbox.ID); sb.State != "FAILED" || sb.StateReason != "WORKLOAD_NOT_SUPPORTED" {
 		t.Fatalf("state=%s reason=%s", sb.State, sb.StateReason)
 	}
 }
