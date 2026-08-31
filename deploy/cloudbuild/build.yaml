@@ -1,0 +1,155 @@
+# Test + build + push the four Ignition control-plane images.
+#
+# Used by two triggers (see deploy/PIPELINE.md):
+#   ignition-ci-main   push to main   _EXTRA_TAG=main
+#   ignition-nightly   Cloud Scheduler _EXTRA_TAG=nightly _DATE_TAG=true
+#
+# Every image is always tagged :sha-${SHORT_SHA}. Promotion to staging/prod
+# retags the same digest via Cloud Deploy — it never rebuilds.
+
+substitutions:
+  _REGION: us-central1
+  _AR_REPO: ignition
+  _EXTRA_TAG: ""            # moving channel tag: "main" or "nightly"
+  _DATE_TAG: "false"        # nightly: also push :nightly-YYYYMMDD
+  _RUN_PG_TESTS: "true"
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+timeout: 1800s
+
+steps:
+  # 1. Unit + hermetic integration tests (tests/integration uses the Memory
+  #    store + k8s.Fake, no network) + the import-graph guardrail + vet.
+  - name: golang:1.26.7-bookworm
+    id: test
+    entrypoint: bash
+    volumes:
+      - name: go-mod
+        path: /go/pkg/mod
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        go vet ./...
+        go test ./... -count=1
+
+  # 2. Postgres-backed store integration tests. postgresOrSkip() in
+  #    internal/store/postgres_test.go runs only when IGNITION_TEST_DATABASE_URL is set.
+  - name: gcr.io/cloud-builders/docker
+    id: pg-up
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        [ "$_RUN_PG_TESTS" = "true" ] || { echo "pg tests disabled"; exit 0; }
+        docker run -d --name pg --network cloudbuild \
+          -e POSTGRES_PASSWORD=ignition -e POSTGRES_DB=ignition postgres:16
+
+  - name: gcr.io/cloud-builders/docker
+    id: pg-wait
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        [ "$_RUN_PG_TESTS" = "true" ] || exit 0
+        for i in $(seq 1 30); do
+          docker exec pg pg_isready -U postgres -h localhost && exit 0
+          sleep 1
+        done
+        echo "postgres did not become ready" >&2; exit 1
+
+  - name: golang:1.26.7-bookworm
+    id: pg-test
+    entrypoint: bash
+    env:
+      - IGNITION_TEST_DATABASE_URL=postgres://postgres:ignition@pg:5432/ignition?sslmode=disable
+    volumes:
+      - name: go-mod
+        path: /go/pkg/mod
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        [ "$_RUN_PG_TESTS" = "true" ] || { echo "pg tests disabled"; exit 0; }
+        go test ./internal/store -count=1 -run Postgres -v
+
+  # 3. Build the images. distroless + non-root, pinned Go toolchain.
+  - name: gcr.io/cloud-builders/docker
+    id: build-api
+    waitFor: [test, pg-test]
+    args:
+      - build
+      - -f
+      - deploy/docker/ignition-api.Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/ignition-api:sha-${SHORT_SHA}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    id: build-controller
+    waitFor: [test, pg-test]
+    args:
+      - build
+      - -f
+      - deploy/docker/ignition-controller.Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/ignition-controller:sha-${SHORT_SHA}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    id: build-gateway
+    waitFor: [test, pg-test]
+    args:
+      - build
+      - -f
+      - deploy/docker/ignition-gateway.Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/ignition-gateway:sha-${SHORT_SHA}
+      - .
+
+  - name: gcr.io/cloud-builders/docker
+    id: build-prober
+    waitFor: [test, pg-test]
+    args:
+      - build
+      - -f
+      - deploy/docker/ignition-prober.Dockerfile
+      - -t
+      - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/ignition-prober:sha-${SHORT_SHA}
+      - .
+
+  # 4. Add the channel tag (+ dated tag for nightly) and push everything.
+  - name: gcr.io/cloud-builders/docker
+    id: tag-and-push
+    waitFor: [build-api, build-controller, build-gateway, build-prober]
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        # The :sha-${SHORT_SHA} tags are pushed by the top-level `images:` block.
+        REPO=${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}
+        DATE_TAG="nightly-$(date -u +%Y%m%d)"
+        for img in ignition-api ignition-controller ignition-gateway ignition-prober; do
+          src="$REPO/$img:sha-${SHORT_SHA}"
+          if [ -n "$_EXTRA_TAG" ]; then
+            docker tag "$src" "$REPO/$img:${_EXTRA_TAG}"
+            docker push "$REPO/$img:${_EXTRA_TAG}"
+          fi
+          if [ "$_DATE_TAG" = "true" ]; then
+            docker tag "$src" "$REPO/$img:$DATE_TAG"
+            docker push "$REPO/$img:$DATE_TAG"
+          fi
+        done
+
+images:
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/ignition-api:sha-${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/ignition-controller:sha-${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/ignition-gateway:sha-${SHORT_SHA}
+  - ${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}/ignition-prober:sha-${SHORT_SHA}

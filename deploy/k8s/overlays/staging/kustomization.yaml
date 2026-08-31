@@ -5,12 +5,16 @@ resources:
   - ingress.yaml
 components:
   - ../../components/cloud-sql-proxy-private
+  - ../../components/prober
 images:
   - name: ignition-api
     newName: us-central1-docker.pkg.dev/ignition-staging/ignition/ignition-api
     newTag: staging
   - name: ignition-controller
     newName: us-central1-docker.pkg.dev/ignition-staging/ignition/ignition-controller
+    newTag: staging
+  - name: ignition-prober
+    newName: us-central1-docker.pkg.dev/ignition-staging/ignition/ignition-prober
     newTag: staging
 patches:
   - path: replicas.yaml

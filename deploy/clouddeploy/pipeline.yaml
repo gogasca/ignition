@@ -1,0 +1,39 @@
+# Google Cloud Deploy delivery pipeline for the Ignition staging environment.
+#
+# Apply with:
+#   sed "s/PROJECT_ID/<your-project>/g" deploy/clouddeploy/pipeline.yaml > /tmp/pipeline.yaml
+#   gcloud deploy apply --file=/tmp/pipeline.yaml --region=us-central1 --project=<your-project>
+#
+# Cloud Deploy YAML has no substitution mechanism, so PROJECT_ID is a literal
+# placeholder. Render source is skaffold.yaml (profile `staging`) at the repo root.
+
+apiVersion: deploy.cloud.google.com/v1
+kind: DeliveryPipeline
+metadata:
+  name: ignition-staging
+description: Nightly staging rollout for ignition-api and ignition-controller
+serialPipeline:
+  stages:
+    - targetId: staging
+      profiles:
+        - staging
+      strategy:
+        standard:
+          verify: true          # run the skaffold `verify` smoke test after deploy
+---
+apiVersion: deploy.cloud.google.com/v1
+kind: Target
+metadata:
+  name: staging
+description: Ignition staging GKE cluster (private control plane)
+gke:
+  cluster: projects/PROJECT_ID/locations/us-central1/clusters/ignition-staging
+  # Private control plane: RENDER/DEPLOY/VERIFY run on a VPC-peered worker pool.
+  internalIp: true
+executionConfigs:
+  - usages:
+      - RENDER
+      - DEPLOY
+      - VERIFY
+    workerPool: projects/PROJECT_ID/locations/us-central1/workerPools/ignition-deploy-pool
+    serviceAccount: clouddeploy-exec@PROJECT_ID.iam.gserviceaccount.com

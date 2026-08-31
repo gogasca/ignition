@@ -18,3 +18,12 @@ data:
   IGNITION_ENV: "staging"
   IGNITION_GCP_PROJECT: "ignition-staging"
   IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/ignition-staging/sandboxes"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-prober
+  namespace: ignition-system
+data:
+  # Must equal the ignition-api ConfigMap's IGNITION_OIDC_AUDIENCE above.
+  IGNITION_PROBE_AUDIENCE: "https://api.staging.ignition.dev"

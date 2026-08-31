@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-prober
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-prober
+data:
+  IGNITION_PROBE_TARGET: "http://ignition-api.ignition-system:8080"
+  IGNITION_PROBE_PROJECT: "prj_dev"
+  IGNITION_PROBE_IMAGE: "img_seed"
+  IGNITION_PROBE_JOURNEYS: "full"
+  IGNITION_PROBE_INTERVAL: "300s"
+  IGNITION_PROBE_TIMEOUT: "600s"
+  IGNITION_PROBE_AUTH: "gcp-idtoken"
+  # IGNITION_PROBE_AUDIENCE must equal the API's IGNITION_OIDC_AUDIENCE.
+  # Set it in the overlay (see overlays/staging/config.yaml).
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ignition-prober
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-prober
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ignition-prober
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: ignition
+        app.kubernetes.io/name: ignition-prober
+        app: ignition-prober
+    spec:
+      serviceAccountName: ignition-prober
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        fsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: ignition-prober
+      containers:
+        - name: prober
+          image: ignition-prober
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: metrics
+              containerPort: 9102
+          envFrom:
+            - configMapRef:
+                name: ignition-prober
+          resources:
+            requests:
+              cpu: 50m
+              memory: 64Mi
+            limits:
+              cpu: 250m
+              memory: 128Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+          livenessProbe:
+            # Process is up and serving. A slow first probe cycle must not
+            # restart the pod, so this is NOT the cycle-freshness check.
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 20
+            failureThreshold: 6
+          readinessProbe:
+            # A probe cycle completed recently. Not-ready only drops the pod
+            # from the Service; it never restarts it.
+            httpGet:
+              path: /readyz
+              port: metrics
+            periodSeconds: 30
+            failureThreshold: 3
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ignition-prober
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-prober
+spec:
+  type: ClusterIP
+  selector:
+    app.kubernetes.io/name: ignition-prober
+  ports:
+    - name: metrics
+      port: 9102
+      targetPort: metrics

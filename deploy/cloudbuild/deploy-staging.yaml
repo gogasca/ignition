@@ -1,0 +1,60 @@
+# Roll the current `nightly` control-plane images onto the staging GKE cluster
+# via Google Cloud Deploy. Run daily at noon by the ignition-deploy-staging
+# trigger + Cloud Scheduler (see deploy/PIPELINE.md).
+#
+# This never builds. It resolves :nightly to an immutable digest and pins a
+# Cloud Deploy release to it; Cloud Deploy renders deploy/k8s/overlays/staging,
+# deploys, and runs the skaffold `verify` smoke test.
+
+substitutions:
+  _REGION: us-central1
+  _AR_REPO: ignition
+  _PIPELINE: ignition-staging
+  _CHANNEL_TAG: nightly
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+
+timeout: 3600s
+
+steps:
+  - name: gcr.io/google.com/cloudsdktool/cloud-sdk
+    id: release
+    entrypoint: bash
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        REPO="${_REGION}-docker.pkg.dev/${PROJECT_ID}/${_AR_REPO}"
+
+        # Single GCP project: replace the tracked "ignition-staging" placeholder
+        # in the overlay with the real project id (same pattern the dev runbook
+        # uses for "ignition-dev"). --source below uploads this rendered tree.
+        for f in kustomization config serviceaccount-wi cloud-sql-instance; do
+          sed -i "s#ignition-staging#${PROJECT_ID}#g" \
+            "deploy/k8s/overlays/staging/$f.yaml"
+        done
+        if grep -R "ignition-staging" deploy/k8s/overlays/staging; then
+          echo "unrendered ignition-staging placeholder remains" >&2
+          exit 1
+        fi
+
+        digest() {
+          gcloud artifacts docker images describe "$REPO/$1:${_CHANNEL_TAG}" \
+            --format='value(image_summary.digest)'
+        }
+        API_DIGEST="$(digest ignition-api)"
+        CTL_DIGEST="$(digest ignition-controller)"
+        PRB_DIGEST="$(digest ignition-prober)"
+        echo "ignition-api        @ $API_DIGEST"
+        echo "ignition-controller @ $CTL_DIGEST"
+        echo "ignition-prober     @ $PRB_DIGEST"
+
+        gcloud deploy releases create "rel-$(date -u +%Y%m%d-%H%M%S)" \
+          --project="${PROJECT_ID}" \
+          --region="${_REGION}" \
+          --delivery-pipeline="${_PIPELINE}" \
+          --source=. \
+          --skaffold-version=2.13 \
+          --images="ignition-api=$REPO/ignition-api@$API_DIGEST,ignition-controller=$REPO/ignition-controller@$CTL_DIGEST,ignition-prober=$REPO/ignition-prober@$PRB_DIGEST"

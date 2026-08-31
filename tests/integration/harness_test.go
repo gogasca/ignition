@@ -35,20 +35,35 @@ type world struct {
 }
 
 func newWorld(t *testing.T) *world {
+	return newWorldWithConfig(t, nil)
+}
+
+// newWorldWithConfig builds a world, letting the caller tweak the API config
+// (e.g. MaxActiveSandboxes) before the server starts. alice=owner, bob=developer
+// and viewer=viewer are seeded on prj_dev with matching static bearer tokens.
+func newWorldWithConfig(t *testing.T, mutate func(*config.Config)) *world {
 	t.Helper()
 	mem := store.NewMemory()
 	mem.SeedRole("prj_dev", "alice", auth.RoleOwner)
+	mem.SeedRole("prj_dev", "bob", auth.RoleDeveloper)
+	mem.SeedRole("prj_dev", "viewer", auth.RoleViewer)
 	mem.SeedImage("prj_dev", "img_seed")
 	fake := k8s.NewFake()
 	ctrl := controller.New(mem, fake, fake, controller.Options{})
-	srv := api.New(config.Config{
+	cfg := config.Config{
 		EnabledRegion:      "us-central1",
 		GatewayURL:         "https://gateway.us-central1.ignition.dev",
 		StreamTokenSecret:  "test-stream-secret",
 		MaxActiveSandboxes: 10,
 		OIDCAudience:       "https://api.ignition.dev",
-	}, mem, auth.Static{Tokens: map[string]auth.Principal{
-		"alice": {Subject: "alice"},
+	}
+	if mutate != nil {
+		mutate(&cfg)
+	}
+	srv := api.New(cfg, mem, auth.Static{Tokens: map[string]auth.Principal{
+		"alice":  {Subject: "alice"},
+		"bob":    {Subject: "bob"},
+		"viewer": {Subject: "viewer"},
 	}})
 	ts := httptest.NewServer(srv.Handler())
 	t.Cleanup(ts.Close)

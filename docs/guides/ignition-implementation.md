@@ -560,13 +560,17 @@ fi
 kubectl kustomize "${DEPLOY_RENDER_DIR}/k8s/overlays/dev" >/dev/null
 ```
 
-This leaves the tracked dev overlay unchanged. As an alternative to `make push-images`, Cloud Build can build the two control-plane images; a manual submission must supply `SHORT_SHA` because that substitution is populated automatically only for triggered builds:
+This leaves the tracked dev overlay unchanged. As an alternative to `make push-images`, Cloud Build can test and build the control-plane images; a manual submission must supply `SHORT_SHA` because that substitution is populated automatically only for triggered builds:
 
 ```bash
 export SHORT_SHA="$(git rev-parse --short=7 HEAD)"
-gcloud builds submit . --config=deploy/cloudbuild.yaml \
-  --substitutions="_TAG=dev,_REGION=${REGION},_AR_REPO=${AR_REPO},SHORT_SHA=${SHORT_SHA}"
+gcloud builds submit . --config=deploy/cloudbuild/build.yaml \
+  --substitutions="_EXTRA_TAG=dev,_REGION=${REGION},_AR_REPO=${AR_REPO},SHORT_SHA=${SHORT_SHA}"
 ```
+
+`deploy/cloudbuild/build.yaml` also runs `go test ./...` and the Postgres store tests. The automated
+PR-merge / nightly / noon-staging pipeline built on it is documented in
+[`deploy/PIPELINE.md`](../../deploy/PIPELINE.md).
 
 Create or update the control-plane secret declaratively, deploy the rendered overlay, and require both rollouts to complete:
 
