@@ -23,6 +23,11 @@ service SandboxService {
   // GET /v1/projects/{project_id}/sandboxes
   rpc ListSandboxes(ListSandboxesRequest) returns (ListSandboxesResponse);
 
+  // GET /v1/projects/{project_id}/runtimes/default
+  // Returns the system-managed default runtime used to fill unset fields on
+  // CreateSandbox. Read-only; there is no template resource to manage.
+  rpc GetDefaultRuntime(GetDefaultRuntimeRequest) returns (RuntimeSpec);
+
   // POST /v1/projects/{project_id}/sandboxes/{sandbox_id}:terminate
   rpc TerminateSandbox(TerminateSandboxRequest) returns (TerminateSandboxResponse);
 

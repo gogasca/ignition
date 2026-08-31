@@ -22,15 +22,17 @@ message Sandbox {
   string state_reason = 5;
   string image_id = 6;
   string operation_id = 7;
-  google.protobuf.Timestamp create_time = 9;
-  google.protobuf.Timestamp ready_time = 10;
-  google.protobuf.Timestamp finish_time = 11;
-  ResourceSpec resources = 12;
-  PlacementSpec placement = 13;
-  TimeoutSpec timeouts = 14;
-  NetworkSpec network = 15;
-  map<string, string> labels = 16;
-  Status error = 17;
+  google.protobuf.Timestamp create_time = 8;
+  google.protobuf.Timestamp ready_time = 9;
+  google.protobuf.Timestamp finish_time = 10;
+  // resources, placement, timeouts, and network are the resolved snapshot:
+  // the CreateSandbox request merged over the system default runtime.
+  ResourceSpec resources = 11;
+  PlacementSpec placement = 12;
+  TimeoutSpec timeouts = 13;
+  NetworkSpec network = 14;
+  map<string, string> labels = 15;
+  Status error = 16;
 }
 
 enum SandboxState {
@@ -47,9 +49,18 @@ enum SandboxState {
 message ResourceSpec {
   int32 cpu_milli = 1;
   int32 memory_mib = 2;
-  reserved 3;
-  reserved "gpu";
-  AcceleratorSpec accelerator = 4;
+  AcceleratorSpec accelerator = 3;
+}
+
+// RuntimeSpec is a sandbox's run configuration: compute, placement, timeouts,
+// and networking. On CreateSandbox every field is optional; each unset field is
+// filled from the system-managed default runtime (GetDefaultRuntime). There is
+// no sandbox template resource to manage.
+message RuntimeSpec {
+  ResourceSpec resources = 1;
+  PlacementSpec placement = 2;
+  TimeoutSpec timeouts = 3;
+  NetworkSpec network = 4;
 }
 
 message AcceleratorSpec {
@@ -106,16 +117,22 @@ message SecretRef {
 
 message CreateSandboxRequest {
   string project_id = 1;
-  string name = 3;
-  string image_id = 4;
-  repeated string command = 5;
-  string working_directory = 6;
-  repeated SecretRef secret_refs = 8;
-  ResourceSpec resources = 9;
-  PlacementSpec placement = 10;
-  TimeoutSpec timeouts = 11;
-  NetworkSpec network = 12;
-  map<string, string> labels = 14;
+  string name = 2;
+  string image_id = 3;
+  repeated string command = 4;
+  string working_directory = 5;
+  repeated SecretRef secret_refs = 6;
+  // resources, placement, timeouts, and network are optional. Any field left
+  // unset is filled from the system-managed default runtime (GetDefaultRuntime).
+  ResourceSpec resources = 7;
+  PlacementSpec placement = 8;
+  TimeoutSpec timeouts = 9;
+  NetworkSpec network = 10;
+  map<string, string> labels = 11;
+}
+
+message GetDefaultRuntimeRequest {
+  string project_id = 1;
 }
 
 message CreateSandboxResponse {
