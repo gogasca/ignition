@@ -17,7 +17,6 @@ type createSandboxBody struct {
 	ImageID          string               `json:"imageId"`
 	Command          []string             `json:"command"`
 	WorkingDirectory string               `json:"workingDirectory"`
-	Environment      map[string]string    `json:"environment"`
 	Resources        *store.ResourceSpec  `json:"resources"`
 	Placement        *store.PlacementSpec `json:"placement"`
 	Timeouts         *store.TimeoutSpec   `json:"timeouts"`
@@ -48,23 +47,22 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	hash := canonicalHash(r.Method, r.URL.Path, raw)
 	res, err := s.store.CreateSandbox(r.Context(), store.CreateSandboxInput{
-		ProjectID:   project,
-		Principal:   s.principal(r.Context()).Subject,
-		IdemKey:     key,
-		IdemHash:    hash,
-		Name:        in.Name,
-		ImageID:     in.ImageID,
-		Command:     in.Command,
-		WorkingDir:  in.WorkingDir,
-		Environment: in.Environment,
-		Resources:   in.Resources,
-		Placement:   in.Placement,
-		Timeouts:    in.Timeouts,
-		Network:     in.Network,
-		Labels:      in.Labels,
-		SecretRefs:  in.SecretRefs,
-		TraceID:     rid,
-		MaxActive:   s.cfg.MaxActiveSandboxes,
+		ProjectID:  project,
+		Principal:  s.principal(r.Context()).Subject,
+		IdemKey:    key,
+		IdemHash:   hash,
+		Name:       in.Name,
+		ImageID:    in.ImageID,
+		Command:    in.Command,
+		WorkingDir: in.WorkingDir,
+		Resources:  in.Resources,
+		Placement:  in.Placement,
+		Timeouts:   in.Timeouts,
+		Network:    in.Network,
+		Labels:     in.Labels,
+		SecretRefs: in.SecretRefs,
+		TraceID:    rid,
+		MaxActive:  s.cfg.MaxActiveSandboxes,
 	})
 	if err != nil {
 		writeStoreError(w, rid, err)
@@ -99,45 +97,43 @@ func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 	if body.Resources.MemoryMiB > maxMemoryMiB {
 		return store.CreateSandboxInput{}, fmt.Errorf("resources.memoryMiB exceeds %d", maxMemoryMiB)
 	}
-	if body.Resources.GPU.Count != 1 {
-		return store.CreateSandboxInput{}, fmt.Errorf("gpu.count must be 1")
+	acc := body.Resources.Accelerator
+	if acc.Type == "" {
+		return store.CreateSandboxInput{}, fmt.Errorf("resources.accelerator.type is required")
 	}
-	if body.Resources.GPU.Type == "" {
-		return store.CreateSandboxInput{}, fmt.Errorf("gpu.type is required")
+	if !store.ValidAccelerator(acc.Type) {
+		return store.CreateSandboxInput{}, fmt.Errorf("accelerator.type %q is not a supported AcceleratorType", acc.Type)
 	}
-	if !store.ValidGPUType(body.Resources.GPU.Type) {
-		return store.CreateSandboxInput{}, fmt.Errorf("gpu.type %q is not a supported GpuType", body.Resources.GPU.Type)
+	if want, fixed := store.RequiredAcceleratorCount(acc.Type); fixed && acc.Count != want {
+		return store.CreateSandboxInput{}, fmt.Errorf("accelerator.count must be %d for accelerator.type %q", want, acc.Type)
 	}
-	if !s.cfg.GPUTypeAllowed(body.Resources.GPU.Type) {
-		return store.CreateSandboxInput{}, fmt.Errorf("gpu.type %q is not allowed", body.Resources.GPU.Type)
+	if !s.cfg.AcceleratorAllowed(acc.Type) {
+		return store.CreateSandboxInput{}, fmt.Errorf("accelerator.type %q is not allowed", acc.Type)
 	}
 	if err := checkCommand(body.Command); err != nil {
-		return store.CreateSandboxInput{}, err
-	}
-	if err := checkEnv(body.Environment); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
 	if err := checkLabels(body.Labels); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
-	if err := checkSecretRefs(body.SecretRefs, body.Environment); err != nil {
+	if err := checkSecretRefs(body.SecretRefs); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
 	region := s.cfg.EnabledRegion
 	if region == "" {
 		region = "us-central1"
 	}
-	pref := "ON_DEMAND"
+	computeEnvironment := store.ComputeEnvironmentStandard
 	if body.Placement != nil {
 		if body.Placement.Region != "" && body.Placement.Region != region {
 			return store.CreateSandboxInput{}, fmt.Errorf("region %q is not enabled", body.Placement.Region)
 		}
-		if body.Placement.ProvisioningPreference != "" {
-			switch body.Placement.ProvisioningPreference {
-			case "ON_DEMAND", "SPOT_ALLOWED", "SPOT_ONLY":
-				pref = body.Placement.ProvisioningPreference
+		if body.Placement.ComputeEnvironment != "" {
+			switch body.Placement.ComputeEnvironment {
+			case store.ComputeEnvironmentStandard, store.ComputeEnvironmentBareMetal:
+				computeEnvironment = body.Placement.ComputeEnvironment
 			default:
-				return store.CreateSandboxInput{}, fmt.Errorf("invalid provisioningPreference")
+				return store.CreateSandboxInput{}, fmt.Errorf("invalid placement.computeEnvironment")
 			}
 		}
 	}
@@ -169,31 +165,24 @@ func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 	if err := checkTimeouts(timeouts); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
-	net := store.NetworkSpec{Egress: store.EgressSpec{Mode: "DENY_ALL"}}
-	if body.Network != nil && body.Network.Egress.Mode != "" {
-		switch body.Network.Egress.Mode {
-		case "DENY_ALL":
-			net = *body.Network
-			net.Egress.Mode = "DENY_ALL"
-		case "ALLOW_LIST":
-			net = *body.Network
-			if err := checkAllowList(net.Egress); err != nil {
-				return store.CreateSandboxInput{}, err
-			}
+	net := store.NetworkSpec{InternetAccess: store.InternetAccessDisabled}
+	if body.Network != nil && body.Network.InternetAccess != "" {
+		switch body.Network.InternetAccess {
+		case store.InternetAccessDisabled, store.InternetAccessEnabled:
+			net.InternetAccess = body.Network.InternetAccess
 		default:
-			return store.CreateSandboxInput{}, fmt.Errorf("invalid egress mode")
+			return store.CreateSandboxInput{}, fmt.Errorf("invalid network.internetAccess")
 		}
 	}
 	return store.CreateSandboxInput{
-		Name:        body.Name,
-		ImageID:     body.ImageID,
-		Command:     body.Command,
-		WorkingDir:  body.WorkingDirectory,
-		Environment: body.Environment,
-		Resources:   *body.Resources,
+		Name:       body.Name,
+		ImageID:    body.ImageID,
+		Command:    body.Command,
+		WorkingDir: body.WorkingDirectory,
+		Resources:  *body.Resources,
 		Placement: store.PlacementSpec{
-			Region:                 region,
-			ProvisioningPreference: pref,
+			Region:             region,
+			ComputeEnvironment: computeEnvironment,
 		},
 		Timeouts:   timeouts,
 		Network:    net,

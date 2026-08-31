@@ -22,7 +22,7 @@ func TestImageNotReady(t *testing.T) {
 	h := newHarness(t)
 	body := `{
 		"imageId": "img_unknown",
-		"resources": {"cpuMilli": 1, "memoryMiB": 1, "gpu": {"count": 1, "type": "NVIDIA_L4"}}
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 1, "type": "NVIDIA_L4"}}
 	}`
 	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "img", body)
 	out := decode(t, resp)
@@ -49,34 +49,125 @@ func TestCreateRejectsMissingResources(t *testing.T) {
 	}
 }
 
-func TestCreateAcceptsSpotPreferenceAndDefaultsNetwork(t *testing.T) {
+func TestCreateIgnoresRemovedSandboxEnvironment(t *testing.T) {
 	h := newHarness(t)
 	body := `{
 		"imageId": "img_seed",
-		"resources": {"cpuMilli": 1, "memoryMiB": 1, "gpu": {"count": 1, "type": "NVIDIA_L4"}},
-		"placement": {"provisioningPreference": "SPOT_ONLY"}
+		"environment": {"LOG_LEVEL": "info"},
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 1, "type": "NVIDIA_L4"}}
 	}`
-	out := decode(t, h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "spot", body))
-	sb := out["sandbox"].(map[string]any)
-	pl := sb["placement"].(map[string]any)
-	if pl["provisioningPreference"] != "SPOT_ONLY" {
-		t.Fatalf("placement = %v", pl)
+	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "no-sandbox-env", body)
+	out := decode(t, resp)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status=%d body=%v", resp.StatusCode, out)
 	}
-	net := sb["network"].(map[string]any)
-	eg := net["egress"].(map[string]any)
-	if eg["mode"] != "DENY_ALL" {
-		t.Fatalf("egress = %v", eg)
+	sb := out["sandbox"].(map[string]any)
+	if _, ok := sb["environment"]; ok {
+		t.Fatalf("removed environment leaked into sandbox: %v", sb)
 	}
 }
 
-func TestCreateRejectsInvalidProvisioningPreference(t *testing.T) {
+func TestCreateAcceptsCPUAccelerator(t *testing.T) {
 	h := newHarness(t)
 	body := `{
 		"imageId": "img_seed",
-		"resources": {"cpuMilli": 1, "memoryMiB": 1, "gpu": {"count": 1, "type": "NVIDIA_L4"}},
-		"placement": {"provisioningPreference": "CHEAP"}
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 0, "type": "NONE"}}
 	}`
-	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "pref", body)
+	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "cpu", body)
+	out := decode(t, resp)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status=%d body=%v", resp.StatusCode, out)
+	}
+	acc := out["sandbox"].(map[string]any)["resources"].(map[string]any)["accelerator"].(map[string]any)
+	if acc["type"] != "NONE" {
+		t.Fatalf("accelerator = %v", acc)
+	}
+}
+
+func TestCreateRejectsAcceleratorCountMismatch(t *testing.T) {
+	h := newHarness(t)
+	body := `{
+		"imageId": "img_seed",
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 1, "type": "NONE"}}
+	}`
+	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "cpu-bad", body)
+	out := decode(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || out["code"] != "INVALID_ARGUMENT" {
+		t.Fatalf("status=%d code=%v", resp.StatusCode, out["code"])
+	}
+}
+
+func TestCreateDefaultsPlacementAndNetwork(t *testing.T) {
+	h := newHarness(t)
+	body := `{
+		"imageId": "img_seed",
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 1, "type": "NVIDIA_L4"}}
+	}`
+	out := decode(t, h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "defaults", body))
+	sb := out["sandbox"].(map[string]any)
+	if _, ok := sb["generation"]; ok {
+		t.Fatalf("internal generation leaked into sandbox: %v", sb)
+	}
+	pl := sb["placement"].(map[string]any)
+	if pl["computeEnvironment"] != "STANDARD" {
+		t.Fatalf("placement = %v", pl)
+	}
+	net := sb["network"].(map[string]any)
+	if net["internetAccess"] != "DISABLED" {
+		t.Fatalf("network = %v", net)
+	}
+}
+
+func TestCreateAcceptsEnabledInternetAccess(t *testing.T) {
+	h := newHarness(t)
+	body := `{
+		"imageId": "img_seed",
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 1, "type": "NVIDIA_L4"}},
+		"network": {"internetAccess": "ENABLED"}
+	}`
+	out := decode(t, h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "internet", body))
+	network := out["sandbox"].(map[string]any)["network"].(map[string]any)
+	if network["internetAccess"] != "ENABLED" {
+		t.Fatalf("network = %v", network)
+	}
+}
+
+func TestCreateRejectsInvalidInternetAccess(t *testing.T) {
+	h := newHarness(t)
+	body := `{
+		"imageId": "img_seed",
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 1, "type": "NVIDIA_L4"}},
+		"network": {"internetAccess": "ALLOW_LIST"}
+	}`
+	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "bad-network", body)
+	out := decode(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || out["code"] != "INVALID_ARGUMENT" {
+		t.Fatalf("status=%d body=%v", resp.StatusCode, out)
+	}
+}
+
+func TestCreateAcceptsBareMetalEnvironment(t *testing.T) {
+	h := newHarness(t)
+	body := `{
+		"imageId": "img_seed",
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 1, "type": "NVIDIA_L4"}},
+		"placement": {"computeEnvironment": "BARE_METAL"}
+	}`
+	out := decode(t, h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "bare-metal", body))
+	pl := out["sandbox"].(map[string]any)["placement"].(map[string]any)
+	if pl["computeEnvironment"] != "BARE_METAL" {
+		t.Fatalf("placement = %v", pl)
+	}
+}
+
+func TestCreateRejectsInvalidComputeEnvironment(t *testing.T) {
+	h := newHarness(t)
+	body := `{
+		"imageId": "img_seed",
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 1, "type": "NVIDIA_L4"}},
+		"placement": {"computeEnvironment": "AUTOMATIC"}
+	}`
+	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "environment", body)
 	out := decode(t, resp)
 	if resp.StatusCode != http.StatusBadRequest || out["code"] != "INVALID_ARGUMENT" {
 		t.Fatalf("status=%d code=%v", resp.StatusCode, out["code"])

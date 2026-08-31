@@ -25,7 +25,7 @@ func TestSandboxPodProfile(t *testing.T) {
 		ProjectID: "prj_dev",
 		ImageID:   "img_seed",
 		Command:   []string{"python", "-m", "server"},
-		Resources: store.ResourceSpec{CPUMilli: 4000, MemoryMiB: 16384, GPU: store.GPUSpec{Count: 1}},
+		Resources: store.ResourceSpec{CPUMilli: 4000, MemoryMiB: 16384, Accelerator: store.AcceleratorSpec{Count: 1}},
 		Timeouts:  store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
 	}
 	p := k8s.SandboxPod(sb, "img@sha256:abc")
@@ -81,27 +81,11 @@ func TestSandboxPodProfile(t *testing.T) {
 	if p.Spec.Containers[0].Env["IGNITION_SANDBOX_ID"] != sb.ID {
 		t.Fatal("sandbox id env")
 	}
-	if p.Annotations[k8s.AnnotGPUType] != store.GPUTypeNVIDIAL4 {
+	if p.Annotations[k8s.AnnotGPUType] != store.AcceleratorNVIDIAL4 {
 		t.Fatalf("gpu type annotation = %q", p.Annotations[k8s.AnnotGPUType])
 	}
 	if spec.NodeSelector[k8s.GPUNodePoolLabel] != k8s.GPUNodePoolValue {
 		t.Fatalf("node pool = %v", spec.NodeSelector)
-	}
-}
-
-func TestSandboxNetworkPolicyAllowList(t *testing.T) {
-	sb := store.Sandbox{
-		ID: "sbx_abc123def4567890ab",
-		Network: store.NetworkSpec{Egress: store.EgressSpec{
-			Mode: "ALLOW_LIST", AllowedCIDRs: []string{"1.2.3.0/24"},
-		}},
-	}
-	np := k8s.SandboxNetworkPolicy(sb)
-	if np.Name != "np-sbx-abc123def4567890ab" {
-		t.Fatalf("name = %q", np.Name)
-	}
-	if !np.AllowDNS || np.EgressCIDRs[0] != "1.2.3.0/24" {
-		t.Fatalf("%+v", np)
 	}
 }
 

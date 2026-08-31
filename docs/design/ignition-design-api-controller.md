@@ -114,7 +114,7 @@ One serializable Cloud SQL transaction. The API never creates a Pod.
    - same hash → wait for commit and replay the stored response (`202`);
    - in progress → `409 IDEMPOTENCY_IN_PROGRESS` + `Retry-After`;
    - different hash → `409 IDEMPOTENCY_KEY_REUSED`.
-3. Validate image is admitted (`imageId` charset), region is enabled (`us-central1` only in this slice), resource/timeout/command/env/label caps, GPU type allowlist (`NVIDIA_L4` by default), `ALLOW_LIST` egress has domains or CIDRs, and `secretRefs` (charset, env names). `gpu.count` must be `1`.
+3. Validate image is admitted (`imageId` charset), region is enabled (`us-central1` only in this slice), resource/timeout/command/env/label caps, GPU type allowlist (`NVIDIA_L4` by default), `network.internetAccess` is `ENABLED` or `DISABLED`, and `secretRefs` (charset, env names). `gpu.count` must be `1`.
 4. Insert `sandboxes` (`state = CREATING`, `generation = 1`).
 5. Insert `operations` (`kind = CREATE_SANDBOX`, `state = PENDING`).
 6. Increment `project_quota.active`.
@@ -166,7 +166,7 @@ for each sandbox in SQL:
   Pod Scheduled               → SQL SCHEDULED
   container running           → SQL STARTED
   init healthy + GPU UUID annotation → SQL READY (kube Ready alone is STARTED)
-  desired TERMINATING         → Delete Pod + NetworkPolicy; on gone → FINISHED
+  desired TERMINATING         → Delete Pod; on gone → FINISHED
   CREATE cancelled            → SQL already FAILED; do not Create
   startup deadline exceeded   → FAILED CAPACITY_UNAVAILABLE or STARTUP_TIMEOUT
   Pod gone unexpectedly       → FAILED WORKER_LOST; release quota; restore balloon
@@ -240,7 +240,7 @@ Database: Cloud SQL for PostgreSQL, regional HA, private IP, Auth Proxy sidecar,
 | `ignition-controller` | `ignition-system/ignition-controller` | `ignition-controller@PROJECT` | Pods in `ignition-sandboxes`; get/list/patch Nodes, cordon only if `ignition.io/node-pool=gpu-sandbox-l4` | DML: sandbox/process/operation/lease (no DDL) |
 | `ignition-gateway` | `ignition-system/ignition-gateway` | `ignition-gateway@PROJECT` | none (or get Pod IP in sandboxes if required) | read routes / process attach metadata |
 
-No cluster-admin. No access to `kube-system`. GPU nodes are private. Namespace NetworkPolicy in the infra guide blocks metadata; the controller emits a per-sandbox NetworkPolicy for `ALLOW_LIST` CIDRs (plus kube-dns). TLS domains stay SQL-admitted until an egress proxy exists.
+No cluster-admin. No access to `kube-system`. GPU nodes are private. The API records the requested internet-access profile, while GCP projects, VPCs, subnets, firewall policy, and NAT enforce it. The controller does not translate client input into Kubernetes NetworkPolicy rules.
 
 ## 9. Deployment topology
 

@@ -23,7 +23,7 @@ func admit(t *testing.T, m *store.Memory, timeouts store.TimeoutSpec) store.Crea
 		IdemHash:  t.Name(),
 		ImageID:   "img_seed",
 		Command:   []string{"sleep", "1"},
-		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, GPU: store.GPUSpec{Count: 1, Type: store.GPUTypeNVIDIAL4}},
+		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
 		Timeouts:  timeouts,
 		MaxActive: 10,
 	})
@@ -63,6 +63,67 @@ func TestReconcileCreatesDeterministicPod(t *testing.T) {
 	}
 	if fake.Creates != 1 {
 		t.Fatalf("duplicate create: %d", fake.Creates)
+	}
+}
+
+func TestBareMetalFailsWithoutFallingBackToGKE(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	m.SeedImage("prj_dev", "img_seed")
+	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
+		ProjectID: "prj_dev",
+		Principal: "alice",
+		IdemKey:   t.Name(),
+		IdemHash:  t.Name(),
+		ImageID:   "img_seed",
+		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+		Placement: store.PlacementSpec{ComputeEnvironment: store.ComputeEnvironmentBareMetal},
+		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fake.Creates != 0 {
+		t.Fatalf("bare-metal request created %d GKE Pods", fake.Creates)
+	}
+	sb := mustGet(t, m, res.Sandbox.ID)
+	if sb.State != "FAILED" || sb.StateReason != "COMPUTE_ENVIRONMENT_UNAVAILABLE" {
+		t.Fatalf("state=%s reason=%s", sb.State, sb.StateReason)
+	}
+}
+
+func TestCPUAcceleratorFailsClosedUntilProfileShips(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	m.SeedImage("prj_dev", "img_seed")
+	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
+		ProjectID: "prj_dev",
+		Principal: "alice",
+		IdemKey:   t.Name(),
+		IdemHash:  t.Name(),
+		ImageID:   "img_seed",
+		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fake.Creates != 0 {
+		t.Fatalf("CPU request created %d Pods", fake.Creates)
+	}
+	sb := mustGet(t, m, res.Sandbox.ID)
+	if sb.State != "FAILED" || sb.StateReason != "WORKLOAD_NOT_SUPPORTED" {
+		t.Fatalf("state=%s reason=%s", sb.State, sb.StateReason)
 	}
 }
 
@@ -413,7 +474,7 @@ func TestInvalidImageIDDoesNotCreatePod(t *testing.T) {
 		IdemKey:   t.Name(),
 		IdemHash:  t.Name(),
 		ImageID:   "evil/../other",
-		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, GPU: store.GPUSpec{Count: 1, Type: store.GPUTypeNVIDIAL4}},
+		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
 		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
 		MaxActive: 10,
 	})

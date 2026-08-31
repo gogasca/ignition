@@ -84,5 +84,4 @@ message WatchOperationRequest {
 message CancelOperationRequest {
   string project_id = 1;
   string operation_id = 2;
-  Idempotency idempotency = 3;
 }

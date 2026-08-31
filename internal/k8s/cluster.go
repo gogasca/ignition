@@ -216,34 +216,3 @@ func (c *Cluster) ListGPUPool() ([]string, error) {
 	}
 	return out, nil
 }
-
-func (c *Cluster) ApplyNetworkPolicy(p *NetworkPolicy) error {
-	if p == nil {
-		return nil
-	}
-	core := toNetworkPolicy(p)
-	ctx, cancel := c.ctx()
-	defer cancel()
-	np := c.client.NetworkingV1().NetworkPolicies(c.ns)
-	existing, err := np.Get(ctx, core.Name, metav1.GetOptions{})
-	if apierrors.IsNotFound(err) {
-		_, err = np.Create(ctx, core, metav1.CreateOptions{})
-		return err
-	}
-	if err != nil {
-		return err
-	}
-	core.ResourceVersion = existing.ResourceVersion
-	_, err = np.Update(ctx, core, metav1.UpdateOptions{})
-	return err
-}
-
-func (c *Cluster) DeleteNetworkPolicy(name string) error {
-	ctx, cancel := c.ctx()
-	defer cancel()
-	err := c.client.NetworkingV1().NetworkPolicies(c.ns).Delete(ctx, name, metav1.DeleteOptions{})
-	if apierrors.IsNotFound(err) {
-		return nil
-	}
-	return err
-}

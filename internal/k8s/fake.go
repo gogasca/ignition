@@ -10,7 +10,6 @@ import (
 type Fake struct {
 	mu        sync.Mutex
 	pods      map[string]*Pod
-	policies  map[string]*NetworkPolicy
 	gpuNodes  map[string]bool
 	ScaleDown map[string]bool
 	Nodes     []string // CordonAndDelete calls
@@ -21,7 +20,6 @@ type Fake struct {
 func NewFake() *Fake {
 	return &Fake{
 		pods:      map[string]*Pod{},
-		policies:  map[string]*NetworkPolicy{},
 		gpuNodes:  map[string]bool{},
 		ScaleDown: map[string]bool{},
 	}
@@ -157,34 +155,6 @@ func (f *Fake) ListGPUPool() ([]string, error) {
 		out = append(out, n)
 	}
 	return out, nil
-}
-
-func (f *Fake) ApplyNetworkPolicy(p *NetworkPolicy) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	cp := *p
-	cp.EgressCIDRs = append([]string{}, p.EgressCIDRs...)
-	f.policies[p.Name] = &cp
-	return nil
-}
-
-func (f *Fake) DeleteNetworkPolicy(name string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	delete(f.policies, name)
-	return nil
-}
-
-func (f *Fake) NetworkPolicy(name string) *NetworkPolicy {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	p := f.policies[name]
-	if p == nil {
-		return nil
-	}
-	cp := *p
-	cp.EgressCIDRs = append([]string{}, p.EgressCIDRs...)
-	return &cp
 }
 
 func (f *Fake) SetScheduled(name, node string) {

@@ -12,8 +12,6 @@ lint:
     - RPC_REQUEST_RESPONSE_UNIQUE
     - RPC_RESPONSE_STANDARD_NAME
 breaking:
-  # The public contract is wire + JSON compatibility. Removing a field or message
-  # is allowed when its number and name are reserved (see CreateProcessRequest,
-  # CreateSandboxRequest), which keeps every serialized payload readable.
+  # The public contract is checked for wire and JSON compatibility.
   use:
     - WIRE_JSON

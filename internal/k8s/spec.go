@@ -2,7 +2,6 @@ package k8s
 
 import (
 	"encoding/json"
-	"strings"
 
 	"ignition.dev/ignition/internal/store"
 )
@@ -42,19 +41,13 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 		mem = 32768
 	}
 	cmdJSON, _ := json.Marshal(sb.Command)
-	gpuType := sb.Resources.GPU.Type
+	gpuType := sb.Resources.Accelerator.Type
 	if gpuType == "" {
-		gpuType = store.GPUTypeNVIDIAL4
+		gpuType = store.AcceleratorNVIDIAL4
 	}
 	env := map[string]string{
 		"IGNITION_SANDBOX_ID": sb.ID,
 		"IGNITION_PROJECT_ID": sb.ProjectID,
-	}
-	for k, v := range sb.Environment {
-		if strings.HasPrefix(k, "IGNITION_") {
-			continue
-		}
-		env[k] = v
 	}
 	return &Pod{
 		Name:      PodName(sb.ID),
@@ -149,24 +142,11 @@ func ApplySecretEnv(p *Pod, secrets map[string]string) {
 	}
 }
 
-// SandboxNetworkPolicy is the per-sandbox ALLOW_LIST / DENY_ALL overlay.
-func SandboxNetworkPolicy(sb store.Sandbox) *NetworkPolicy {
-	np := &NetworkPolicy{
-		Name:      PolicyName(sb.ID),
-		SandboxID: sb.ID,
-	}
-	if sb.Network.Egress.Mode == "ALLOW_LIST" {
-		np.AllowDNS = true
-		np.EgressCIDRs = append([]string{}, sb.Network.Egress.AllowedCIDRs...)
-	}
-	return np
-}
-
 // NodePoolForGPUType maps a public GpuType to the GKE node-pool label value.
 // Unknown types return empty so the controller can fail closed.
 func NodePoolForGPUType(t string) string {
 	switch t {
-	case "", store.GPUTypeNVIDIAL4:
+	case "", store.AcceleratorNVIDIAL4:
 		return GPUNodePoolValue
 	default:
 		return ""

@@ -10,14 +10,13 @@ type Sandbox struct {
 	StateReason string            `json:"stateReason,omitempty"`
 	ImageID     string            `json:"imageId"`
 	OperationID string            `json:"operationId,omitempty"`
-	Generation  int64             `json:"generation"`
+	Generation  int64             `json:"-"`
 	CreateTime  time.Time         `json:"createTime"`
 	ReadyTime   *time.Time        `json:"readyTime,omitempty"`
 	FinishTime  *time.Time        `json:"finishTime,omitempty"`
 	CreatedBy   string            `json:"-"`
 	Command     []string          `json:"-"`
 	WorkingDir  string            `json:"-"`
-	Environment map[string]string `json:"-"`
 	Resources   ResourceSpec      `json:"resources"`
 	Placement   PlacementSpec     `json:"placement"`
 	Timeouts    TimeoutSpec       `json:"timeouts"`
@@ -33,20 +32,26 @@ type SecretRef struct {
 }
 
 type ResourceSpec struct {
-	CPUMilli  int     `json:"cpuMilli"`
-	MemoryMiB int     `json:"memoryMiB"`
-	GPU       GPUSpec `json:"gpu"`
+	CPUMilli  int `json:"cpuMilli"`
+	MemoryMiB int `json:"memoryMiB"`
+	// Accelerator is the device request. Type "NONE" is a CPU-only sandbox.
+	Accelerator AcceleratorSpec `json:"accelerator"`
 }
 
-type GPUSpec struct {
+type AcceleratorSpec struct {
 	Count int    `json:"count"`
 	Type  string `json:"type"`
 }
 
 type PlacementSpec struct {
-	Region                 string `json:"region"`
-	ProvisioningPreference string `json:"provisioningPreference,omitempty"`
+	Region             string `json:"region"`
+	ComputeEnvironment string `json:"computeEnvironment"`
 }
+
+const (
+	ComputeEnvironmentStandard  = "STANDARD"
+	ComputeEnvironmentBareMetal = "BARE_METAL"
+)
 
 type TimeoutSpec struct {
 	StartupSeconds          int `json:"startupSeconds"`
@@ -56,14 +61,13 @@ type TimeoutSpec struct {
 }
 
 type NetworkSpec struct {
-	Egress EgressSpec `json:"egress"`
+	InternetAccess string `json:"internetAccess"`
 }
 
-type EgressSpec struct {
-	Mode              string   `json:"mode"`
-	AllowedTLSDomains []string `json:"allowedTlsDomains,omitempty"`
-	AllowedCIDRs      []string `json:"allowedCidrs,omitempty"`
-}
+const (
+	InternetAccessDisabled = "DISABLED"
+	InternetAccessEnabled  = "ENABLED"
+)
 
 type Operation struct {
 	ID              string     `json:"id"`
@@ -97,23 +101,22 @@ type Process struct {
 }
 
 type CreateSandboxInput struct {
-	ProjectID   string
-	Principal   string
-	IdemKey     string
-	IdemHash    string
-	Name        string
-	ImageID     string
-	Command     []string
-	WorkingDir  string
-	Environment map[string]string
-	Resources   ResourceSpec
-	Placement   PlacementSpec
-	Timeouts    TimeoutSpec
-	Network     NetworkSpec
-	Labels      map[string]string
-	SecretRefs  []SecretRef
-	TraceID     string
-	MaxActive   int
+	ProjectID  string
+	Principal  string
+	IdemKey    string
+	IdemHash   string
+	Name       string
+	ImageID    string
+	Command    []string
+	WorkingDir string
+	Resources  ResourceSpec
+	Placement  PlacementSpec
+	Timeouts   TimeoutSpec
+	Network    NetworkSpec
+	Labels     map[string]string
+	SecretRefs []SecretRef
+	TraceID    string
+	MaxActive  int
 }
 
 type CreateProcessInput struct {

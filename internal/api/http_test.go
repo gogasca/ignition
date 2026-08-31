@@ -25,7 +25,7 @@ const (
 		"resources": {
 			"cpuMilli": 1000,
 			"memoryMiB": 2048,
-			"gpu": {"count": 1, "type": "NVIDIA_L4"}
+			"accelerator": {"count": 1, "type": "NVIDIA_L4"}
 		}
 	}`
 )
@@ -138,7 +138,7 @@ func TestCreateSandboxIgnoresUnknownFields(t *testing.T) {
 	// A newer client field the server does not know must not fail the request.
 	body := `{
 		"imageId": "img_seed",
-		"resources": {"cpuMilli": 1000, "memoryMiB": 2048, "gpu": {"count": 1, "type": "NVIDIA_L4"}},
+		"resources": {"cpuMilli": 1000, "memoryMiB": 2048, "accelerator": {"count": 1, "type": "NVIDIA_L4"}},
 		"futureClientField": {"nested": true}
 	}`
 	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "unknown-field", body)
@@ -196,7 +196,7 @@ func TestCreateSandboxRejectsGPUCount(t *testing.T) {
 	h := newHarness(t)
 	body := `{
 		"imageId": "img_seed",
-		"resources": {"cpuMilli": 1, "memoryMiB": 1, "gpu": {"count": 2, "type": "NVIDIA_L4"}}
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 2, "type": "NVIDIA_L4"}}
 	}`
 	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "gpu", body)
 	out := decode(t, resp)
@@ -212,7 +212,7 @@ func TestCreateSandboxRejectsUnknownGPUType(t *testing.T) {
 	h := newHarness(t)
 	body := `{
 		"imageId": "img_seed",
-		"resources": {"cpuMilli": 1, "memoryMiB": 1, "gpu": {"count": 1, "type": "nvidia-l4"}}
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 1, "type": "nvidia-l4"}}
 	}`
 	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "gputype", body)
 	out := decode(t, resp)
@@ -225,7 +225,7 @@ func TestCreateSandboxUnknownRegion(t *testing.T) {
 	h := newHarness(t)
 	body := `{
 		"imageId": "img_seed",
-		"resources": {"cpuMilli": 1, "memoryMiB": 1, "gpu": {"count": 1, "type": "NVIDIA_L4"}},
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 1, "type": "NVIDIA_L4"}},
 		"placement": {"region": "europe-west1"}
 	}`
 	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "region", body)
@@ -239,7 +239,7 @@ func TestCreateSandboxReservedLabel(t *testing.T) {
 	h := newHarness(t)
 	body := `{
 		"imageId": "img_seed",
-		"resources": {"cpuMilli": 1, "memoryMiB": 1, "gpu": {"count": 1, "type": "NVIDIA_L4"}},
+		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 1, "type": "NVIDIA_L4"}},
 		"labels": {"ignition.internal": "x"}
 	}`
 	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "label", body)
@@ -487,8 +487,8 @@ func TestViewerCannotCancelOperation(t *testing.T) {
 }
 
 func TestCanonicalHashIgnoresWhitespace(t *testing.T) {
-	a := `{ "imageId": "img_seed", "resources": { "cpuMilli": 1, "memoryMiB": 1, "gpu": { "count": 1, "type": "NVIDIA_L4" } } }`
-	b := `{"imageId":"img_seed","resources":{"cpuMilli":1,"memoryMiB":1,"gpu":{"count":1,"type":"NVIDIA_L4"}}}`
+	a := `{ "imageId": "img_seed", "resources": { "cpuMilli": 1, "memoryMiB": 1, "accelerator": { "count": 1, "type": "NVIDIA_L4" } } }`
+	b := `{"imageId":"img_seed","resources":{"cpuMilli":1,"memoryMiB":1,"accelerator": {"count":1,"type":"NVIDIA_L4"}}}`
 	h := newHarness(t)
 	first := decode(t, h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "ws", a))
 	second := decode(t, h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "ws", b))

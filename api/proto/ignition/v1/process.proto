@@ -47,13 +47,10 @@ enum ProcessState {
 message CreateProcessRequest {
   string project_id = 1;
   string sandbox_id = 2;
-  Idempotency idempotency = 3;
   repeated string command = 4;
   string working_directory = 5;
   map<string, string> environment = 6;
   bool pty = 7;
-  reserved 8, 9;
-  reserved "pty_rows", "pty_cols";
 }
 
 message GetProcessRequest {
@@ -77,7 +74,6 @@ message SignalProcessRequest {
   string project_id = 1;
   string sandbox_id = 2;
   string process_id = 3;
-  Idempotency idempotency = 4;
   string signal = 5;
 }
 
@@ -85,14 +81,12 @@ message CancelProcessRequest {
   string project_id = 1;
   string sandbox_id = 2;
   string process_id = 3;
-  Idempotency idempotency = 4;
 }
 
 message AttachProcessRequest {
   string project_id = 1;
   string sandbox_id = 2;
   string process_id = 3;
-  Idempotency idempotency = 4;
 }
 
 message AttachProcessResponse {

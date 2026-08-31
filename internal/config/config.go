@@ -10,29 +10,29 @@ import (
 
 const (
 	defaultStreamSecret = "dev-stream-token-secret"
-	defaultGPUType      = "NVIDIA_L4"
+	defaultAccelerator  = "NVIDIA_L4"
 )
 
 // Config is process configuration shared by control-plane binaries.
 type Config struct {
-	Env                string
-	ListenAddr         string
-	DatabaseURL        string
-	OIDCIssuer         string
-	OIDCJWKSURL        string
-	OIDCAudience       string
-	GatewayURL         string
-	StreamTokenSecret  string
-	DevBearer          string
-	EnabledRegion      string
-	AllowedGPUTypes    []string
-	MaxActiveSandboxes int
-	KubeconfigPath     string
-	K8sNamespace       string
-	MinWarm            int
-	MaxWarm            int
-	GCPProject         string
-	SandboxImagePrefix string
+	Env                 string
+	ListenAddr          string
+	DatabaseURL         string
+	OIDCIssuer          string
+	OIDCJWKSURL         string
+	OIDCAudience        string
+	GatewayURL          string
+	StreamTokenSecret   string
+	DevBearer           string
+	EnabledRegion       string
+	AllowedAccelerators []string
+	MaxActiveSandboxes  int
+	KubeconfigPath      string
+	K8sNamespace        string
+	MinWarm             int
+	MaxWarm             int
+	GCPProject          string
+	SandboxImagePrefix  string
 }
 
 func Load() (Config, error) {
@@ -52,17 +52,18 @@ func Load() (Config, error) {
 		secret = defaultStreamSecret
 	}
 	cfg := Config{
-		Env:                env,
-		ListenAddr:         getenv("IGNITION_LISTEN_ADDR", ":8080"),
-		DatabaseURL:        strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		OIDCIssuer:         strings.TrimSpace(os.Getenv("IGNITION_OIDC_ISSUER")),
-		OIDCJWKSURL:        strings.TrimSpace(os.Getenv("IGNITION_OIDC_JWKS_URL")),
-		OIDCAudience:       getenv("IGNITION_OIDC_AUDIENCE", "https://api.ignition.dev"),
-		GatewayURL:         getenv("IGNITION_GATEWAY_URL", "https://gateway.us-central1.ignition.dev"),
-		StreamTokenSecret:  secret,
-		DevBearer:          strings.TrimSpace(os.Getenv("IGNITION_DEV_BEARER")),
-		EnabledRegion:      getenv("IGNITION_REGION", "us-central1"),
-		AllowedGPUTypes:    splitCSV(getenv("IGNITION_ALLOWED_GPU_TYPES", defaultGPUType)),
+		Env:               env,
+		ListenAddr:        getenv("IGNITION_LISTEN_ADDR", ":8080"),
+		DatabaseURL:       strings.TrimSpace(os.Getenv("DATABASE_URL")),
+		OIDCIssuer:        strings.TrimSpace(os.Getenv("IGNITION_OIDC_ISSUER")),
+		OIDCJWKSURL:       strings.TrimSpace(os.Getenv("IGNITION_OIDC_JWKS_URL")),
+		OIDCAudience:      getenv("IGNITION_OIDC_AUDIENCE", "https://api.ignition.dev"),
+		GatewayURL:        getenv("IGNITION_GATEWAY_URL", "https://gateway.us-central1.ignition.dev"),
+		StreamTokenSecret: secret,
+		DevBearer:         strings.TrimSpace(os.Getenv("IGNITION_DEV_BEARER")),
+		EnabledRegion:     getenv("IGNITION_REGION", "us-central1"),
+		AllowedAccelerators: splitCSV(getenv("IGNITION_ALLOWED_ACCELERATORS",
+			getenv("IGNITION_ALLOWED_GPU_TYPES", defaultAccelerator))),
 		MaxActiveSandboxes: maxActive,
 		KubeconfigPath:     os.Getenv("KUBECONFIG"),
 		K8sNamespace:       getenv("IGNITION_K8S_NAMESPACE", "ignition-sandboxes"),
@@ -128,11 +129,13 @@ func RequiresDatabase(env string) bool {
 	}
 }
 
-func (c Config) GPUTypeAllowed(t string) bool {
-	if len(c.AllowedGPUTypes) == 0 {
+// AcceleratorAllowed reports whether the platform allowlist permits t. An empty
+// allowlist permits any defined AcceleratorType.
+func (c Config) AcceleratorAllowed(t string) bool {
+	if len(c.AllowedAccelerators) == 0 {
 		return true
 	}
-	for _, allowed := range c.AllowedGPUTypes {
+	for _, allowed := range c.AllowedAccelerators {
 		if t == allowed {
 			return true
 		}

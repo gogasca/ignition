@@ -115,17 +115,3 @@ type Nodes interface {
 	SetScaleDownDisabled(nodeName string, disabled bool) error
 	ListGPUPool() ([]string, error)
 }
-
-// Policies applies per-sandbox NetworkPolicy objects.
-type Policies interface {
-	ApplyNetworkPolicy(p *NetworkPolicy) error
-	DeleteNetworkPolicy(name string) error
-}
-
-// NetworkPolicy is the controller's view of a namespaced NetworkPolicy.
-type NetworkPolicy struct {
-	Name        string
-	SandboxID   string
-	AllowDNS    bool
-	EgressCIDRs []string
-}

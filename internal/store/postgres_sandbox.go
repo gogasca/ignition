@@ -13,22 +13,21 @@ import (
 )
 
 const sandboxCols = `id, project_id, name, state, state_reason, image_id, operation_id, generation,
-	create_time, ready_time, finish_time, created_by, command, working_dir, environment,
+	create_time, ready_time, finish_time, created_by, command, working_dir,
 	resources, placement, timeouts, network, labels, secret_refs`
 
 func scanSandbox(scan func(dest ...any) error) (Sandbox, error) {
 	var sb Sandbox
-	var command, env, resources, placement, timeouts, network, labels, secretRefs []byte
+	var command, resources, placement, timeouts, network, labels, secretRefs []byte
 	err := scan(
 		&sb.ID, &sb.ProjectID, &sb.Name, &sb.State, &sb.StateReason, &sb.ImageID, &sb.OperationID, &sb.Generation,
-		&sb.CreateTime, &sb.ReadyTime, &sb.FinishTime, &sb.CreatedBy, &command, &sb.WorkingDir, &env,
+		&sb.CreateTime, &sb.ReadyTime, &sb.FinishTime, &sb.CreatedBy, &command, &sb.WorkingDir,
 		&resources, &placement, &timeouts, &network, &labels, &secretRefs,
 	)
 	if err != nil {
 		return Sandbox{}, mapErr(err)
 	}
 	unmarshalJSON(command, &sb.Command)
-	unmarshalJSON(env, &sb.Environment)
 	unmarshalJSON(resources, &sb.Resources)
 	unmarshalJSON(placement, &sb.Placement)
 	unmarshalJSON(timeouts, &sb.Timeouts)
@@ -105,7 +104,6 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 			CreatedBy:   in.Principal,
 			Command:     in.Command,
 			WorkingDir:  in.WorkingDir,
-			Environment: in.Environment,
 			Resources:   in.Resources,
 			Placement:   in.Placement,
 			Timeouts:    in.Timeouts,
@@ -129,13 +127,13 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 		_, err = tx.Exec(ctx, `
 			INSERT INTO sandboxes (
 				id, project_id, name, state, state_reason, image_id, operation_id, generation,
-				create_time, created_by, command, working_dir, environment,
+				create_time, created_by, command, working_dir,
 				resources, placement, timeouts, network, labels, secret_refs
 			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
 			)`,
 			sb.ID, sb.ProjectID, sb.Name, sb.State, sb.StateReason, sb.ImageID, sb.OperationID, sb.Generation,
-			sb.CreateTime, sb.CreatedBy, jsonSlice(sb.Command), sb.WorkingDir, jsonMap(sb.Environment),
+			sb.CreateTime, sb.CreatedBy, jsonSlice(sb.Command), sb.WorkingDir,
 			jsonVal(sb.Resources), jsonVal(sb.Placement), jsonVal(sb.Timeouts), jsonVal(sb.Network), jsonMap(sb.Labels),
 			jsonVal(sb.SecretRefs),
 		)

@@ -12,9 +12,9 @@ import (
 
 func spec() store.ResourceSpec {
 	return store.ResourceSpec{
-		CPUMilli:  1000,
-		MemoryMiB: 2048,
-		GPU:       store.GPUSpec{Count: 1, Type: store.GPUTypeNVIDIAL4},
+		CPUMilli:    1000,
+		MemoryMiB:   2048,
+		Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4},
 	}
 }
 

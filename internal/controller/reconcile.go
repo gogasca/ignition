@@ -72,6 +72,27 @@ func (c *Controller) observeWrite(ctx context.Context, sb store.Sandbox, state, 
 }
 
 func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) error {
+	switch sb.Placement.ComputeEnvironment {
+	case "", store.ComputeEnvironmentStandard:
+		// Empty supports development rows created before computeEnvironment was added.
+	case store.ComputeEnvironmentBareMetal:
+		switch sb.State {
+		case "FINISHED", "FAILED":
+			return nil
+		case "TERMINATING":
+			return c.store.UpdateObserved(ctx, store.ObservedUpdate{
+				ProjectID: sb.ProjectID,
+				SandboxID: sb.ID,
+				State:     "FINISHED",
+				Reason:    "TERMINATED",
+			})
+		default:
+			return c.fail(ctx, sb, "COMPUTE_ENVIRONMENT_UNAVAILABLE")
+		}
+	default:
+		return c.fail(ctx, sb, "COMPUTE_ENVIRONMENT_UNAVAILABLE")
+	}
+
 	name := k8s.PodName(sb.ID)
 	pod, err := c.pods.Get(name)
 	missing := errors.Is(err, k8s.ErrNotFound)
@@ -94,10 +115,8 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 					return err
 				}
 			}
-			_ = c.deletePolicy(sb.ID)
 			return c.pods.Delete(name)
 		}
-		_ = c.deletePolicy(sb.ID)
 		return nil
 
 	case "TERMINATING":
@@ -107,10 +126,8 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 					return err
 				}
 			}
-			_ = c.deletePolicy(sb.ID)
 			return c.pods.Delete(name)
 		}
-		_ = c.deletePolicy(sb.ID)
 		return c.store.UpdateObserved(ctx, store.ObservedUpdate{
 			ProjectID: sb.ProjectID,
 			SandboxID: sb.ID,
@@ -123,7 +140,6 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 	if missing {
 		if sb.State == "READY" || sb.State == "STARTED" || sb.State == "SCHEDULED" {
 			_ = c.failProcesses(ctx, sb)
-			_ = c.deletePolicy(sb.ID)
 			return c.fail(ctx, sb, "WORKER_LOST")
 		}
 		if !now.Before(deadline) {
@@ -133,7 +149,11 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 		if ref == "" {
 			return c.fail(ctx, sb, "IMAGE_UNAVAILABLE")
 		}
-		if k8s.NodePoolForGPUType(sb.Resources.GPU.Type) == "" {
+		// Phase 0: only GPU accelerators are serviceable. CPU-only ("NONE")
+		// sandboxes are accepted by the API and persisted, then fail closed
+		// here until the accelerator profile lands.
+		accType := sb.Resources.Accelerator.Type
+		if !store.AcceleratorIsGPU(accType) || k8s.NodePoolForGPUType(accType) == "" {
 			return c.fail(ctx, sb, "WORKLOAD_NOT_SUPPORTED")
 		}
 		secretEnv, err := c.resolveSecrets(ctx, sb)
@@ -146,7 +166,7 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 		if cerr != nil && !errors.Is(cerr, k8s.ErrAlreadyExists) {
 			return cerr
 		}
-		return c.applyPolicy(sb)
+		return nil
 	}
 
 	if imagePullFailed(pod) {
@@ -165,13 +185,8 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 			reason = "CAPACITY_UNAVAILABLE"
 		}
 		_ = c.failProcesses(ctx, sb)
-		_ = c.deletePolicy(sb.ID)
 		_ = c.pods.Delete(name)
 		return c.fail(ctx, sb, reason)
-	}
-
-	if err := c.applyPolicy(sb); err != nil {
-		return err
 	}
 
 	next := observe(pod)
@@ -304,20 +319,6 @@ func (c *Controller) resolveSecrets(ctx context.Context, sb store.Sandbox) (map[
 		out[ref.EnvironmentName] = val
 	}
 	return out, nil
-}
-
-func (c *Controller) applyPolicy(sb store.Sandbox) error {
-	if c.opts.Policies == nil {
-		return nil
-	}
-	return c.opts.Policies.ApplyNetworkPolicy(k8s.SandboxNetworkPolicy(sb))
-}
-
-func (c *Controller) deletePolicy(sandboxID string) error {
-	if c.opts.Policies == nil {
-		return nil
-	}
-	return c.opts.Policies.DeleteNetworkPolicy(k8s.PolicyName(sandboxID))
 }
 
 func (c *Controller) pinSandboxNodes() error {
