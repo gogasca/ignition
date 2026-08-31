@@ -12,11 +12,11 @@ The first implementation slice is this create/get/list/terminate/watch surface p
 
 **What the Go API implements today** (see [Implementation guide](../guides/ignition-implementation.md)):
 
-- `gpu.count` is `1`; `gpu.type` is the GpuType enum (`NVIDIA_L4`); platform allowlist `IGNITION_ALLOWED_GPU_TYPES` (default `NVIDIA_L4`).
+- `resources.accelerator.type` is the AcceleratorType enum (`NVIDIA_L4` or `NONE` for a CPU-only sandbox); `count` must be `1` for `NVIDIA_L4` and `0` for `NONE`. Platform allowlist `IGNITION_ALLOWED_ACCELERATORS` (default `NVIDIA_L4`), so CPU sandboxes are opt-in per environment. CPU sandboxes are accepted and persisted but the controller fails them `WORKLOAD_NOT_SUPPORTED` until the accelerator profile ships ([plan](multi-accelerator-sandbox-plan.md)).
 - `imageId` must match `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`.
-- CPU ≤ 8000m, memory ≤ 32768 MiB; timeout/command/env/label caps in `internal/api/limits.go`.
-- `ALLOW_LIST` egress requires at least one TLS domain or valid CIDR.
-- `secretRefs` are stored on the sandbox and injected by the controller from Secret Manager at Pod create. `readOnlyDatasets` are not honored.
+- CPU ≤ 8000m, memory ≤ 32768 MiB; timeout/command/label caps in `internal/api/limits.go`.
+- Internet access is an explicit `ENABLED` / `DISABLED` preference and defaults to `DISABLED`; the selected GCP network profile enforces it.
+- `secretRefs` are stored on the sandbox and injected by the controller from Secret Manager at Pod create.
 - Cancel of an in-flight create fails the sandbox (`CANCELLED`) and releases quota.
 - Terminate/cancel permission deny is `404`; create/exec deny stays `403`.
 - Watch is one SSE snapshot + heartbeats (~60s), not `Last-Event-ID` push-on-change yet.
@@ -27,6 +27,31 @@ Provisioning behavior behind the API is owned by the active runtime design:
 - **Custom runtime (future, gated):** the scheduler/worker flow described in [Processing flow](#processing-flow) and [Detailed control-plane behavior](#detailed-control-plane-behavior) below applies when the custom GCE/MIG runtime replaces GKE provisioning.
 
 Sandbox creation normally selects existing warm capacity. It never synchronously creates a GPU VM. When no compatible capacity is available, the request remains queued while the fleet layer (GKE Cluster Autoscaler in the MVP; `ignition-fleet` in the custom runtime) replenishes the warm pool.
+
+### Placement
+
+RL users do not need to understand GKE, gVisor, node pools, MIGs, or Compute Engine machine families. Placement exposes one optional user-facing compute preference:
+
+```proto
+message PlacementSpec {
+  string region = 1;
+  ComputeEnvironment compute_environment = 2;
+}
+
+enum ComputeEnvironment {
+  COMPUTE_ENVIRONMENT_UNSPECIFIED = 0; // Treated as STANDARD.
+  COMPUTE_ENVIRONMENT_STANDARD = 1;
+  COMPUTE_ENVIRONMENT_BARE_METAL = 2;
+}
+```
+
+- `STANDARD` is the default and recommended value. It requests the normal isolated Ignition sandbox service. The API does not expose that its current implementation is GKE with gVisor.
+- `BARE_METAL` is an advanced opt-in for workloads that explicitly require a physical Compute Engine host. Ignition chooses the machine type, image, zone, and fleet implementation.
+- Region remains optional and project-policy constrained.
+- Spot/on-demand purchasing is removed from the sandbox request. Capacity policy belongs to the project or service plan, not to typical RL workload code.
+- Until the bare-metal backend ships, its request is accepted asynchronously and the operation moves to `FAILED` with `COMPUTE_ENVIRONMENT_UNAVAILABLE`; it never silently falls back to `STANDARD`.
+
+The public response echoes the resolved `computeEnvironment`, but backend identifiers remain internal. This plan assumes Compute Engine bare-metal instances, not the separate Google Cloud Bare Metal Solution product.
 
 ## Endpoint
 
@@ -49,9 +74,6 @@ Required OAuth permission: `sandbox.create`.
   "imageId": "img_01J...",
   "command": ["python", "-m", "server"],
   "workingDirectory": "/workspace",
-  "environment": {
-    "LOG_LEVEL": "info"
-  },
   "secretRefs": [
     {
       "secretId": "sec_01J...",
@@ -62,14 +84,14 @@ Required OAuth permission: `sandbox.create`.
   "resources": {
     "cpuMilli": 4000,
     "memoryMiB": 16384,
-    "gpu": {
+    "accelerator": {
       "count": 1,
       "type": "NVIDIA_L4"
     }
   },
   "placement": {
     "region": "us-central1",
-    "provisioningPreference": "ON_DEMAND"
+    "computeEnvironment": "STANDARD"
   },
   "timeouts": {
     "startupSeconds": 120,
@@ -78,18 +100,8 @@ Required OAuth permission: `sandbox.create`.
     "terminationGraceSeconds": 20
   },
   "network": {
-    "egress": {
-      "mode": "DENY_ALL",
-      "allowedTlsDomains": [],
-      "allowedCidrs": []
-    }
+    "internetAccess": "DISABLED"
   },
-  "readOnlyDatasets": [
-    {
-      "datasetId": "data_01J...",
-      "mountPath": "/models"
-    }
-  ],
   "labels": {
     "team": "inference",
     "workload": "reference-model"
@@ -103,20 +115,18 @@ Required OAuth permission: `sandbox.create`.
 - `imageId`: required admitted image. This slice requires `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`; mutable OCI tags are not accepted on create.
 - `command`: optional argv array. It is never evaluated by a shell. When omitted, Ignition starts its sandbox init supervisor and waits for later `exec` requests.
 - `workingDirectory`: optional absolute path inside the image.
-- `environment`: optional non-secret values with project-configured count and size limits.
 - `secretRefs`: stored on create; the controller resolves Secret Manager at Pod create and injects env. Values never enter SQL.
 - `cpuMilli`: required, positive, max 8000 in this slice.
 - `memoryMiB`: required, positive, max 32768 in this slice.
-- `gpu.count`: exactly `1` in initial production.
-- `gpu.type`: required `GpuType` enum. Public JSON drops the proto prefix (`GPU_TYPE_NVIDIA_L4` → `"NVIDIA_L4"`). This slice allowlists `NVIDIA_L4` via `IGNITION_ALLOWED_GPU_TYPES`. GCE accelerator name `nvidia-l4` is infra-only, not the API value.
+- `accelerator.type`: required `AcceleratorType` enum. Public JSON drops the proto prefix (`ACCELERATOR_TYPE_NVIDIA_L4` → `"NVIDIA_L4"`, `ACCELERATOR_TYPE_NONE` → `"NONE"`). This slice allowlists `NVIDIA_L4` via `IGNITION_ALLOWED_ACCELERATORS`. GCE accelerator name `nvidia-l4` is infra-only, not the API value.
+- `accelerator.count`: `1` for `NVIDIA_L4`, `0` for `NONE`.
 - `region`: must be enabled for the project. Initial production is single-region.
-- `provisioningPreference`: `ON_DEMAND`, `SPOT_ALLOWED`, or `SPOT_ONLY`. Strict availability defaults to `ON_DEMAND`.
+- `computeEnvironment`: `STANDARD` (default) or `BARE_METAL`. `STANDARD` hides the managed runtime implementation. `BARE_METAL` never falls back to `STANDARD` when its backend is unavailable.
 - `startupSeconds`: maximum queue plus worker activation time before creation fails (max 600).
 - `maximumRuntimeSeconds`: hard sandbox lifetime (max 86400).
 - `idleSeconds`: inactivity period before termination; active processes or streams count as activity (max 3600).
 - `terminationGraceSeconds`: graceful stop period before forced termination (max 120).
-- `network.egress`: defaults to `DENY_ALL`. `ALLOW_LIST` requires `allowedTlsDomains` and/or valid `allowedCidrs`. Domain rules mean TLS port 443 through the approved egress proxy.
-- `readOnlyDatasets`: specified for v1; **not implemented** in this slice.
+- `network.internetAccess`: `DISABLED` (default) or `ENABLED`. This controls outbound public internet access only; it never creates inbound exposure or grants access to private control networks. GCP networking, not per-request CIDR rules, enforces the selected profile.
 - `labels`: optional bounded client metadata (max 32); reserved `ignition.*` keys are rejected.
 
 Public Session/runtime snapshots and user-supplied OCI hooks, host mounts, devices, CDI records, capabilities, namespaces, and readiness probes are not accepted.
@@ -139,8 +149,7 @@ Retry-After: 1
     "stateReason": "ADMITTED",
     "imageId": "img_01J...",
     "operationId": "op_01J...",
-    "createdAt": "2026-08-27T04:00:00Z",
-    "generation": 1
+    "createdAt": "2026-08-27T04:00:00Z"
   },
   "operation": {
     "id": "op_01J...",

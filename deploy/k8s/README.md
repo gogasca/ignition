@@ -1,9 +1,9 @@
 # GKE manifests
 
-Kustomize overlay for `ignition-api` and `ignition-controller`. The runbook is the [implementation guide](../../docs/guides/ignition-implementation.md#deploy-regional-dev) → `overlays/dev`.
+Kustomize manifests for `ignition-api` and `ignition-controller`. The base owns namespaces, service accounts, controller RBAC, Deployments, Services, and disruption budgets. Cloud SQL Auth Proxy components and environment overlays add configuration around that base.
 
-```bash
-kubectl apply -k deploy/k8s/overlays/dev
-```
+The supported runbook is the [regional dev deployment](../../docs/guides/ignition-implementation.md#deploy-regional-dev) using `overlays/dev`. Do not apply that directory unchanged: it contains the placeholder project `ignition-dev`. The guide copies `deploy/k8s` to a temporary directory, replaces project-specific image, Workload Identity, sandbox repository, and Cloud SQL values there, validates it with `kubectl kustomize`, and applies the rendered copy.
 
-Create `ignition-control-plane` in `ignition-system` before the first apply (see the [implementation guide](../../docs/guides/ignition-implementation.md)). Replace project IDs and image tags in the overlay to match Artifact Registry. The overlay includes a Cloud SQL Auth Proxy sidecar; set secret key `DATABASE_URL` to `postgres://ignition:…@127.0.0.1:5432/ignition?sslmode=disable`. Optional ConfigMap `IGNITION_OIDC_JWKS_URL` if discovery from the issuer is not used. `IGNITION_ENV` is set by the overlay (`dev`).
+Before applying an overlay, create `ignition-control-plane` in `ignition-system`. Its keys are `DATABASE_URL`, `STREAM_TOKEN_SECRET`, optional `OIDC_ISSUER`, and optional dev-only `DEV_BEARER`. The private Auth Proxy sidecar listens on loopback, so the application DSN is `postgres://ignition:…@127.0.0.1:5432/ignition?sslmode=disable`.
+
+`overlays/staging`, `overlays/prod`, and `overlays/sample` are templates, not validated production runbooks. They include Ingress resources and fixed project/domain placeholders that must be reviewed before use. No overlay deploys `ignition-gateway` or a sandbox workload; the controller creates sandbox Pods dynamically.

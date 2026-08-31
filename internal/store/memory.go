@@ -172,7 +172,6 @@ func (m *Memory) CreateSandbox(_ context.Context, in CreateSandboxInput) (Create
 		CreatedBy:   in.Principal,
 		Command:     in.Command,
 		WorkingDir:  in.WorkingDir,
-		Environment: in.Environment,
 		Resources:   in.Resources,
 		Placement:   in.Placement,
 		Timeouts:    in.Timeouts,

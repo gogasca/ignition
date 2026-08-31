@@ -11,8 +11,3 @@ func PodName(sandboxID string) string {
 func SandboxIDFromPodName(name string) string {
 	return strings.Replace(name, "-", "_", 1)
 }
-
-// PolicyName is the per-sandbox NetworkPolicy in ignition-sandboxes.
-func PolicyName(sandboxID string) string {
-	return "np-" + PodName(sandboxID)
-}

@@ -224,7 +224,7 @@ with Client() as client:
         image="img_...",
         command=["python", "-m", "server"],
         gpu=GPU(type=GPUType.NVIDIA_L4, count=1),
-        network=NetworkPolicy.deny_all(),
+        internet_access=InternetAccess.DISABLED,
     )
     sandbox.wait_ready(timeout=120)
     process = sandbox.exec(["nvidia-smi"])

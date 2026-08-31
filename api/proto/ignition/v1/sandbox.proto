@@ -8,7 +8,7 @@ import "google/protobuf/timestamp.proto";
 import "ignition/v1/common.proto";
 import "ignition/v1/operation.proto";
 
-// Isolated GPU sandbox. Public states:
+// Isolated sandbox (GPU or CPU-only, per resources.accelerator). Public states:
 // CREATING → SCHEDULED → STARTED → READY → TERMINATING → FINISHED
 // any nonterminal → FAILED
 //
@@ -22,7 +22,6 @@ message Sandbox {
   string state_reason = 5;
   string image_id = 6;
   string operation_id = 7;
-  int64 generation = 8;
   google.protobuf.Timestamp create_time = 9;
   google.protobuf.Timestamp ready_time = 10;
   google.protobuf.Timestamp finish_time = 11;
@@ -48,31 +47,35 @@ enum SandboxState {
 message ResourceSpec {
   int32 cpu_milli = 1;
   int32 memory_mib = 2;
-  GpuSpec gpu = 3;
+  reserved 3;
+  reserved "gpu";
+  AcceleratorSpec accelerator = 4;
 }
 
-message GpuSpec {
-  // Initial production: exactly 1.
+message AcceleratorSpec {
+  // NONE: 0. NVIDIA_L4: exactly 1.
   int32 count = 1;
-  GpuType type = 2;
+  AcceleratorType type = 2;
 }
 
-// Public JSON drops the prefix: GPU_TYPE_NVIDIA_L4 → "NVIDIA_L4".
-enum GpuType {
-  GPU_TYPE_UNSPECIFIED = 0;
-  GPU_TYPE_NVIDIA_L4 = 1;
+// Public JSON drops the prefix: ACCELERATOR_TYPE_NVIDIA_L4 → "NVIDIA_L4".
+// NONE is a CPU-only sandbox.
+enum AcceleratorType {
+  ACCELERATOR_TYPE_UNSPECIFIED = 0;
+  ACCELERATOR_TYPE_NONE = 1;
+  ACCELERATOR_TYPE_NVIDIA_L4 = 2;
 }
 
 message PlacementSpec {
   string region = 1;
-  ProvisioningPreference provisioning_preference = 2;
+  ComputeEnvironment compute_environment = 2;
 }
 
-enum ProvisioningPreference {
-  PROVISIONING_PREFERENCE_UNSPECIFIED = 0;
-  PROVISIONING_PREFERENCE_ON_DEMAND = 1;
-  PROVISIONING_PREFERENCE_SPOT_ALLOWED = 2;
-  PROVISIONING_PREFERENCE_SPOT_ONLY = 3;
+// Public HTTP JSON drops the prefix: COMPUTE_ENVIRONMENT_STANDARD → "STANDARD".
+enum ComputeEnvironment {
+  COMPUTE_ENVIRONMENT_UNSPECIFIED = 0;
+  COMPUTE_ENVIRONMENT_STANDARD = 1;
+  COMPUTE_ENVIRONMENT_BARE_METAL = 2;
 }
 
 message TimeoutSpec {
@@ -83,20 +86,16 @@ message TimeoutSpec {
 }
 
 message NetworkSpec {
-  EgressSpec egress = 1;
+  // Controls outbound access to the public internet. This does not expose the
+  // sandbox to inbound traffic or grant access to private control networks.
+  InternetAccess internet_access = 1;
 }
 
-message EgressSpec {
-  EgressMode mode = 1;
-  // TLS port 443 via the approved egress proxy.
-  repeated string allowed_tls_domains = 2;
-  repeated string allowed_cidrs = 3;
-}
-
-enum EgressMode {
-  EGRESS_MODE_UNSPECIFIED = 0;
-  EGRESS_MODE_DENY_ALL = 1;
-  EGRESS_MODE_ALLOW_LIST = 2;
+// Public HTTP JSON drops the prefix: INTERNET_ACCESS_DISABLED → "DISABLED".
+enum InternetAccess {
+  INTERNET_ACCESS_UNSPECIFIED = 0;
+  INTERNET_ACCESS_DISABLED = 1;
+  INTERNET_ACCESS_ENABLED = 2;
 }
 
 message SecretRef {
@@ -107,19 +106,15 @@ message SecretRef {
 
 message CreateSandboxRequest {
   string project_id = 1;
-  Idempotency idempotency = 2;
   string name = 3;
   string image_id = 4;
   repeated string command = 5;
   string working_directory = 6;
-  map<string, string> environment = 7;
   repeated SecretRef secret_refs = 8;
   ResourceSpec resources = 9;
   PlacementSpec placement = 10;
   TimeoutSpec timeouts = 11;
   NetworkSpec network = 12;
-  reserved 13;
-  reserved "read_only_datasets";
   map<string, string> labels = 14;
 }
 
@@ -147,7 +142,6 @@ message ListSandboxesResponse {
 message TerminateSandboxRequest {
   string project_id = 1;
   string sandbox_id = 2;
-  Idempotency idempotency = 3;
 }
 
 message TerminateSandboxResponse {

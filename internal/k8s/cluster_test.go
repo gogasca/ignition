@@ -18,7 +18,7 @@ func TestToCorev1SandboxProfile(t *testing.T) {
 		ProjectID: "prj_dev",
 		ImageID:   "img_seed",
 		Command:   []string{"python", "-m", "server"},
-		Resources: store.ResourceSpec{CPUMilli: 4000, MemoryMiB: 16384, GPU: store.GPUSpec{Count: 1}},
+		Resources: store.ResourceSpec{CPUMilli: 4000, MemoryMiB: 16384, Accelerator: store.AcceleratorSpec{Count: 1}},
 		Timeouts:  store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
 	}
 	internal := k8s.SandboxPod(sb, "img@sha256:abc")
@@ -165,31 +165,6 @@ func TestSetScaleDownDisabled(t *testing.T) {
 		t.Fatalf("annotations = %v", got.Annotations)
 	}
 	if err := c.SetScaleDownDisabled("gpu-1", false); err != nil {
-		t.Fatal(err)
-	}
-}
-
-func TestApplyNetworkPolicy(t *testing.T) {
-	fc := fake.NewSimpleClientset()
-	c := k8s.NewClusterWithClient(fc, k8s.Namespace)
-	np := &k8s.NetworkPolicy{
-		Name: "np-sbx-a", SandboxID: "sbx_a", AllowDNS: true,
-		EgressCIDRs: []string{"10.0.0.0/8"},
-	}
-	if err := c.ApplyNetworkPolicy(np); err != nil {
-		t.Fatal(err)
-	}
-	got, err := fc.NetworkingV1().NetworkPolicies(k8s.Namespace).Get(context.Background(), "np-sbx-a", metav1.GetOptions{})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got.Spec.PodSelector.MatchLabels[k8s.LabelSandboxID] != "sbx_a" {
-		t.Fatalf("selector = %v", got.Spec.PodSelector)
-	}
-	if err := c.ApplyNetworkPolicy(np); err != nil {
-		t.Fatal(err)
-	}
-	if err := c.DeleteNetworkPolicy("np-sbx-a"); err != nil {
 		t.Fatal(err)
 	}
 }

@@ -22,7 +22,7 @@ const createBody = `{
 	"resources": {
 		"cpuMilli": 1000,
 		"memoryMiB": 2048,
-		"gpu": {"count": 1, "type": "NVIDIA_L4"}
+		"accelerator": {"count": 1, "type": "NVIDIA_L4"}
 	}
 }`
 

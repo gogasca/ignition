@@ -26,7 +26,6 @@ type Options struct {
 	GCPProject      string
 	Region          string
 	Secrets         secrets.Resolver
-	Policies        k8s.Policies
 	BalloonCooldown time.Duration
 }
 
@@ -56,11 +55,6 @@ func New(st store.ControllerStore, pods k8s.Pods, nodes k8s.Nodes, opts Options)
 				return ""
 			}
 			return config.ResolveSandboxImage(imageID, prefix, opts.Region, opts.GCPProject)
-		}
-	}
-	if opts.Policies == nil {
-		if p, ok := pods.(k8s.Policies); ok {
-			opts.Policies = p
 		}
 	}
 	return &Controller{store: st, pods: pods, nodes: nodes, opts: opts}
@@ -154,7 +148,6 @@ func Run(cfg config.Config) error {
 		GCPProject:      cfg.GCPProject,
 		Region:          cfg.EnabledRegion,
 		Secrets:         secretResolver,
-		Policies:        cluster,
 		BalloonCooldown: defaultBalloonCooldown,
 		ResolveImage: func(imageID string) string {
 			if !store.ValidImageID(imageID) {

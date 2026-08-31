@@ -39,7 +39,6 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     created_by    TEXT NOT NULL DEFAULT '',
     command       JSONB NOT NULL DEFAULT '[]',
     working_dir   TEXT NOT NULL DEFAULT '',
-    environment   JSONB NOT NULL DEFAULT '{}',
     resources     JSONB NOT NULL DEFAULT '{}',
     placement     JSONB NOT NULL DEFAULT '{}',
     timeouts      JSONB NOT NULL DEFAULT '{}',

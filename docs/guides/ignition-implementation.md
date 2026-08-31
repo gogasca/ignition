@@ -17,7 +17,7 @@ This is the **only** build-and-deploy runbook: one regional GKE **dev** environm
 | `SandboxService` (lifecycle + process) and `OperationService` | Custom GCE MIG workers |
 | OIDC, Cloud SQL, `ignition-controller` | Digest-pinned images |
 | HTTP/JSON public edge (SSE for watch); `sandbox-init` health/GPU readiness | `ignition-gateway` Dockerfile / Ingress; process exec transport |
-| `secretRefs` (Secret Manager → Pod env), per-sandbox NetworkPolicy (enforced by Dataplane V2) | Domain ALLOW_LIST enforcement (CIDRs + DNS only) |
+| `secretRefs` (Secret Manager → Pod env), binary outbound internet preference | GCP network-profile provisioning for both internet modes |
 
 Public transport is **HTTP/JSON**. Protobuf is the schema; JSON field names follow proto `json_name` (lowerCamelCase). `ignition-api` must **not** call Kubernetes. The controller is the only Pod RBAC identity. They meet in Cloud SQL.
 
@@ -129,7 +129,7 @@ Until Project APIs exist, seed one project in Cloud SQL and bind the OIDC subjec
 
 ### Admission and store
 
-Validate before the SQL transaction: `imageId` matches `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`; `gpu.count` is `1`; `gpu.type` is `NVIDIA_L4` (`IGNITION_ALLOWED_GPU_TYPES`); CPU ≤ 8000m, memory ≤ 32768 MiB; timeout/command/env/label caps in `internal/api/limits.go`; `ALLOW_LIST` needs a TLS domain or CIDR.
+Validate before the SQL transaction: `imageId` matches `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`; `gpu.count` is `1`; `gpu.type` is `NVIDIA_L4` (`IGNITION_ALLOWED_GPU_TYPES`); CPU ≤ 8000m, memory ≤ 32768 MiB; timeout/command/label caps in `internal/api/limits.go`; `placement.computeEnvironment` is `STANDARD` or `BARE_METAL` and defaults to `STANDARD`; `network.internetAccess` is `ENABLED` or `DISABLED` and defaults to `DISABLED`.
 
 In one serializable transaction: idempotency key, insert sandbox `CREATING`, insert `CREATE_SANDBOX` operation, increment `project_quota.active`. Return `202`. Same key + same hash replays; different hash → `409 IDEMPOTENCY_KEY_REUSED`. **Do not create a Kubernetes Pod here.**
 
@@ -166,9 +166,9 @@ HTTP: `ReadHeaderTimeout` 10s, `IdleTimeout` 90s (no short `WriteTimeout`, so SS
 
 Distinct KSA. **This** binary is the only one with Pod RBAC. It must not run DDL.
 
-Loop: list sandboxes; skip Pod create when already `FAILED`/`FINISHED`/`TERMINATING`; resolve image as `${IGNITION_SANDBOX_IMAGE_PREFIX}/{imageId}` (or `{region}-docker.pkg.dev/${IGNITION_GCP_PROJECT}/sandboxes/{imageId}`) after the charset check (empty/invalid → `IMAGE_UNAVAILABLE`, no Pod); create Pod `sbx-{id}` with `runtimeClassName: gvisor`, one GPU, taint, anti-affinity, **read-only root filesystem**, writable `/scratch`; inject `secretRefs` from Secret Manager as env (missing secret → `SECRET_UNAVAILABLE`, no Pod); emit a per-sandbox NetworkPolicy (`ALLOW_LIST` CIDRs + kube-dns; `DENY_ALL` has no extra egress); map Pod conditions → `SCHEDULED` / `STARTED` / `READY` / `FAILED`. `sandbox-init` serves `/healthz` and `/readyz` on port 8081; readiness requires exactly one GPU identity discovered from `NVIDIA_VISIBLE_DEVICES`, NVIDIA procfs information, or a single `/dev/nvidiaN` device. Kubelet's resulting PodReady condition advances the public state to `READY`. The sandbox receives no Kubernetes credential. On terminate delete the Pod and NetworkPolicy. Annotate occupied GPU nodes with `cluster-autoscaler.kubernetes.io/scale-down-disabled=true`. Balloon scale-in waits 15 minutes. Cordon: GET the node, patch only if `ignition.io/node-pool=gpu-sandbox-l4`, return the error if cordon fails. Never create a second Pod for the same id.
+Loop: list sandboxes; `BARE_METAL` currently fails with `COMPUTE_ENVIRONMENT_UNAVAILABLE` without creating a GKE Pod; for `STANDARD`, skip Pod create when already `FAILED`/`FINISHED`/`TERMINATING`; resolve image as `${IGNITION_SANDBOX_IMAGE_PREFIX}/{imageId}` (or `{region}-docker.pkg.dev/${IGNITION_GCP_PROJECT}/sandboxes/{imageId}`) after the charset check (empty/invalid → `IMAGE_UNAVAILABLE`, no Pod); create Pod `sbx-{id}` with `runtimeClassName: gvisor`, one GPU, taint, anti-affinity, **read-only root filesystem**, writable `/scratch`; inject `secretRefs` from Secret Manager as env (missing secret → `SECRET_UNAVAILABLE`, no Pod); map the stored internet preference to a preconfigured GCP network profile; map Pod conditions → `SCHEDULED` / `STARTED` / `READY` / `FAILED`. `sandbox-init` serves `/healthz` and `/readyz` on port 8081; readiness requires exactly one GPU identity discovered from `NVIDIA_VISIBLE_DEVICES`, NVIDIA procfs information, or a single `/dev/nvidiaN` device. Kubelet's resulting PodReady condition advances the public state to `READY`. The sandbox receives no Kubernetes credential. On terminate delete the Pod. Annotate occupied GPU nodes with `cluster-autoscaler.kubernetes.io/scale-down-disabled=true`. Balloon scale-in waits 15 minutes. Cordon: GET the node, patch only if `ignition.io/node-pool=gpu-sandbox-l4`, return the error if cordon fails. Never create a second Pod for the same id.
 
-Controller RBAC: Pods and NetworkPolicies in `ignition-sandboxes`; ClusterRole get/list/patch Nodes. No cluster-admin. API KSA has **no** Kubernetes RBAC.
+Controller RBAC: Pods in `ignition-sandboxes`; ClusterRole get/list/patch Nodes. No cluster-admin. API KSA has **no** Kubernetes RBAC.
 
 ### `ignitionctl`
 
@@ -276,7 +276,7 @@ Inspect an existing request with `gcloud quotas preferences describe ignition-gl
 
 Private nodes, no public IPs on GPU VMs. Cloud NAT for image pulls. Do **not** enable GPU time-sharing, MPS, or MIG. SQL is **zonal** (one env); the *cluster* is regional.
 
-The cluster is created with **GKE Dataplane V2** (`--enable-dataplane-v2`). Dataplane V2 enforces Kubernetes `NetworkPolicy` in the kernel (eBPF) with no add-on: the `sandbox-default-deny` policy and the controller's per-sandbox `ALLOW_LIST` policies are load-bearing for tenant isolation, and without an enforcing dataplane they are silently ignored. Dataplane V2 can only be set **at creation time** — do not create the cluster on the legacy datapath and plan to "add network policy later"; migrating an existing cluster is a disruptive, all-node operation. Do **not** also pass `--enable-network-policy` or add the `NetworkPolicy` (Calico) add-on; that is the legacy provider and conflicts with Dataplane V2.
+The cluster is created with **GKE Dataplane V2** (`--enable-dataplane-v2`) for cluster-owned defense in depth. Client networking input is not converted into Kubernetes NetworkPolicy. `network.internetAccess` selects a preconfigured GCP network profile; VPC, subnet, firewall, NAT, and metadata protections are the enforcement boundary.
 
 ```bash
 gcloud services enable \
@@ -393,7 +393,7 @@ The intended IAM boundary is:
 | `ignition-api` GSA | `roles/cloudsql.client`; impersonation only from `ignition-system/ignition-api` | Kubernetes RBAC, Secret Manager, Artifact Registry |
 | `ignition-controller` GSA | `roles/cloudsql.client`, `roles/secretmanager.secretAccessor`; impersonation only from `ignition-system/ignition-controller` | Artifact Registry administration, broad Kubernetes IAM |
 | `ignition-nodes` GSA | `roles/container.defaultNodeServiceAccount`; repository-level Artifact Registry reader | Editor, Cloud SQL, Secret Manager |
-| `ignition-controller` KSA | Namespaced sandbox Pod/NetworkPolicy RBAC; node `get`, `list`, `patch` | Secrets, workloads in other namespaces, cluster-admin |
+| `ignition-controller` KSA | Namespaced sandbox Pod RBAC; node `get`, `list`, `patch` | Secrets, workloads in other namespaces, cluster-admin |
 | API, gateway, sandbox KSAs | No Kubernetes RBAC | Controller permissions and Google Cloud workload identity for gateway/sandboxes |
 
 Project-level Secret Manager access is currently necessary because the API accepts project-local `secretRefs` dynamically. Use a dedicated Ignition GCP project that contains no unrelated secrets. If deployments use a fixed secret inventory, replace the project binding with `roles/secretmanager.secretAccessor` bindings on only those Secret Manager resources.
@@ -412,9 +412,9 @@ kubectl get runtimeclass gvisor
 kubectl -n kube-system get ds anetd
 ```
 
-`datapathProvider` must read `ADVANCED_DATAPATH` (Dataplane V2). If it is empty or `LEGACY_DATAPATH`, the cluster was created without `--enable-dataplane-v2` and NetworkPolicy is not enforced — recreate it.
+`datapathProvider` should read `ADVANCED_DATAPATH` (Dataplane V2). Internet-access enforcement must not depend on client-authored Kubernetes policy.
 
-### 3. Namespaces, identities, PriorityClasses, NetworkPolicy
+### 3. Namespaces, identities, and PriorityClasses
 
 Apply the repository-owned KSAs before the temporary database bootstrap Pod. The annotations match the overlay and let the Auth Proxy use Workload Identity Federation.
 
@@ -438,30 +438,10 @@ kind: PriorityClass
 metadata: { name: ignition-balloon }
 value: -10
 globalDefault: false
----
-apiVersion: networking.k8s.io/v1
-kind: NetworkPolicy
-metadata:
-  name: sandbox-default-deny
-  namespace: ignition-sandboxes
-spec:
-  podSelector: {}
-  policyTypes: [Ingress, Egress]
-  ingress:
-    - from:
-        - namespaceSelector:
-            matchLabels:
-              kubernetes.io/metadata.name: ignition-system
-          podSelector:
-            matchLabels:
-              app: ignition-gateway
-  egress: []
 EOF
 ```
 
-Deny-all sandbox egress matches `network.egress.mode = DENY_ALL`. Per-sandbox `ALLOW_LIST` is a controller-emitted NetworkPolicy selecting `ignition.io/sandbox-id`: kube-dns plus `allowedCidrs`. TLS domains are admitted in SQL; FQDN filtering is still the egress-proxy path, not vanilla NetworkPolicy.
-
-Dataplane V2 (enabled at cluster creation) is what enforces these policies — the anetd DaemonSet in `kube-system` (`kubectl -n kube-system get ds anetd`) programs eBPF on every node from first boot, so a legacy `calico-node` roll is never needed. Confirm enforcement before trusting the isolation model: from a `READY` sandbox, `nvidia-smi` succeeds but `curl -m3 http://169.254.169.254/` (metadata), a TCP connect to the Cloud SQL private IP, and a connect to an `ignition-system` Pod IP all fail. This is covered by acceptance test 2 in the [GKE Sandbox MVP](../design/ignition-design-gke-sandbox.md#acceptance-tests) design.
+The API defaults `network.internetAccess` to `DISABLED`. The current application no longer creates per-sandbox NetworkPolicy resources and its KSA has no NetworkPolicy RBAC. Before advertising either mode, provision distinct GCP network profiles and verify that `DISABLED` has no public egress while both modes block metadata, Cloud SQL, private control ranges, cross-tenant traffic, and unsolicited ingress. Never silently place a `DISABLED` request onto an internet-enabled profile.
 
 
 ### 4. Bootstrap Cloud SQL
@@ -733,15 +713,14 @@ Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes
 - Do not enable public IPs on the GPU pool.
 - Do not share a GPU node across two customer sandboxes (no time-sharing, MPS, or MIG).
 - Do not use Autopilot; this pool shape is **GKE Standard**.
-- Do not create the cluster on the legacy datapath — `--enable-dataplane-v2` is create-time only and NetworkPolicy is unenforced without it.
-- Do not add `--enable-network-policy` / the Calico add-on; that is the legacy provider and conflicts with Dataplane V2.
+- Do not implement `network.internetAccess` by translating client input into arbitrary Kubernetes NetworkPolicy rules.
 - Do not run nodes as the default Compute Engine service account.
 - Do not treat node provision time as in-SLO; keep a warm buffer (`min_warm` 1–2) before measuring the 9s path.
 - Do not manage a GCP resource with both `gcloud` and Terraform.
 
 ## Next slices (out of scope here)
 
-Project, image, and event APIs; digest-pinned images; FQDN ALLOW_LIST via egress proxy; `ignition-gateway` image; custom GCE MIG workers if GKE cannot meet the SLO. Designs: [Client API](../design/ignition-design-client-api-identity.md), [Data plane](../design/ignition-design-data-plane-networking.md).
+Project, image, and event APIs; digest-pinned images; GCP network profiles for internet-disabled and internet-enabled sandboxes; `ignition-gateway` image; custom Compute Engine workers if GKE cannot meet the SLO. Designs: [Client API](../design/ignition-design-client-api-identity.md), [Data plane](../design/ignition-design-data-plane-networking.md).
 
 | Item | Value |
 |---|---|
@@ -751,6 +730,6 @@ Project, image, and event APIs; digest-pinned images; FQDN ALLOW_LIST via egress
 | Taint | `ignition.io/gpu-sandbox=true:NoSchedule` |
 | Label | `ignition.io/node-pool=gpu-sandbox-l4` |
 | Namespaces | `ignition-system`, `ignition-sandboxes` |
-| Datapath | Dataplane V2 (`ADVANCED_DATAPATH`) — enforces NetworkPolicy |
+| Datapath | Dataplane V2 (`ADVANCED_DATAPATH`) for cluster-owned defense in depth |
 | Overlay | `deploy/k8s/overlays/dev` |
 | Warm SLO | p95 API-to-`READY` ≤ 9s (pre-warmed nodes only) |

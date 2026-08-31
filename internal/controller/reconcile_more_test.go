@@ -204,12 +204,11 @@ func TestSecretEnvInjectedAtPodCreate(t *testing.T) {
 	m.SeedImage("prj_dev", "img_seed")
 	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
 		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
-		ImageID:     "img_seed",
-		Resources:   store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, GPU: store.GPUSpec{Count: 1, Type: store.GPUTypeNVIDIAL4}},
-		Timeouts:    store.TimeoutSpec{StartupSeconds: 120},
-		Environment: map[string]string{"LOG_LEVEL": "info"},
-		SecretRefs:  []store.SecretRef{{SecretID: "sec_token", EnvironmentName: "MODEL_TOKEN"}},
-		MaxActive:   10,
+		ImageID:    "img_seed",
+		Resources:  store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+		Timeouts:   store.TimeoutSpec{StartupSeconds: 120},
+		SecretRefs: []store.SecretRef{{SecretID: "sec_token", EnvironmentName: "MODEL_TOKEN"}},
+		MaxActive:  10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -225,9 +224,6 @@ func TestSecretEnvInjectedAtPodCreate(t *testing.T) {
 	if env["MODEL_TOKEN"] != "s3cret" {
 		t.Fatalf("secret env = %v", env)
 	}
-	if env["LOG_LEVEL"] != "info" {
-		t.Fatalf("tenant env = %v", env)
-	}
 }
 
 func TestMissingSecretFailsWithoutPod(t *testing.T) {
@@ -238,7 +234,7 @@ func TestMissingSecretFailsWithoutPod(t *testing.T) {
 	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
 		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
 		ImageID:    "img_seed",
-		Resources:  store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, GPU: store.GPUSpec{Count: 1, Type: store.GPUTypeNVIDIAL4}},
+		Resources:  store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
 		Timeouts:   store.TimeoutSpec{StartupSeconds: 120},
 		SecretRefs: []store.SecretRef{{SecretID: "missing", EnvironmentName: "TOKEN"}},
 		MaxActive:  10,
@@ -255,34 +251,6 @@ func TestMissingSecretFailsWithoutPod(t *testing.T) {
 	sb := mustGet(t, m, res.Sandbox.ID)
 	if sb.StateReason != "SECRET_UNAVAILABLE" {
 		t.Fatalf("reason = %s", sb.StateReason)
-	}
-}
-
-func TestAllowListNetworkPolicy(t *testing.T) {
-	m := store.NewMemory()
-	fake := k8s.NewFake()
-	c := controller.New(m, fake, fake, controller.Options{})
-	m.SeedImage("prj_dev", "img_seed")
-	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
-		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
-		ImageID:   "img_seed",
-		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, GPU: store.GPUSpec{Count: 1, Type: store.GPUTypeNVIDIAL4}},
-		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
-		Network: store.NetworkSpec{Egress: store.EgressSpec{
-			Mode:         "ALLOW_LIST",
-			AllowedCIDRs: []string{"1.2.3.0/24"},
-		}},
-		MaxActive: 10,
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := c.Reconcile(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	np := fake.NetworkPolicy(k8s.PolicyName(res.Sandbox.ID))
-	if np == nil || !np.AllowDNS || len(np.EgressCIDRs) != 1 || np.EgressCIDRs[0] != "1.2.3.0/24" {
-		t.Fatalf("policy = %+v", np)
 	}
 }
 

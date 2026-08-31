@@ -36,7 +36,6 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     created_by    TEXT NOT NULL DEFAULT '',
     command       JSONB NOT NULL DEFAULT '[]',
     working_dir   TEXT NOT NULL DEFAULT '',
-    environment   JSONB NOT NULL DEFAULT '{}',
     resources     JSONB NOT NULL DEFAULT '{}',
     placement     JSONB NOT NULL DEFAULT '{}',
     timeouts      JSONB NOT NULL DEFAULT '{}',
@@ -52,6 +51,7 @@ CREATE INDEX IF NOT EXISTS sandboxes_project_state ON sandboxes (project_id, sta
 CREATE INDEX IF NOT EXISTS sandboxes_create_time ON sandboxes (create_time);
 
 ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS secret_refs JSONB NOT NULL DEFAULT '[]';
+ALTER TABLE sandboxes DROP COLUMN IF EXISTS environment;
 
 CREATE TABLE IF NOT EXISTS operations (
     id               TEXT PRIMARY KEY,

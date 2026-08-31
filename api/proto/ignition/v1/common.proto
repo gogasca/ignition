@@ -48,12 +48,6 @@ enum ErrorCode {
   ERROR_CODE_DEADLINE_EXCEEDED = 15;
 }
 
-// Idempotency-Key is required on every create and retriable mutation.
-// REST maps this to the Idempotency-Key header; gRPC sends it as a field.
-message Idempotency {
-  string key = 1;
-}
-
 message LifecycleTimestamps {
   google.protobuf.Timestamp create_time = 1;
   google.protobuf.Timestamp update_time = 2;

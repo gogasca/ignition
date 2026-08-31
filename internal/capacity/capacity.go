@@ -2,15 +2,15 @@ package capacity
 
 // Inputs are the signals for the warm-node control loop.
 type Inputs struct {
-	CreatePerMinute   float64
-	NodeProvisionMin  float64
-	Busy              int
-	Warm              int
-	Queued            int
-	MinWarm           int
-	MaxWarm           int
-	MaxNodes          int
-	Safety            float64
+	CreatePerMinute  float64
+	NodeProvisionMin float64
+	Busy             int
+	Warm             int
+	Queued           int
+	MinWarm          int
+	MaxWarm          int
+	MaxNodes         int
+	Safety           float64
 }
 
 // DesiredWarm is idle GPU nodes to hold for the 9s SLO.

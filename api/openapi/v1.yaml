@@ -267,31 +267,27 @@ components:
           type: array
           items: { type: string }
         workingDirectory: { type: string }
-        environment:
-          type: object
-          additionalProperties: { type: string }
         resources:
           type: object
-          required: [cpuMilli, memoryMiB, gpu]
+          required: [cpuMilli, memoryMiB, accelerator]
           properties:
             cpuMilli: { type: integer, minimum: 1 }
             memoryMiB: { type: integer, minimum: 1 }
-            gpu:
+            accelerator:
               type: object
-              required: [count, type]
+              required: [type]
               properties:
-                count: { type: integer, enum: [1] }
+                count:
+                  type: integer
+                  description: NONE requires 0; NVIDIA_L4 requires 1.
                 type:
                   type: string
-                  enum: [NVIDIA_L4]
-                  description: Public JSON of proto GpuType (GPU_TYPE_ prefix stripped).
+                  enum: [NONE, NVIDIA_L4]
+                  description: >-
+                    Public JSON of proto AcceleratorType (ACCELERATOR_TYPE_
+                    prefix stripped). NONE is a CPU-only sandbox.
         placement:
-          type: object
-          properties:
-            region: { type: string }
-            provisioningPreference:
-              type: string
-              enum: [ON_DEMAND, SPOT_ALLOWED, SPOT_ONLY]
+          $ref: "#/components/schemas/PlacementSpec"
         timeouts:
           type: object
           properties:
@@ -300,20 +296,7 @@ components:
             idleSeconds: { type: integer }
             terminationGraceSeconds: { type: integer }
         network:
-          type: object
-          properties:
-            egress:
-              type: object
-              properties:
-                mode: { type: string, enum: [DENY_ALL, ALLOW_LIST] }
-                allowedTlsDomains:
-                  type: array
-                  maxItems: 0
-                  description: Reserved for a future authenticated egress proxy; currently rejected.
-                  items: { type: string }
-                allowedCidrs:
-                  type: array
-                  items: { type: string }
+          $ref: "#/components/schemas/NetworkSpec"
         secretRefs:
           type: array
           items:
@@ -334,9 +317,27 @@ components:
           $ref: "#/components/schemas/Sandbox"
         operation:
           $ref: "#/components/schemas/Operation"
+    NetworkSpec:
+      type: object
+      properties:
+        internetAccess:
+          type: string
+          enum: [DISABLED, ENABLED]
+          default: DISABLED
+          description: Controls outbound public internet access. It does not enable inbound access or access to private control networks.
+    PlacementSpec:
+      type: object
+      properties:
+        region:
+          type: string
+        computeEnvironment:
+          type: string
+          enum: [STANDARD, BARE_METAL]
+          default: STANDARD
+          description: STANDARD uses the managed Ignition sandbox service. BARE_METAL requires a dedicated Compute Engine bare-metal backend.
     Sandbox:
       type: object
-      required: [id, projectId, state, imageId, generation, resources]
+      required: [id, projectId, state, imageId, resources]
       properties:
         id: { type: string }
         projectId: { type: string }
@@ -345,14 +346,15 @@ components:
         stateReason: { type: string }
         imageId: { type: string }
         operationId: { type: string }
-        generation: { type: integer, format: int64 }
         createTime: { type: string, format: date-time }
         readyTime: { type: [string, "null"], format: date-time }
         finishTime: { type: [string, "null"], format: date-time }
         resources: { type: object }
-        placement: { type: object }
+        placement:
+          $ref: "#/components/schemas/PlacementSpec"
         timeouts: { type: object }
-        network: { type: object }
+        network:
+          $ref: "#/components/schemas/NetworkSpec"
         labels: { type: object, additionalProperties: { type: string } }
     Operation:
       type: object
