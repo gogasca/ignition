@@ -12,6 +12,8 @@
 
 Defines the recommended initial (MVP) architecture for Ignition: GPU sandboxes built on GKE Standard with GKE Sandbox (gVisor/`nvproxy`), rather than the custom GCE MIG worker runtime. The custom runtime described in the other module designs remains a gated future optimization; see [Relationship to the custom runtime](#relationship-to-the-custom-runtime).
 
+Sandboxes are now also CPU-only (`accelerator: NONE`), scheduled on a separate `cpu-sandbox` gVisor pool with no device request or one-per-node anti-affinity. The compute/timeout/network settings for any sandbox come from a system-managed [default runtime](ignition-design-default-runtime.md) (built-in default: CPU-only) that a request may override field-by-field. This document otherwise describes the GPU path; the accelerator profile registry (`internal/k8s/profile.go`) is the branch point.
+
 Requirements this design satisfies:
 
 1. **Fast startup:** p95 API-ingress-to-`READY` of at most 9 seconds on pre-warmed GPU capacity (see [Startup SLO](#startup-slo-and-definition)).

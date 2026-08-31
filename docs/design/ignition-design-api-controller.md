@@ -114,7 +114,7 @@ One serializable Cloud SQL transaction. The API never creates a Pod.
    - same hash → wait for commit and replay the stored response (`202`);
    - in progress → `409 IDEMPOTENCY_IN_PROGRESS` + `Retry-After`;
    - different hash → `409 IDEMPOTENCY_KEY_REUSED`.
-3. Validate image is admitted (`imageId` charset), region is enabled (`us-central1` only in this slice), resource/timeout/command/env/label caps, GPU type allowlist (`NVIDIA_L4` by default), `network.internetAccess` is `ENABLED` or `DISABLED`, and `secretRefs` (charset, env names). `gpu.count` must be `1`.
+3. Validate `imageId` charset and region. `resources`/`placement`/`timeouts`/`network` are optional: merge the request over the system [default runtime](ignition-design-default-runtime.md), then validate the resolved `RuntimeSpec` — accelerator allowlist (`IGNITION_ALLOWED_ACCELERATORS`, default `NONE,NVIDIA_L4`), per-type `accelerator.count`, CPU/memory/timeout caps, `computeEnvironment` and `internetAccess` enums. Validate `command`/`label` caps and `secretRefs` (charset, env names) separately.
 4. Insert `sandboxes` (`state = CREATING`, `generation = 1`).
 5. Insert `operations` (`kind = CREATE_SANDBOX`, `state = PENDING`).
 6. Increment `project_quota.active`.

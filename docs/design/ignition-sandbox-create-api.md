@@ -381,7 +381,7 @@ Error body:
     "retryAfterSeconds": 10,
     "details": {
       "region": "us-central1",
-      "gpuType": "NVIDIA_L4"
+      "accelerator": "NVIDIA_L4"
     }
   }
 }
