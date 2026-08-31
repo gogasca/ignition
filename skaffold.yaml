@@ -1,0 +1,41 @@
+# Render/deploy source for Google Cloud Deploy. Not used for local development.
+# Cloud Deploy renders deploy/k8s/overlays/staging with kustomize and overrides
+# the `ignition-api` / `ignition-controller` / `ignition-prober` image names via
+# `releases create --images`.
+apiVersion: skaffold/v4beta11
+kind: Config
+metadata:
+  name: ignition
+manifests:
+  kustomize:
+    paths:
+      - deploy/k8s/overlays/staging
+deploy:
+  kubectl: {}
+verify:
+  # Post-deploy gate: run the read-only critical-user-journeys (health, auth
+  # guard, default runtime, list) once against the freshly rolled API. The
+  # lifecycle journeys (create/exec/terminate) are covered continuously by the
+  # in-cluster ignition-prober Deployment and by tests/integration in CI.
+  - name: cuj-lite
+    container:
+      name: cuj-lite
+      image: ignition-prober
+      env:
+        - name: IGNITION_PROBE_TARGET
+          value: http://ignition-api.ignition-system:8080
+        - name: IGNITION_PROBE_ONESHOT
+          value: "true"
+        - name: IGNITION_PROBE_JOURNEYS
+          value: lite
+        - name: IGNITION_PROBE_AUTH
+          value: none
+    executionMode:
+      # Run as an in-cluster Job so it can reach the private ClusterIP.
+      kubernetesCluster: {}
+profiles:
+  - name: staging
+    manifests:
+      kustomize:
+        paths:
+          - deploy/k8s/overlays/staging

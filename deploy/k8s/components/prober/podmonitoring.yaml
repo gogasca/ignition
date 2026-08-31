@@ -1,0 +1,20 @@
+# GKE Managed Prometheus scrape config for the prober's /metrics endpoint.
+# Not referenced by kustomization.yaml by default — add it there once Managed
+# Prometheus is enabled on the cluster (it requires the monitoring.googleapis.com
+# CRDs to be installed).
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: ignition-prober
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-prober
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ignition-prober
+  endpoints:
+    - port: metrics
+      interval: 30s
+      path: /metrics

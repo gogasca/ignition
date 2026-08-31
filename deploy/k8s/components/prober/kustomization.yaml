@@ -1,0 +1,11 @@
+# Adds the ignition-prober workload (synthetic critical-user-journey monitoring).
+# Include from an overlay that has a running control plane, e.g. overlays/staging:
+#   components:
+#     - ../../components/prober
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - serviceaccount.yaml
+  - ignition-prober.yaml
+  # podmonitoring.yaml requires GKE Managed Prometheus; add it to this list when
+  # that is enabled on the cluster.

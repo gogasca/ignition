@@ -31,7 +31,11 @@ vet:
 images:
 	docker build -f deploy/docker/ignition-api.Dockerfile -t $(IMAGE_REGISTRY)/ignition-api:$(IMAGE_TAG) .
 	docker build -f deploy/docker/ignition-controller.Dockerfile -t $(IMAGE_REGISTRY)/ignition-controller:$(IMAGE_TAG) .
+	docker build -f deploy/docker/ignition-gateway.Dockerfile -t $(IMAGE_REGISTRY)/ignition-gateway:$(IMAGE_TAG) .
+	docker build -f deploy/docker/ignition-prober.Dockerfile -t $(IMAGE_REGISTRY)/ignition-prober:$(IMAGE_TAG) .
 
 push-images: images
 	docker push $(IMAGE_REGISTRY)/ignition-api:$(IMAGE_TAG)
 	docker push $(IMAGE_REGISTRY)/ignition-controller:$(IMAGE_TAG)
+	docker push $(IMAGE_REGISTRY)/ignition-gateway:$(IMAGE_TAG)
+	docker push $(IMAGE_REGISTRY)/ignition-prober:$(IMAGE_TAG)

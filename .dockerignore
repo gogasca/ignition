@@ -19,7 +19,9 @@ node_modules
 **/testdata
 deploy/k8s
 deploy/terraform
-deploy/cloudbuild.yaml
+deploy/cloudbuild
+deploy/clouddeploy
+skaffold.yaml
 **/*.md
 .idea
 .vscode
