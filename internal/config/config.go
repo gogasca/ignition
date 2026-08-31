@@ -1,16 +1,21 @@
 package config
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 	"os"
 	"strconv"
 	"strings"
+
+	"ignition.dev/ignition/internal/store"
 )
 
 const (
 	defaultStreamSecret = "dev-stream-token-secret"
-	defaultAccelerator  = "NVIDIA_L4"
+	// Both accelerator classes are allowed by default so the built-in CPU
+	// default runtime is usable without extra configuration.
+	defaultAccelerators = "NONE,NVIDIA_L4"
 )
 
 // Config is process configuration shared by control-plane binaries.
@@ -33,6 +38,10 @@ type Config struct {
 	MaxWarm             int
 	GCPProject          string
 	SandboxImagePrefix  string
+	// DefaultRuntime fills any RuntimeSpec field a CreateSandbox request
+	// leaves unset. Overridden by IGNITION_DEFAULT_RUNTIME (JSON); the
+	// built-in fallback is a CPU-only sandbox.
+	DefaultRuntime store.RuntimeSpec
 }
 
 func Load() (Config, error) {
@@ -63,7 +72,7 @@ func Load() (Config, error) {
 		DevBearer:         strings.TrimSpace(os.Getenv("IGNITION_DEV_BEARER")),
 		EnabledRegion:     getenv("IGNITION_REGION", "us-central1"),
 		AllowedAccelerators: splitCSV(getenv("IGNITION_ALLOWED_ACCELERATORS",
-			getenv("IGNITION_ALLOWED_GPU_TYPES", defaultAccelerator))),
+			getenv("IGNITION_ALLOWED_GPU_TYPES", defaultAccelerators))),
 		MaxActiveSandboxes: maxActive,
 		KubeconfigPath:     os.Getenv("KUBECONFIG"),
 		K8sNamespace:       getenv("IGNITION_K8S_NAMESPACE", "ignition-sandboxes"),
@@ -72,16 +81,46 @@ func Load() (Config, error) {
 		GCPProject:         strings.TrimSpace(os.Getenv("IGNITION_GCP_PROJECT")),
 		SandboxImagePrefix: strings.TrimSpace(os.Getenv("IGNITION_SANDBOX_IMAGE_PREFIX")),
 	}
+	rt, err := parseDefaultRuntime(os.Getenv("IGNITION_DEFAULT_RUNTIME"))
+	if err != nil {
+		return Config{}, err
+	}
+	cfg.DefaultRuntime = rt
 	if err := cfg.Validate(); err != nil {
 		return Config{}, err
 	}
 	return cfg, nil
 }
 
+// parseDefaultRuntime merges an optional IGNITION_DEFAULT_RUNTIME JSON object
+// over the built-in CPU default, so an operator can override just the fields
+// they care about.
+func parseDefaultRuntime(raw string) (store.RuntimeSpec, error) {
+	base := store.BuiltinDefaultRuntime()
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return base, nil
+	}
+	var override store.RuntimeSpec
+	dec := json.NewDecoder(strings.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&override); err != nil {
+		return store.RuntimeSpec{}, fmt.Errorf("IGNITION_DEFAULT_RUNTIME is not a valid RuntimeSpec: %w", err)
+	}
+	return store.MergeRuntime(base, override), nil
+}
+
 // Validate fails closed for staging/prod misconfiguration.
 func (c Config) Validate() error {
 	if c.MinWarm < 0 || c.MaxWarm < 0 || c.MinWarm > c.MaxWarm {
 		return fmt.Errorf("IGNITION_MIN_WARM (%d) and IGNITION_MAX_WARM (%d) must satisfy 0 <= min <= max", c.MinWarm, c.MaxWarm)
+	}
+	rt := c.EffectiveDefaultRuntime()
+	if err := store.ValidateRuntimeSpec(rt); err != nil {
+		return fmt.Errorf("IGNITION_DEFAULT_RUNTIME: %w", err)
+	}
+	if !c.AcceleratorAllowed(rt.Resources.Accelerator.Type) {
+		return fmt.Errorf("default runtime accelerator %q is not permitted by IGNITION_ALLOWED_ACCELERATORS", rt.Resources.Accelerator.Type)
 	}
 	// IGNITION_ENV is free-form: only staging/prod/production are database-backed
 	// (see RequiresDatabase). Any other label (dev, test, ci, local, a per-branch
@@ -127,6 +166,15 @@ func RequiresDatabase(env string) bool {
 	default:
 		return false
 	}
+}
+
+// EffectiveDefaultRuntime returns DefaultRuntime, or the built-in CPU default
+// when it is unset (hand-built Config values in tests).
+func (c Config) EffectiveDefaultRuntime() store.RuntimeSpec {
+	if c.DefaultRuntime == (store.RuntimeSpec{}) {
+		return store.BuiltinDefaultRuntime()
+	}
+	return c.DefaultRuntime
 }
 
 // AcceleratorAllowed reports whether the platform allowlist permits t. An empty

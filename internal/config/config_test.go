@@ -144,3 +144,57 @@ func TestResolveSandboxImage(t *testing.T) {
 		t.Fatal("empty project must fail closed")
 	}
 }
+
+func TestLoadDefaultRuntimeIsBuiltinCPU(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultRuntime.Resources.Accelerator.Type != "NONE" {
+		t.Fatalf("default runtime accelerator = %q", cfg.DefaultRuntime.Resources.Accelerator.Type)
+	}
+	if cfg.DefaultRuntime.Resources.CPUMilli != 1000 {
+		t.Fatalf("default runtime cpuMilli = %d", cfg.DefaultRuntime.Resources.CPUMilli)
+	}
+}
+
+func TestLoadDefaultRuntimeOverrideMerges(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_DEFAULT_RUNTIME", `{"resources":{"cpuMilli":4000}}`)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.DefaultRuntime.Resources.CPUMilli != 4000 {
+		t.Fatalf("cpuMilli override = %d", cfg.DefaultRuntime.Resources.CPUMilli)
+	}
+	if cfg.DefaultRuntime.Resources.MemoryMiB != 2048 {
+		t.Fatalf("memoryMiB should keep builtin value, got %d", cfg.DefaultRuntime.Resources.MemoryMiB)
+	}
+}
+
+func TestLoadDefaultRuntimeRejectsBadJSON(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_DEFAULT_RUNTIME", `{"resources":`)
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "IGNITION_DEFAULT_RUNTIME") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadDefaultRuntimeRejectsOverCap(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_DEFAULT_RUNTIME", `{"resources":{"cpuMilli":99999}}`)
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "IGNITION_DEFAULT_RUNTIME") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadDefaultRuntimeAcceleratorMustBeAllowed(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_ALLOWED_ACCELERATORS", "NVIDIA_L4")
+	t.Setenv("IGNITION_DEFAULT_RUNTIME", `{"resources":{"accelerator":{"type":"NONE"}}}`)
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "not permitted") {
+		t.Fatalf("err = %v", err)
+	}
+}

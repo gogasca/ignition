@@ -9,13 +9,9 @@ import (
 	"ignition.dev/ignition/internal/store"
 )
 
+// RuntimeSpec caps (cpu/memory/timeouts) live in internal/store as exported
+// constants so the default runtime is validated the same way at startup.
 const (
-	maxCPUMilli       = 8000
-	maxMemoryMiB      = 32768
-	maxStartupSeconds = 600
-	maxRuntimeSeconds = 86400
-	maxIdleSeconds    = 3600
-	maxGraceSeconds   = 120
 	maxCommandArgs    = 32
 	maxCommandBytes   = 16 << 10
 	maxEnvKeys        = 32
@@ -89,22 +85,6 @@ func checkSecretRefs(refs []store.SecretRef) error {
 			return fmt.Errorf("secretRefs.environmentName %q is duplicated", ref.EnvironmentName)
 		}
 		seen[ref.EnvironmentName] = struct{}{}
-	}
-	return nil
-}
-
-func checkTimeouts(t store.TimeoutSpec) error {
-	if t.StartupSeconds < 1 || t.StartupSeconds > maxStartupSeconds {
-		return fmt.Errorf("timeouts.startupSeconds must be between 1 and %d", maxStartupSeconds)
-	}
-	if t.MaximumRuntimeSeconds < 1 || t.MaximumRuntimeSeconds > maxRuntimeSeconds {
-		return fmt.Errorf("timeouts.maximumRuntimeSeconds must be between 1 and %d", maxRuntimeSeconds)
-	}
-	if t.IdleSeconds < 1 || t.IdleSeconds > maxIdleSeconds {
-		return fmt.Errorf("timeouts.idleSeconds must be between 1 and %d", maxIdleSeconds)
-	}
-	if t.TerminationGraceSeconds < 1 || t.TerminationGraceSeconds > maxGraceSeconds {
-		return fmt.Errorf("timeouts.terminationGraceSeconds must be between 1 and %d", maxGraceSeconds)
 	}
 	return nil
 }

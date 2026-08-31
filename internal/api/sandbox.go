@@ -88,28 +88,6 @@ func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 	if err := store.CheckImageID(body.ImageID); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
-	if body.Resources == nil || body.Resources.CPUMilli < 1 || body.Resources.MemoryMiB < 1 {
-		return store.CreateSandboxInput{}, fmt.Errorf("resources.cpuMilli and resources.memoryMiB are required")
-	}
-	if body.Resources.CPUMilli > maxCPUMilli {
-		return store.CreateSandboxInput{}, fmt.Errorf("resources.cpuMilli exceeds %d", maxCPUMilli)
-	}
-	if body.Resources.MemoryMiB > maxMemoryMiB {
-		return store.CreateSandboxInput{}, fmt.Errorf("resources.memoryMiB exceeds %d", maxMemoryMiB)
-	}
-	acc := body.Resources.Accelerator
-	if acc.Type == "" {
-		return store.CreateSandboxInput{}, fmt.Errorf("resources.accelerator.type is required")
-	}
-	if !store.ValidAccelerator(acc.Type) {
-		return store.CreateSandboxInput{}, fmt.Errorf("accelerator.type %q is not a supported AcceleratorType", acc.Type)
-	}
-	if want, fixed := store.RequiredAcceleratorCount(acc.Type); fixed && acc.Count != want {
-		return store.CreateSandboxInput{}, fmt.Errorf("accelerator.count must be %d for accelerator.type %q", want, acc.Type)
-	}
-	if !s.cfg.AcceleratorAllowed(acc.Type) {
-		return store.CreateSandboxInput{}, fmt.Errorf("accelerator.type %q is not allowed", acc.Type)
-	}
 	if err := checkCommand(body.Command); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
@@ -119,73 +97,52 @@ func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 	if err := checkSecretRefs(body.SecretRefs); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
-	region := s.cfg.EnabledRegion
-	if region == "" {
-		region = "us-central1"
-	}
-	computeEnvironment := store.ComputeEnvironmentStandard
-	if body.Placement != nil {
-		if body.Placement.Region != "" && body.Placement.Region != region {
-			return store.CreateSandboxInput{}, fmt.Errorf("region %q is not enabled", body.Placement.Region)
-		}
-		if body.Placement.ComputeEnvironment != "" {
-			switch body.Placement.ComputeEnvironment {
-			case store.ComputeEnvironmentStandard, store.ComputeEnvironmentBareMetal:
-				computeEnvironment = body.Placement.ComputeEnvironment
-			default:
-				return store.CreateSandboxInput{}, fmt.Errorf("invalid placement.computeEnvironment")
-			}
-		}
-	}
 	for k := range body.Labels {
 		if strings.HasPrefix(k, "ignition.") {
 			return store.CreateSandboxInput{}, fmt.Errorf("label key %q is reserved", k)
 		}
 	}
-	timeouts := store.TimeoutSpec{
-		StartupSeconds:          120,
-		MaximumRuntimeSeconds:   3600,
-		IdleSeconds:             600,
-		TerminationGraceSeconds: 20,
+
+	// Every RuntimeSpec field is optional: build a partial spec from the
+	// request and merge it over the system default runtime.
+	region := s.cfg.EnabledRegion
+	if region == "" {
+		region = "us-central1"
+	}
+	var req store.RuntimeSpec
+	if body.Resources != nil {
+		req.Resources = *body.Resources
 	}
 	if body.Timeouts != nil {
-		if body.Timeouts.StartupSeconds > 0 {
-			timeouts.StartupSeconds = body.Timeouts.StartupSeconds
-		}
-		if body.Timeouts.MaximumRuntimeSeconds > 0 {
-			timeouts.MaximumRuntimeSeconds = body.Timeouts.MaximumRuntimeSeconds
-		}
-		if body.Timeouts.IdleSeconds > 0 {
-			timeouts.IdleSeconds = body.Timeouts.IdleSeconds
-		}
-		if body.Timeouts.TerminationGraceSeconds > 0 {
-			timeouts.TerminationGraceSeconds = body.Timeouts.TerminationGraceSeconds
-		}
+		req.Timeouts = *body.Timeouts
 	}
-	if err := checkTimeouts(timeouts); err != nil {
+	if body.Network != nil {
+		req.Network = *body.Network
+	}
+	if body.Placement != nil {
+		if body.Placement.Region != "" && body.Placement.Region != region {
+			return store.CreateSandboxInput{}, fmt.Errorf("region %q is not enabled", body.Placement.Region)
+		}
+		req.Placement = *body.Placement
+	}
+	rt := store.MergeRuntime(s.cfg.EffectiveDefaultRuntime(), req)
+	rt.Placement.Region = region
+	if err := store.ValidateRuntimeSpec(rt); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
-	net := store.NetworkSpec{InternetAccess: store.InternetAccessDisabled}
-	if body.Network != nil && body.Network.InternetAccess != "" {
-		switch body.Network.InternetAccess {
-		case store.InternetAccessDisabled, store.InternetAccessEnabled:
-			net.InternetAccess = body.Network.InternetAccess
-		default:
-			return store.CreateSandboxInput{}, fmt.Errorf("invalid network.internetAccess")
-		}
+	if !s.cfg.AcceleratorAllowed(rt.Resources.Accelerator.Type) {
+		return store.CreateSandboxInput{}, fmt.Errorf("accelerator.type %q is not allowed", rt.Resources.Accelerator.Type)
 	}
+
 	return store.CreateSandboxInput{
 		Name:       body.Name,
 		ImageID:    body.ImageID,
 		Command:    body.Command,
 		WorkingDir: body.WorkingDirectory,
-		Resources:  *body.Resources,
-		Placement: store.PlacementSpec{
-			Region:             region,
-			ComputeEnvironment: computeEnvironment,
-		},
-		Timeouts:   timeouts,
-		Network:    net,
+		Resources:  rt.Resources,
+		Placement:  rt.Placement,
+		Timeouts:   rt.Timeouts,
+		Network:    rt.Network,
 		Labels:     body.Labels,
 		SecretRefs: body.SecretRefs,
 	}, nil
