@@ -38,7 +38,7 @@ spec:
         app: ignition-prober
     spec:
       serviceAccountName: ignition-prober
-      automountServiceAccountToken: true
+      automountServiceAccountToken: false
       securityContext:
         runAsNonRoot: true
         runAsUser: 65532

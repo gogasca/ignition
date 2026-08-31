@@ -1,0 +1,47 @@
+# Per-component PR validation build.
+#
+# One trigger per container (see deploy/PIPELINE.md "Flow 0"), each with an
+# `includedFiles` filter from deploy/cloudbuild/prpaths so the trigger only fires
+# when that binary's own code or a package it compiles in changes.
+#
+# This validates only: it runs the full hermetic test suite and builds the
+# affected image. Nothing is pushed — Flow 1 (push to main) and Flow 2 (nightly)
+# are the only jobs that publish images.
+
+substitutions:
+  _COMPONENT: ""            # api | controller | gateway
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+timeout: 1200s
+
+steps:
+  # Unit + hermetic integration tests (tests/integration + import-graph and
+  # prpaths drift guards) + vet.
+  - name: golang:1.26.7-bookworm
+    id: vet-test
+    entrypoint: bash
+    volumes:
+      - name: go-mod
+        path: /go/pkg/mod
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        test -n "$_COMPONENT" || { echo "_COMPONENT is required" >&2; exit 1; }
+        go vet ./...
+        go test ./... -count=1
+
+  # Prove the affected image builds. No -t registry path, no push.
+  - name: gcr.io/cloud-builders/docker
+    id: build
+    args:
+      - build
+      - -f
+      - deploy/docker/ignition-${_COMPONENT}.Dockerfile
+      - -t
+      - ignition-${_COMPONENT}:pr
+      - .

@@ -18,6 +18,10 @@ data:
   IGNITION_ENV: "staging"
   IGNITION_GCP_PROJECT: "ignition-staging"
   IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/ignition-staging/sandboxes"
+  # base sets MIN_WARM=1, which pins a balloon Pod and keeps the g2-standard-8 +
+  # L4 pool from scaling to zero. Staging does not need a standing warm pool;
+  # raise this only while exercising warm-pool behaviour.
+  IGNITION_MIN_WARM: "0"
 ---
 apiVersion: v1
 kind: ConfigMap
