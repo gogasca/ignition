@@ -129,7 +129,7 @@ Until Project APIs exist, seed one project in Cloud SQL and bind the OIDC subjec
 
 ### Admission and store
 
-Validate before the SQL transaction: `imageId` matches `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`; `gpu.count` is `1`; `gpu.type` is `NVIDIA_L4` (`IGNITION_ALLOWED_GPU_TYPES`); CPU ≤ 8000m, memory ≤ 32768 MiB; timeout/command/label caps in `internal/api/limits.go`; `placement.computeEnvironment` is `STANDARD` or `BARE_METAL` and defaults to `STANDARD`; `network.internetAccess` is `ENABLED` or `DISABLED` and defaults to `DISABLED`.
+Validate before the SQL transaction: `imageId` matches `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`. `resources`, `placement`, `timeouts`, `network` are optional — each unset field is merged from the system default runtime (`IGNITION_DEFAULT_RUNTIME`, built-in = CPU-only) and the resolved `RuntimeSpec` is validated: `resources.accelerator.type` in `IGNITION_ALLOWED_ACCELERATORS` (default `NONE,NVIDIA_L4`), `count` `1` for `NVIDIA_L4` / `0` for `NONE`; CPU ≤ 8000m, memory ≤ 32768 MiB; timeout caps and enum checks in `internal/store/runtime.go`; `placement.computeEnvironment` is `STANDARD` or `BARE_METAL`; `network.internetAccess` is `ENABLED` or `DISABLED`. Command/label caps stay in `internal/api/limits.go`. `GET /v1/projects/{project}/runtimes/default` returns the resolved default runtime.
 
 In one serializable transaction: idempotency key, insert sandbox `CREATING`, insert `CREATE_SANDBOX` operation, increment `project_quota.active`. Return `202`. Same key + same hash replays; different hash → `409 IDEMPOTENCY_KEY_REUSED`. **Do not create a Kubernetes Pod here.**
 
@@ -151,7 +151,8 @@ Tables (`db/migrations/000001_init.up.sql`, embedded as `internal/store/schema.s
 | `IGNITION_STREAM_TOKEN_SECRET` | API | attach tokens; required non-default in staging/prod |
 | `IGNITION_DEV_BEARER` | API | allowed in this overlay |
 | `IGNITION_GATEWAY_URL` | API | stream token audience |
-| `IGNITION_ALLOWED_GPU_TYPES` | API | GpuType allowlist; default `NVIDIA_L4` |
+| `IGNITION_ALLOWED_ACCELERATORS` | API | AcceleratorType allowlist; default `NONE,NVIDIA_L4` (alias: `IGNITION_ALLOWED_GPU_TYPES`) |
+| `IGNITION_DEFAULT_RUNTIME` | API | JSON `RuntimeSpec` merged over the built-in CPU default; validated at startup |
 | `IGNITION_MAX_ACTIVE_SANDBOXES` | API | per-project quota |
 | `IGNITION_K8S_NAMESPACE` | controller | default `ignition-sandboxes` |
 | `IGNITION_MIN_WARM` / `IGNITION_MAX_WARM` | controller | balloon Pods |
@@ -166,7 +167,7 @@ HTTP: `ReadHeaderTimeout` 10s, `IdleTimeout` 90s (no short `WriteTimeout`, so SS
 
 Distinct KSA. **This** binary is the only one with Pod RBAC. It must not run DDL.
 
-Loop: list sandboxes; `BARE_METAL` currently fails with `COMPUTE_ENVIRONMENT_UNAVAILABLE` without creating a GKE Pod; for `STANDARD`, skip Pod create when already `FAILED`/`FINISHED`/`TERMINATING`; resolve image as `${IGNITION_SANDBOX_IMAGE_PREFIX}/{imageId}` (or `{region}-docker.pkg.dev/${IGNITION_GCP_PROJECT}/sandboxes/{imageId}`) after the charset check (empty/invalid → `IMAGE_UNAVAILABLE`, no Pod); create Pod `sbx-{id}` with `runtimeClassName: gvisor`, one GPU, taint, anti-affinity, **read-only root filesystem**, writable `/scratch`; inject `secretRefs` from Secret Manager as env (missing secret → `SECRET_UNAVAILABLE`, no Pod); map the stored internet preference to a preconfigured GCP network profile; map Pod conditions → `SCHEDULED` / `STARTED` / `READY` / `FAILED`. `sandbox-init` serves `/healthz` and `/readyz` on port 8081; readiness requires exactly one GPU identity discovered from `NVIDIA_VISIBLE_DEVICES`, NVIDIA procfs information, or a single `/dev/nvidiaN` device. Kubelet's resulting PodReady condition advances the public state to `READY`. The sandbox receives no Kubernetes credential. On terminate delete the Pod. Annotate occupied GPU nodes with `cluster-autoscaler.kubernetes.io/scale-down-disabled=true`. Balloon scale-in waits 15 minutes. Cordon: GET the node, patch only if `ignition.io/node-pool=gpu-sandbox-l4`, return the error if cordon fails. Never create a second Pod for the same id.
+Loop: list sandboxes; `BARE_METAL` currently fails with `COMPUTE_ENVIRONMENT_UNAVAILABLE` without creating a GKE Pod; an accelerator type with no `internal/k8s` profile fails `WORKLOAD_NOT_SUPPORTED` without a Pod; for `STANDARD`, skip Pod create when already `FAILED`/`FINISHED`/`TERMINATING`; resolve image as `${IGNITION_SANDBOX_IMAGE_PREFIX}/{imageId}` (or `{region}-docker.pkg.dev/${IGNITION_GCP_PROJECT}/sandboxes/{imageId}`) after the charset check (empty/invalid → `IMAGE_UNAVAILABLE`, no Pod); create Pod `sbx-{id}` from the accelerator profile — `runtimeClassName: gvisor` always; `NVIDIA_L4` gets one whole GPU, the `ignition.io/gpu-sandbox` toleration, `gpu-sandbox-l4` node pool, and hostname anti-affinity; `NONE` gets no device, the `ignition.io/sandbox` toleration, and the `cpu-sandbox` node pool — plus **read-only root filesystem**, writable `/scratch`, and `IGNITION_ACCELERATOR` env; inject `secretRefs` from Secret Manager as env (missing secret → `SECRET_UNAVAILABLE`, no Pod); map the stored internet preference to a preconfigured GCP network profile; map Pod conditions → `SCHEDULED` / `STARTED` / `READY` / `FAILED`. `sandbox-init` serves `/healthz` and `/readyz` on port 8081; for `NVIDIA_L4` readiness requires exactly one GPU identity (`NVIDIA_VISIBLE_DEVICES`, NVIDIA procfs, or a single `/dev/nvidiaN`), for `NONE` readiness is the supervisor being up. Kubelet's resulting PodReady condition advances the public state to `READY`. The sandbox receives no Kubernetes credential. On terminate delete the Pod. Annotate occupied GPU nodes with `cluster-autoscaler.kubernetes.io/scale-down-disabled=true`. Balloon scale-in waits 15 minutes. Cordon: GET the node, patch only if `ignition.io/node-pool=gpu-sandbox-l4`, return the error if cordon fails. Never create a second Pod for the same id.
 
 Controller RBAC: Pods in `ignition-sandboxes`; ClusterRole get/list/patch Nodes. No cluster-admin. API KSA has **no** Kubernetes RBAC.
 
@@ -343,6 +344,20 @@ gcloud container node-pools create gpu-sandbox-l4 \
   --disk-type=pd-balanced --disk-size=100 \
   --node-labels=ignition.io/node-pool=gpu-sandbox-l4 \
   --node-taints=ignition.io/gpu-sandbox=true:NoSchedule \
+  --enable-private-nodes --enable-autorepair --enable-autoupgrade
+
+# CPU sandbox pool: the default runtime is CPU-only, so bare CreateSandbox
+# requests land here. gVisor, no accelerator, scale-to-zero.
+gcloud container node-pools create cpu-sandbox \
+  --cluster="${CLUSTER}" --region="${REGION}" \
+  --machine-type=n2-standard-8 \
+  --service-account="${NODE_SA}@${PROJECT}.iam.gserviceaccount.com" \
+  --scopes=cloud-platform \
+  --image-type=COS_CONTAINERD --sandbox=type=gvisor \
+  --num-nodes=0 --enable-autoscaling --total-min-nodes=0 --total-max-nodes=3 \
+  --disk-type=pd-balanced --disk-size=100 \
+  --node-labels=ignition.io/node-pool=cpu-sandbox \
+  --node-taints=ignition.io/sandbox=true:NoSchedule \
   --enable-private-nodes --enable-autorepair --enable-autoupgrade
 
 gcloud sql instances create "${SQL_INSTANCE}" \
@@ -638,11 +653,11 @@ Without the optional flags, the VPC, NAT, reserved private-services range, servi
 
 ## Verify the implemented sandbox path
 
-Create requires `resources` (CPU, memory, `gpu.count=1`, `gpu.type=NVIDIA_L4`) and `Idempotency-Key`. The commands capture IDs instead of requiring manual copy/paste. A cold L4 node can take several minutes, so this request uses the maximum 600-second startup timeout.
+Create requires only `imageId` and `Idempotency-Key`; any omitted `resources` / `timeouts` / `network` fields come from the default runtime. The body below pins an `NVIDIA_L4` sandbox with the maximum 600-second startup timeout (a cold L4 node can take several minutes). For a CPU sandbox, drop `resources` entirely.
 
 ```bash
 export CREATE_KEY="create-$(date +%s)"
-export CREATE_BODY='{"imageId":"img_seed","resources":{"cpuMilli":1000,"memoryMiB":2048,"gpu":{"count":1,"type":"NVIDIA_L4"}},"timeouts":{"startupSeconds":600}}'
+export CREATE_BODY='{"imageId":"img_seed","resources":{"cpuMilli":1000,"memoryMiB":2048,"accelerator":{"count":1,"type":"NVIDIA_L4"}},"timeouts":{"startupSeconds":600}}'
 export CREATE_RESPONSE="$(curl --fail-with-body -sS -X POST \
   "http://127.0.0.1:${LOCAL_API_PORT}/v1/projects/prj_dev/sandboxes" \
   -H "Authorization: Bearer dev-only-token" \

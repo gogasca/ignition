@@ -12,9 +12,10 @@ The first implementation slice is this create/get/list/terminate/watch surface p
 
 **What the Go API implements today** (see [Implementation guide](../guides/ignition-implementation.md)):
 
-- `resources.accelerator.type` is the AcceleratorType enum (`NVIDIA_L4` or `NONE` for a CPU-only sandbox); `count` must be `1` for `NVIDIA_L4` and `0` for `NONE`. Platform allowlist `IGNITION_ALLOWED_ACCELERATORS` (default `NVIDIA_L4`), so CPU sandboxes are opt-in per environment. CPU sandboxes are accepted and persisted but the controller fails them `WORKLOAD_NOT_SUPPORTED` until the accelerator profile ships ([plan](multi-accelerator-sandbox-plan.md)).
+- `resources`, `placement`, `timeouts`, and `network` are **optional**. Any field left unset is filled from the system [default runtime](ignition-design-default-runtime.md) (`GET /v1/projects/{project}/runtimes/default`); the built-in default is a CPU-only sandbox. The resolved `RuntimeSpec` is snapshotted onto the sandbox. `imageId` is the only required field.
+- `resources.accelerator.type` is the AcceleratorType enum (`NVIDIA_L4` or `NONE` for CPU-only); `count` must be `1` for `NVIDIA_L4` and `0`/absent for `NONE`. Platform allowlist `IGNITION_ALLOWED_ACCELERATORS` (default `NONE,NVIDIA_L4`). An accelerator type with no scheduling profile fails `WORKLOAD_NOT_SUPPORTED` with no Pod.
 - `imageId` must match `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`.
-- CPU ≤ 8000m, memory ≤ 32768 MiB; timeout/command/label caps in `internal/api/limits.go`.
+- CPU ≤ 8000m, memory ≤ 32768 MiB; caps and timeout validation live in `internal/store/runtime.go` (also applied to the default runtime at startup); command/label caps in `internal/api/limits.go`.
 - Internet access is an explicit `ENABLED` / `DISABLED` preference and defaults to `DISABLED`; the selected GCP network profile enforces it.
 - `secretRefs` are stored on the sandbox and injected by the controller from Secret Manager at Pod create.
 - Cancel of an in-flight create fails the sandbox (`CANCELLED`) and releases quota.

@@ -12,4 +12,5 @@ Start here:
 4. [Create Sandbox API](ignition-sandbox-create-api.md) — public create contract
 5. [Implementation guide](../guides/ignition-implementation.md) — binaries, images, one regional GKE dev
 6. [Implementation plan](gpu-sandbox-implementation-plan.md) — gated custom GCE runtime (not the deploy path)
-7. [Multi-accelerator sandbox plan](multi-accelerator-sandbox-plan.md) — GPU + CPU accelerator classes (in progress)
+7. [Default runtime](ignition-design-default-runtime.md) — system-managed RuntimeSpec; optional CreateSandbox fields; CPU + L4 accelerator profiles
+8. [Multi-accelerator sandbox plan](multi-accelerator-sandbox-plan.md) — earlier plan; superseded by the default-runtime design (no project template resource)

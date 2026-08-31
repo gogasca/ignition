@@ -48,6 +48,20 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/CreateSandboxResponse"
+  /v1/projects/{project}/runtimes/default:
+    get:
+      operationId: getDefaultRuntime
+      description: >-
+        The system-managed default runtime. Its fields fill any RuntimeSpec
+        value a CreateSandbox request leaves unset. Read-only.
+      parameters:
+        - $ref: "#/components/parameters/ProjectId"
+      responses:
+        "200":
+          description: Default runtime spec
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RuntimeSpec" }
   /v1/projects/{project}/sandboxes/{sandbox}:
     get:
       operationId: getSandbox
@@ -259,7 +273,12 @@ components:
   schemas:
     CreateSandboxRequest:
       type: object
-      required: [imageId, resources]
+      required: [imageId]
+      description: >-
+        resources, placement, timeouts, and network are optional. Any field
+        left unset is filled from the system default runtime
+        (GET /v1/projects/{project}/runtimes/default). The resolved RuntimeSpec
+        is snapshotted onto the sandbox.
       properties:
         name: { type: string }
         imageId: { type: string }
@@ -267,36 +286,10 @@ components:
           type: array
           items: { type: string }
         workingDirectory: { type: string }
-        resources:
-          type: object
-          required: [cpuMilli, memoryMiB, accelerator]
-          properties:
-            cpuMilli: { type: integer, minimum: 1 }
-            memoryMiB: { type: integer, minimum: 1 }
-            accelerator:
-              type: object
-              required: [type]
-              properties:
-                count:
-                  type: integer
-                  description: NONE requires 0; NVIDIA_L4 requires 1.
-                type:
-                  type: string
-                  enum: [NONE, NVIDIA_L4]
-                  description: >-
-                    Public JSON of proto AcceleratorType (ACCELERATOR_TYPE_
-                    prefix stripped). NONE is a CPU-only sandbox.
-        placement:
-          $ref: "#/components/schemas/PlacementSpec"
-        timeouts:
-          type: object
-          properties:
-            startupSeconds: { type: integer }
-            maximumRuntimeSeconds: { type: integer }
-            idleSeconds: { type: integer }
-            terminationGraceSeconds: { type: integer }
-        network:
-          $ref: "#/components/schemas/NetworkSpec"
+        resources: { $ref: "#/components/schemas/ResourceSpec" }
+        placement: { $ref: "#/components/schemas/PlacementSpec" }
+        timeouts: { $ref: "#/components/schemas/TimeoutSpec" }
+        network: { $ref: "#/components/schemas/NetworkSpec" }
         secretRefs:
           type: array
           items:
@@ -317,6 +310,40 @@ components:
           $ref: "#/components/schemas/Sandbox"
         operation:
           $ref: "#/components/schemas/Operation"
+    ResourceSpec:
+      type: object
+      properties:
+        cpuMilli: { type: integer, minimum: 1, maximum: 8000 }
+        memoryMiB: { type: integer, minimum: 1, maximum: 32768 }
+        accelerator:
+          type: object
+          properties:
+            type:
+              type: string
+              enum: [NONE, NVIDIA_L4]
+              description: >-
+                Public JSON of proto AcceleratorType (ACCELERATOR_TYPE_ prefix
+                stripped). NONE is a CPU-only sandbox.
+            count:
+              type: integer
+              description: NONE requires 0; NVIDIA_L4 requires 1.
+    TimeoutSpec:
+      type: object
+      properties:
+        startupSeconds: { type: integer, minimum: 1, maximum: 600 }
+        maximumRuntimeSeconds: { type: integer, minimum: 1, maximum: 86400 }
+        idleSeconds: { type: integer, minimum: 1, maximum: 3600 }
+        terminationGraceSeconds: { type: integer, minimum: 1, maximum: 120 }
+    RuntimeSpec:
+      type: object
+      description: >-
+        A sandbox's run configuration. Returned by GetDefaultRuntime; its fields
+        fill any value a CreateSandbox request leaves unset.
+      properties:
+        resources: { $ref: "#/components/schemas/ResourceSpec" }
+        placement: { $ref: "#/components/schemas/PlacementSpec" }
+        timeouts: { $ref: "#/components/schemas/TimeoutSpec" }
+        network: { $ref: "#/components/schemas/NetworkSpec" }
     NetworkSpec:
       type: object
       properties:
@@ -349,12 +376,10 @@ components:
         createTime: { type: string, format: date-time }
         readyTime: { type: [string, "null"], format: date-time }
         finishTime: { type: [string, "null"], format: date-time }
-        resources: { type: object }
-        placement:
-          $ref: "#/components/schemas/PlacementSpec"
-        timeouts: { type: object }
-        network:
-          $ref: "#/components/schemas/NetworkSpec"
+        resources: { $ref: "#/components/schemas/ResourceSpec" }
+        placement: { $ref: "#/components/schemas/PlacementSpec" }
+        timeouts: { $ref: "#/components/schemas/TimeoutSpec" }
+        network: { $ref: "#/components/schemas/NetworkSpec" }
         labels: { type: object, additionalProperties: { type: string } }
     Operation:
       type: object
