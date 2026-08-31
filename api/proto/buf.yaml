@@ -2,6 +2,9 @@ version: v2
 modules:
   - path: .
     name: buf.build/ignition/api
+    excludes:
+      # Jupyter autosave copies (gitignored) must not be compiled as real protos.
+      - ignition/v1/.ipynb_checkpoints
 lint:
   use:
     - STANDARD
