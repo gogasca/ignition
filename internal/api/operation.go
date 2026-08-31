@@ -3,7 +3,6 @@ package api
 import (
 	"io"
 	"net/http"
-	"strconv"
 
 	"ignition.dev/ignition/internal/auth"
 	"ignition.dev/ignition/internal/store"
@@ -27,7 +26,10 @@ func (s *Server) listOperations(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(w, r, project, auth.PermOperationGet, false) {
 		return
 	}
-	size, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	size, ok := pageSize(w, r, s.requestID(r.Context()))
+	if !ok {
+		return
+	}
 	items, next, err := s.store.ListOperations(
 		r.Context(),
 		project,

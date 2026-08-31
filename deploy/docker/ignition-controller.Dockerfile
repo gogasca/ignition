@@ -5,7 +5,7 @@
 
 ARG COMMAND=ignition-controller
 
-FROM golang:1.23-bookworm AS build
+FROM golang:1.26.7-bookworm AS build
 ARG COMMAND
 WORKDIR /src
 COPY go.mod go.sum ./

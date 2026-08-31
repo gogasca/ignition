@@ -10,6 +10,8 @@ info:
     Full v1 contract: docs/design/ignition-sandbox-create-api.md
 servers:
   - url: https://api.ignition.dev
+security:
+  - bearerAuth: []
 paths:
   /v1/projects/{project}/sandboxes:
     get:
@@ -25,6 +27,9 @@ paths:
       responses:
         "200":
           description: List sandboxes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListSandboxesResponse" }
     post:
       operationId: createSandbox
       parameters:
@@ -52,6 +57,9 @@ paths:
       responses:
         "200":
           description: Sandbox resource
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Sandbox" }
   /v1/projects/{project}/sandboxes/{sandbox}:terminate:
     post:
       operationId: terminateSandbox
@@ -62,6 +70,9 @@ paths:
       responses:
         "202":
           description: Termination accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/CreateSandboxResponse" }
   /v1/projects/{project}/sandboxes/{sandbox}:watch:
     get:
       operationId: watchSandbox
@@ -89,6 +100,9 @@ paths:
       responses:
         "200":
           description: List processes
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ListProcessesResponse" }
     post:
       operationId: createProcess
       parameters:
@@ -157,6 +171,9 @@ paths:
       responses:
         "200":
           description: Process resource after signal
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Process" }
   /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:cancel:
     post:
       operationId: cancelProcess
@@ -168,6 +185,9 @@ paths:
       responses:
         "200":
           description: Process cancellation accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Process" }
   /v1/projects/{project}/operations:
     get:
       operationId: listOperations
@@ -205,6 +225,11 @@ paths:
         "200":
           description: Cancel accepted or already terminal
 components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: RFC 9068 JWT
   parameters:
     ProjectId:
       name: project
@@ -230,7 +255,7 @@ components:
       name: Idempotency-Key
       in: header
       required: true
-      schema: { type: string, format: uuid }
+      schema: { type: string, minLength: 1, maxLength: 128 }
   schemas:
     CreateSandboxRequest:
       type: object
@@ -283,6 +308,8 @@ components:
                 mode: { type: string, enum: [DENY_ALL, ALLOW_LIST] }
                 allowedTlsDomains:
                   type: array
+                  maxItems: 0
+                  description: Reserved for a future authenticated egress proxy; currently rejected.
                   items: { type: string }
                 allowedCidrs:
                   type: array
@@ -304,11 +331,63 @@ components:
       required: [sandbox, operation]
       properties:
         sandbox:
-          type: object
-          additionalProperties: true
+          $ref: "#/components/schemas/Sandbox"
         operation:
-          type: object
-          additionalProperties: true
+          $ref: "#/components/schemas/Operation"
+    Sandbox:
+      type: object
+      required: [id, projectId, state, imageId, generation, resources]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        name: { type: string }
+        state: { type: string, enum: [CREATING, SCHEDULED, STARTED, READY, TERMINATING, FINISHED, FAILED] }
+        stateReason: { type: string }
+        imageId: { type: string }
+        operationId: { type: string }
+        generation: { type: integer, format: int64 }
+        createTime: { type: string, format: date-time }
+        readyTime: { type: [string, "null"], format: date-time }
+        finishTime: { type: [string, "null"], format: date-time }
+        resources: { type: object }
+        placement: { type: object }
+        timeouts: { type: object }
+        network: { type: object }
+        labels: { type: object, additionalProperties: { type: string } }
+    Operation:
+      type: object
+      required: [id, projectId, kind, state, resourceId, createTime]
+      properties:
+        id: { type: string }
+        projectId: { type: string }
+        kind: { type: string }
+        state: { type: string, enum: [PENDING, RUNNING, SUCCEEDED, FAILED, CANCELLED] }
+        resourceId: { type: string }
+        createTime: { type: string, format: date-time }
+        startTime: { type: [string, "null"], format: date-time }
+        endTime: { type: [string, "null"], format: date-time }
+        traceId: { type: string }
+        progressMessage: { type: string }
+    Status:
+      type: object
+      required: [code, message, requestId, retryable]
+      properties:
+        code: { type: string }
+        message: { type: string }
+        requestId: { type: string }
+        retryable: { type: boolean }
+        retryAfterSeconds: { type: integer, minimum: 0 }
+    ListSandboxesResponse:
+      type: object
+      required: [sandboxes]
+      properties:
+        sandboxes: { type: array, items: { $ref: "#/components/schemas/Sandbox" } }
+        nextPageToken: { type: string }
+    ListProcessesResponse:
+      type: object
+      required: [processes]
+      properties:
+        processes: { type: array, items: { $ref: "#/components/schemas/Process" } }
     Process:
       type: object
       properties:
@@ -337,8 +416,6 @@ components:
           type: object
           additionalProperties: { type: string }
         pty: { type: boolean }
-        ptyRows: { type: integer }
-        ptyCols: { type: integer }
     AttachProcessResponse:
       type: object
       required: [streamToken, gatewayUrl]

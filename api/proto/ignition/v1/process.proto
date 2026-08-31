@@ -52,8 +52,8 @@ message CreateProcessRequest {
   string working_directory = 5;
   map<string, string> environment = 6;
   bool pty = 7;
-  int32 pty_rows = 8;
-  int32 pty_cols = 9;
+  reserved 8, 9;
+  reserved "pty_rows", "pty_cols";
 }
 
 message GetProcessRequest {

@@ -222,6 +222,9 @@ func parseJWKS(raw []byte) (map[string]any, error) {
 		if k.Use != "" && !strings.EqualFold(k.Use, "sig") {
 			continue
 		}
+		if k.Alg != "" && !strings.EqualFold(k.Alg, jwt.SigningMethodRS256.Alg()) {
+			continue
+		}
 		pub, err := rsaPublicFromJWK(k.N, k.E)
 		if err != nil {
 			return nil, err
@@ -229,6 +232,9 @@ func parseJWKS(raw []byte) (map[string]any, error) {
 		kid := k.Kid
 		if kid == "" {
 			kid = fmt.Sprintf("k%d", i)
+		}
+		if _, exists := out[kid]; exists {
+			return nil, fmt.Errorf("jwks contains duplicate kid %q", kid)
 		}
 		out[kid] = pub
 	}
@@ -249,6 +255,9 @@ func rsaPublicFromJWK(nB64, eB64 string) (*rsa.PublicKey, error) {
 	}
 	if len(nBytes) == 0 || len(eBytes) == 0 {
 		return nil, errors.New("invalid jwk modulus or exponent")
+	}
+	if new(big.Int).SetBytes(nBytes).BitLen() < 2048 {
+		return nil, errors.New("jwk RSA modulus is smaller than 2048 bits")
 	}
 	var eInt int
 	for _, b := range eBytes {

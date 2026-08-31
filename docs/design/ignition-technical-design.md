@@ -25,7 +25,7 @@ This document is the architecture overview and cross-module contract. The module
 6. [Worker Runtime and GPU Isolation](ignition-design-worker-runtime.md) — custom runtime (future, gated)
 7. [Images and Startup Acceleration](ignition-design-images-startup.md) — custom lazy-image path future, gated
 8. [Checkpoint and Restore](ignition-design-checkpoint-restore.md) — custom runtime (future, gated)
-9. [Data Plane and Networking](ignition-design-data-plane-networking.md)
+9. [Data Plane and Networking](ignition-design-data-plane-networking.md) — `ignition-ingress`, route table, and exec spool are custom-runtime (future, gated); the MVP ships a reduced `ignition-gateway`-only path, not yet deployed
 10. [Storage and Volumes](ignition-design-storage-volumes.md)
 11. [Production Operations and Security](ignition-design-production-operations-security.md)
 12. [Create Sandbox API and Control-Plane Flow](ignition-sandbox-create-api.md)
@@ -47,7 +47,7 @@ Initial production supports:
 - authenticated exec paths;
 - warm GCE GPU capacity managed independently from request admission.
 
-The **first implementation slice** is sandbox create/get/list/terminate/watch, process exec, and operations (`api/proto/ignition/v1`).
+The **first implementation slice** is sandbox create/get/list/terminate/watch, the process API (create/get/list/attach/signal/cancel), and operations (`api/proto/ignition/v1`). `ignition-api` mints exec attach tokens, but the exec byte path is not shipped in this slice: `ignition-gateway` and the sandbox init supervisor are stubs and `ignition-gateway` is not deployed.
 
 Initial production does not support:
 
@@ -150,7 +150,7 @@ Containerd supplies content and lazy snapshot services only. The initial product
 
 ## 3. Canonical ownership and schema summary
 
-This section is an ownership map, not a second normative schema. Field definitions, SQL grants, endpoint bodies, token claims, and wire protocols live in the linked module designs.
+This section is an ownership map, not a second normative schema. Field definitions, SQL grants, endpoint bodies, token claims, and wire protocols live in the linked module designs. The table and data model below describe the custom GCE runtime (future, gated); for the MVP, `ignition-controller` plus GKE-managed scheduling replace the scheduler/fleet/worker-control/`ignitiond`/`ignition-hostd`/`ignition-ingress` rows, and the shipped data model is the smaller set in the [API and Controller proposal](ignition-design-api-controller.md#7-data-model-first-slice).
 
 | Concern | Authoritative owner | Canonical module |
 |---|---|---|
@@ -215,6 +215,8 @@ Canonical mapping:
 ### 4.4 Exec and route protocol
 
 The detailed protocol is normative in [Client API and Identity](ignition-design-client-api-identity.md) and [Data Plane and Networking](ignition-design-data-plane-networking.md).
+
+The `ignition-ingress` / route-table / outbox design in the rest of this section is the custom-runtime target and is **not built**. The [GKE Sandbox MVP](ignition-design-gke-sandbox.md) has no `ignition-ingress`, no Postgres route table, and no outbox; `ignition-gateway` proxies a WebSocket to the sandbox init supervisor over the Pod network after validating the `ignition-api`-minted attach token, and readiness (section 4.3) is a Pod-condition plus init-healthy/GPU-UUID annotation check, not a committed route row.
 
 `ignition-ingress` owns a bounded per-process Local-SSD spool keyed by sandbox, generation, process, and stream epoch. Binary frames carry channel, kind, half-open byte ranges, cumulative acknowledgements, control data, and explicit `TRUNCATED` or `GAP` outcomes. Output reconnect uses acknowledged offsets; unknown stdin acknowledgement is never automatically replayed. Process lifetime is independent from client or gateway attachment. The reconnect window is 10 minutes after process exit.
 

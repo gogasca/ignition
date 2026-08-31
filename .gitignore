@@ -1,8 +1,10 @@
 bin/
 dist/
 .gotmp/
+.tools/
 .idea/
 .vscode/
+.claude/settings.local.json
 *.exe
 *.test
 *.out
@@ -13,6 +15,7 @@ coverage.out
 vendor/
 node_modules/
 __pycache__/
+.ipynb_checkpoints/
 *.pyc
 .venv/
 sdks/python/.venv/

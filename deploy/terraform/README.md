@@ -20,7 +20,7 @@ One root module, one workspace (or state prefix) for `ignition-dev`. Variables: 
 | `compute networks/subnets/routers/nats` | `google_compute_network`, `google_compute_subnetwork`, `google_compute_router`, `google_compute_router_nat` |
 | `compute addresses` (PSA + Ingress) | `google_compute_global_address` |
 | `services vpc-peerings connect` | `google_service_networking_connection` |
-| `container clusters create` | `google_container_cluster` (`remove_default_node_pool = true` is fine; we use the default CPU pool today) |
+| `container clusters create` | `google_container_cluster` — set `datapath_provider = "ADVANCED_DATAPATH"` (Dataplane V2; matches `--enable-dataplane-v2`) and do **not** set `network_policy` (that is the legacy Calico provider and conflicts). `remove_default_node_pool = true` is fine; we use the default CPU pool today |
 | `container node-pools create gpu-sandbox-l4` | `google_container_node_pool` + **google-beta** `sandbox_config { sandbox_type = "gvisor" }`, taint, `nvidia-l4`, `gvnic` as required by GKE |
 | `sql instances/databases/users` | `google_sql_database_instance`, `google_sql_database`, `google_sql_user` (type `CLOUD_IAM_SERVICE_ACCOUNT`) |
 | `artifacts repositories` | `google_artifact_registry_repository` |
@@ -49,4 +49,4 @@ terraform import google_container_node_pool.gpu_sandbox projects/PROJECT/locatio
 
 ## Status
 
-No `.tf` files yet. Write them when `gcloud` has brought up **dev** once without hand-edits to the cluster. Until then the copy-paste in the [implementation guide](../../docs/guides/ignition-implementation.md#deploy-regional-dev) is the source of truth for flags (`g2-standard-8`, one L4, `gvisor`, taint, private nodes).
+No `.tf` files yet. Write them when `gcloud` has brought up **dev** once without hand-edits to the cluster. Until then the copy-paste in the [implementation guide](../../docs/guides/ignition-implementation.md#deploy-regional-dev) is the source of truth for flags (`g2-standard-8`, one L4, `gvisor`, taint, private nodes, Dataplane V2, dedicated node SA).

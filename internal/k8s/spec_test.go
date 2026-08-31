@@ -67,6 +67,9 @@ func TestSandboxPodProfile(t *testing.T) {
 	if !c.ReadOnlyRootFS {
 		t.Fatal("sandbox root filesystem must be read-only")
 	}
+	if c.Port != 8081 || c.LivenessPath != "/healthz" || c.ReadinessPath != "/readyz" {
+		t.Fatalf("supervisor probes = port %d liveness %q readiness %q", c.Port, c.LivenessPath, c.ReadinessPath)
+	}
 	for _, v := range spec.Volumes {
 		if v.HostPath != "" {
 			t.Fatal("hostPath forbidden")

@@ -20,7 +20,7 @@ func TestLoadProdAcceptsDATABASE_URL(t *testing.T) {
 	t.Setenv("IGNITION_ENV", "prod")
 	t.Setenv("DATABASE_URL", "postgres://ignition@127.0.0.1:5432/ignition")
 	t.Setenv("IGNITION_OIDC_ISSUER", "https://issuer.example")
-	t.Setenv("IGNITION_STREAM_TOKEN_SECRET", "prod-stream-token-secret")
+	t.Setenv("IGNITION_STREAM_TOKEN_SECRET", "prod-stream-token-secret-32-bytes!!")
 	t.Setenv("IGNITION_DEV_BEARER", "")
 	t.Setenv("IGNITION_GCP_PROJECT", "ignition-prod")
 	cfg, err := config.Load()
@@ -36,7 +36,7 @@ func TestLoadProdRejectsDevBearer(t *testing.T) {
 	t.Setenv("IGNITION_ENV", "prod")
 	t.Setenv("DATABASE_URL", "postgres://ignition@127.0.0.1:5432/ignition")
 	t.Setenv("IGNITION_OIDC_ISSUER", "https://issuer.example")
-	t.Setenv("IGNITION_STREAM_TOKEN_SECRET", "prod-stream-token-secret")
+	t.Setenv("IGNITION_STREAM_TOKEN_SECRET", "prod-stream-token-secret-32-bytes!!")
 	t.Setenv("IGNITION_DEV_BEARER", "dev-token")
 	_, err := config.Load()
 	if err == nil || !strings.Contains(err.Error(), "forbids IGNITION_DEV_BEARER") {
@@ -88,13 +88,46 @@ func TestLoadStagingRequiresImageRegistry(t *testing.T) {
 	t.Setenv("IGNITION_ENV", "staging")
 	t.Setenv("DATABASE_URL", "postgres://ignition@127.0.0.1:5432/ignition")
 	t.Setenv("IGNITION_OIDC_ISSUER", "https://issuer.example")
-	t.Setenv("IGNITION_STREAM_TOKEN_SECRET", "prod-stream-token-secret")
+	t.Setenv("IGNITION_STREAM_TOKEN_SECRET", "prod-stream-token-secret-32-bytes!!")
 	t.Setenv("IGNITION_DEV_BEARER", "")
 	t.Setenv("IGNITION_GCP_PROJECT", "")
 	t.Setenv("IGNITION_SANDBOX_IMAGE_PREFIX", "")
 	_, err := config.Load()
 	if err == nil || !strings.Contains(err.Error(), "IGNITION_SANDBOX_IMAGE_PREFIX") {
 		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadMaxWarmZeroDisablesPool(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_MAX_WARM", "0")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("MAX_WARM=0 must be accepted: %v", err)
+	}
+	if cfg.MinWarm != 0 || cfg.MaxWarm != 0 {
+		t.Fatalf("warm bounds = %d/%d, want 0/0", cfg.MinWarm, cfg.MaxWarm)
+	}
+}
+
+func TestLoadRejectsExplicitMinAboveMax(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_MIN_WARM", "5")
+	t.Setenv("IGNITION_MAX_WARM", "2")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "IGNITION_MIN_WARM") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadAcceptsCustomEnvLabel(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "ci")
+	t.Setenv("DATABASE_URL", "")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatalf("custom env label must be accepted: %v", err)
+	}
+	if cfg.Env != "ci" {
+		t.Fatalf("env = %q", cfg.Env)
 	}
 }
 

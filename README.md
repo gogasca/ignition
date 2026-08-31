@@ -31,7 +31,8 @@ docs/guides/          build and deploy runbook
 
 ## Build
 
-Requires Go 1.23+.
+Requires Go 1.26.7 or a newer supported Go release. A repository-local
+toolchain may be installed at `.tools/go`; invoke it as `.tools/go/bin/go`.
 
 ```bash
 make build

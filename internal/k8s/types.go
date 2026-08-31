@@ -88,6 +88,9 @@ type Container struct {
 	DropAllCaps     bool
 	ReadOnlyRootFS  bool
 	VolumeMountPath string
+	Port            int
+	LivenessPath    string
+	ReadinessPath   string
 }
 
 type Volume struct {

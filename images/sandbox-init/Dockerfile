@@ -1,4 +1,4 @@
-FROM golang:1.23 AS build
+FROM golang:1.26.7-bookworm AS build
 WORKDIR /src
 COPY go.mod ./
 COPY cmd/sandbox-init ./cmd/sandbox-init

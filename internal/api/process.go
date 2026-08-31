@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 
 	"ignition.dev/ignition/internal/auth"
@@ -17,6 +16,8 @@ type createProcessBody struct {
 	WorkingDirectory string            `json:"workingDirectory"`
 	Environment      map[string]string `json:"environment"`
 	PTY              bool              `json:"pty"`
+	PTYRows          int               `json:"ptyRows"`
+	PTYCols          int               `json:"ptyCols"`
 }
 
 type signalProcessBody struct {
@@ -41,13 +42,13 @@ func (s *Server) createProcess(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<20))
+	raw, err := readBody(w, r, 1<<20)
 	if err != nil {
 		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid body", false, 0)
 		return
 	}
 	var body createProcessBody
-	if err := json.Unmarshal(raw, &body); err != nil {
+	if err := decodeJSON(raw, &body); err != nil {
 		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid JSON", false, 0)
 		return
 	}
@@ -61,6 +62,10 @@ func (s *Server) createProcess(w http.ResponseWriter, r *http.Request) {
 	}
 	if err := checkEnv(body.Environment); err != nil {
 		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error(), false, 0)
+		return
+	}
+	if body.PTYRows != 0 || body.PTYCols != 0 {
+		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", "initial PTY dimensions are not supported", false, 0)
 		return
 	}
 	p, replay, err := s.store.CreateProcess(r.Context(), store.CreateProcessInput{
@@ -103,7 +108,10 @@ func (s *Server) listProcesses(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(w, r, project, auth.PermProcessGet, false) {
 		return
 	}
-	size, _ := strconv.Atoi(r.URL.Query().Get("pageSize"))
+	size, ok := pageSize(w, r, s.requestID(r.Context()))
+	if !ok {
+		return
+	}
 	items, next, err := s.store.ListProcesses(r.Context(), project, r.PathValue("sandbox"), size, r.URL.Query().Get("pageToken"))
 	if err != nil {
 		writeStoreError(w, s.requestID(r.Context()), err)
@@ -187,13 +195,13 @@ func (s *Server) signalProcess(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	raw, err := io.ReadAll(io.LimitReader(r.Body, 1<<16))
+	raw, err := readBody(w, r, 1<<16)
 	if err != nil {
 		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", "invalid body", false, 0)
 		return
 	}
 	var body signalProcessBody
-	if err := json.Unmarshal(raw, &body); err != nil || body.Signal == "" {
+	if err := decodeJSON(raw, &body); err != nil || body.Signal == "" {
 		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", "signal is required", false, 0)
 		return
 	}

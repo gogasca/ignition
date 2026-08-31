@@ -113,13 +113,58 @@ func checkTimeouts(t store.TimeoutSpec) error {
 	return nil
 }
 
+// blockedEgressCIDRs are networks an ALLOW_LIST egress rule may never reach:
+// "this host", private (RFC 1918 / ULA), loopback, link-local (including the
+// 169.254.169.254 metadata endpoint), carrier-grade NAT, 6to4 and NAT64 space
+// (which embed an arbitrary inner address), multicast, and the
+// reserved/documentation/benchmark ranges. A rule is rejected when its range
+// overlaps any of these, so a short prefix such as "8.8.8.8/1" cannot smuggle
+// private space past the check. IPv4-mapped IPv6 ("::ffff:a.b.c.d") is
+// normalized to IPv4 by net.ParseCIDR, so the IPv4 entries cover it.
+var blockedEgressCIDRs = mustParseCIDRs(
+	"0.0.0.0/8", "10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8",
+	"169.254.0.0/16", "172.16.0.0/12", "192.0.0.0/24", "192.0.2.0/24",
+	"192.88.99.0/24", "192.168.0.0/16", "198.18.0.0/15", "198.51.100.0/24",
+	"203.0.113.0/24", "224.0.0.0/4", "240.0.0.0/4",
+	"::/128", "::1/128", "64:ff9b::/96", "100::/64",
+	"2001:db8::/32", "2002::/16", "fc00::/7", "fe80::/10", "ff00::/8",
+)
+
+func mustParseCIDRs(cidrs ...string) []*net.IPNet {
+	out := make([]*net.IPNet, 0, len(cidrs))
+	for _, c := range cidrs {
+		_, n, err := net.ParseCIDR(c)
+		if err != nil {
+			panic("limits: invalid blocked CIDR " + c)
+		}
+		out = append(out, n)
+	}
+	return out
+}
+
+// cidrsOverlap reports whether two CIDR blocks intersect. Two CIDR ranges are
+// always either disjoint or nested, so a mutual Contains check on the network
+// addresses is sufficient.
+func cidrsOverlap(a, b *net.IPNet) bool {
+	return a.Contains(b.IP) || b.Contains(a.IP)
+}
+
 func checkAllowList(e store.EgressSpec) error {
+	if len(e.AllowedTLSDomains) > 0 {
+		return fmt.Errorf("allowedTlsDomains is unavailable until the egress proxy is configured")
+	}
 	if len(e.AllowedTLSDomains) == 0 && len(e.AllowedCIDRs) == 0 {
 		return fmt.Errorf("ALLOW_LIST requires allowedTlsDomains or allowedCidrs")
 	}
 	for _, cidr := range e.AllowedCIDRs {
-		if _, _, err := net.ParseCIDR(cidr); err != nil {
+		_, ipnet, err := net.ParseCIDR(cidr)
+		if err != nil {
 			return fmt.Errorf("invalid allowedCidr %q", cidr)
+		}
+		for _, blocked := range blockedEgressCIDRs {
+			if cidrsOverlap(ipnet, blocked) {
+				return fmt.Errorf("allowedCidr %q overlaps blocked network %s", cidr, blocked)
+			}
 		}
 	}
 	return nil
