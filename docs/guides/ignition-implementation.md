@@ -8,7 +8,7 @@
 
 This is the **only** build-and-deploy runbook: one regional GKE **dev** environment in one GCP project. Commands are bash and target Cloud Shell or another Linux shell. Run every block in the same shell unless the text says otherwise. Architecture stays in `docs/design/`. Overlay: `deploy/k8s/overlays/dev`.
 
-`gcloud` here is the bootstrap. Terraform can replace the GCP half later (`deploy/terraform/README.md`). Do not create the same cluster with both.
+`gcloud` here is the copy/paste bootstrap. The equivalent Terraform configuration is in `deploy/terraform`; choose one infrastructure owner per environment and do not create the same resources with both.
 
 ## What you ship
 
@@ -133,11 +133,11 @@ Validate before the SQL transaction: `imageId` matches `^[a-zA-Z0-9][a-zA-Z0-9._
 
 In one serializable transaction: idempotency key, insert sandbox `CREATING`, insert `CREATE_SANDBOX` operation, increment `project_quota.active`. Return `202`. Same key + same hash replays; different hash → `409 IDEMPOTENCY_KEY_REUSED`. **Do not create a Kubernetes Pod here.**
 
-Get/list are project-scoped SQL. Watch is an SSE snapshot plus heartbeats, then close after ~60s (`Last-Event-ID` is not implemented). Terminate sets desired `TERMINATING` (`202`); permission deny is `404`. `GET /healthz` pings the store (503 if Postgres is down).
+Get/list are project-scoped SQL. Watch polls product state, emits content-addressed SSE snapshots on change, honors `Last-Event-ID`, sends heartbeats, and closes on terminal state or after ~60s. Terminate sets desired `TERMINATING` (`202`); permission deny is `404`. `GET /healthz` pings the store (503 if Postgres is down). The base manifests wire the API **liveness** probe to `/healthz` (1s timeout), so any Cloud SQL interruption — an in-place `gcloud sql instances patch`, a maintenance event, an HA failover, the `--availability-type` change below — makes the API pods fail liveness and restart until the instance is reachable again. This is a self-healing crashloop, not data loss; do the SQL patch in a maintenance window and expect a few `RESTARTS` on `ignition-api`.
 
 Process APIs require `READY`. `attach` is idempotent (same key replays `streamEpoch`). Stream tokens use `IGNITION_STREAM_TOKEN_SECRET`. `signal` allowlist: `SIGTERM`, `SIGINT`, `SIGKILL`, `SIGHUP`, `SIGQUIT`, `SIGUSR1`, `SIGUSR2`. Cancel of a still-`PENDING`/`RUNNING` create fails the sandbox (`CANCELLED`) and releases quota.
 
-Tables (`db/migrations/000001_init.up.sql`, embedded as `internal/store/schema.sql`): `projects`, `role_bindings`, `images`, `sandboxes`, `processes`, `operations`, `idempotency_keys`, `project_quota`, `controller_leases`. `store.Open` (API) migrates; `store.OpenWithoutMigrate` (controller) is DML only.
+Tables (`internal/store/schema.sql`, embedded by the API): `projects`, `role_bindings`, `images`, `sandboxes`, `processes`, `operations`, `idempotency_keys`, `project_quota`, `controller_leases`. This is a complete baseline schema, not a migration chain. `store.Open` (API) applies it idempotently; `store.OpenWithoutSchema` (controller) is DML only.
 
 ### Environment variables
 
@@ -167,7 +167,9 @@ HTTP: `ReadHeaderTimeout` 10s, `IdleTimeout` 90s (no short `WriteTimeout`, so SS
 
 Distinct KSA. **This** binary is the only one with Pod RBAC. It must not run DDL.
 
-Loop: list sandboxes; `BARE_METAL` currently fails with `COMPUTE_ENVIRONMENT_UNAVAILABLE` without creating a GKE Pod; an accelerator type with no `internal/k8s` profile fails `WORKLOAD_NOT_SUPPORTED` without a Pod; for `STANDARD`, skip Pod create when already `FAILED`/`FINISHED`/`TERMINATING`; resolve image as `${IGNITION_SANDBOX_IMAGE_PREFIX}/{imageId}` (or `{region}-docker.pkg.dev/${IGNITION_GCP_PROJECT}/sandboxes/{imageId}`) after the charset check (empty/invalid → `IMAGE_UNAVAILABLE`, no Pod); create Pod `sbx-{id}` from the accelerator profile — `runtimeClassName: gvisor` always; `NVIDIA_L4` gets one whole GPU, the `ignition.io/gpu-sandbox` toleration, `gpu-sandbox-l4` node pool, and hostname anti-affinity; `NONE` gets no device, the `ignition.io/sandbox` toleration, and the `cpu-sandbox` node pool — plus **read-only root filesystem**, writable `/scratch`, and `IGNITION_ACCELERATOR` env; inject `secretRefs` from Secret Manager as env (missing secret → `SECRET_UNAVAILABLE`, no Pod); map the stored internet preference to a preconfigured GCP network profile; map Pod conditions → `SCHEDULED` / `STARTED` / `READY` / `FAILED`. `sandbox-init` serves `/healthz` and `/readyz` on port 8081; for `NVIDIA_L4` readiness requires exactly one GPU identity (`NVIDIA_VISIBLE_DEVICES`, NVIDIA procfs, or a single `/dev/nvidiaN`), for `NONE` readiness is the supervisor being up. Kubelet's resulting PodReady condition advances the public state to `READY`. The sandbox receives no Kubernetes credential. On terminate delete the Pod. Annotate occupied GPU nodes with `cluster-autoscaler.kubernetes.io/scale-down-disabled=true`. Balloon scale-in waits 15 minutes. Cordon: GET the node, patch only if `ignition.io/node-pool=gpu-sandbox-l4`, return the error if cordon fails. Never create a second Pod for the same id.
+Loop: list sandboxes; `BARE_METAL` currently fails with `COMPUTE_ENVIRONMENT_UNAVAILABLE` without creating a GKE Pod; an accelerator type with no `internal/k8s` profile fails `WORKLOAD_NOT_SUPPORTED` without a Pod; for `STANDARD`, skip Pod create when already `FAILED`/`FINISHED`/`TERMINATING`; resolve image as `${IGNITION_SANDBOX_IMAGE_PREFIX}/{imageId}` (or `{region}-docker.pkg.dev/${IGNITION_GCP_PROJECT}/sandboxes/{imageId}`) after the charset check (empty/invalid → `IMAGE_UNAVAILABLE`, no Pod); create Pod `sbx-{id}` from the accelerator profile — `runtimeClassName: gvisor` always; `NVIDIA_L4` gets one whole GPU, the `ignition.io/gpu-sandbox` toleration, `gpu-sandbox-l4` node pool, and hostname anti-affinity; `NONE` gets no device, the `ignition.io/sandbox` toleration, and the `cpu-sandbox` node pool — plus **read-only root filesystem**, writable `/scratch`, and `IGNITION_ACCELERATOR` env; inject `secretRefs` from Secret Manager as env (missing secret → `SECRET_UNAVAILABLE`, no Pod); map the stored internet preference to a preconfigured GCP network profile; map Pod conditions → `SCHEDULED` / `STARTED` / `READY` / `FAILED`. `sandbox-init` serves `/healthz` and `/readyz` on port 8081. For `NVIDIA_L4`, `/readyz` stats the device nodes (`/dev/nvidiactl`, `/dev/nvidia-uvm`, exactly one `/dev/nvidiaN` — presence only), runs `nvidia-smi` for a canonical `GPU-…` UUID and clean ECC, and runs the `cuda-check` helper (`cuInit()`); it never reads `NVIDIA_VISIBLE_DEVICES` or a device-node name. For `NONE`, readiness is the supervisor being up. For `NONE`, kubelet PodReady advances the state to `READY`. For `NVIDIA_L4`, the controller **also** requires `ignition-gpu-agent` to have stamped a canonical `ignition.io/gpu-uuid` (`k8s.IsCanonicalGPUUUID`) plus `ignition.io/init-healthy=true` on the Pod — the sandbox holds no Kubernetes credential and cannot self-annotate. On terminate delete the Pod. Before deleting a GPU Pod, cordon its node when the Pod carries `ignition.io/gpu-cleanup=ambiguous` **or** the node does (the latter written by `ignition-gpu-agent` after a failed reuse check): GET the node, patch only if `ignition.io/node-pool=gpu-sandbox-l4`, return the error if cordon fails. Annotate occupied GPU nodes with `cluster-autoscaler.kubernetes.io/scale-down-disabled=true`. Balloon scale-in waits 15 minutes. Never create a second Pod for the same id.
+
+`ignition-gpu-agent` is a privileged DaemonSet on the `gpu-sandbox-l4` pool (`deploy/k8s/components/gpu-agent`, `IGNITION_NODE_NAME` from `spec.nodeName`, `nvidia-smi` from the hostPath driver mount, no `nvidia.com/gpu`). Each pass: if a sandbox Pod is on its node it inventories the single GPU (`nvidia-smi` NVML) and — when healthy, canonical-UUID, and free of residual compute processes — patches the attestation annotations; otherwise it annotates the Node `ignition.io/gpu-cleanup=ambiguous`. With no sandbox Pod it runs the same check as a reuse gate and sets/clears that Node annotation.
 
 Controller RBAC: Pods in `ignition-sandboxes`; ClusterRole get/list/patch Nodes. No cluster-admin. API KSA has **no** Kubernetes RBAC.
 
@@ -185,7 +187,7 @@ One GCP project. Regional private GKE, private-IP Cloud SQL, no public Ingress. 
 Regional GKE control plane (us-central1); workers pinned to us-central1-a
   CPU pool     1–3× e2-standard-4 (total autoscaling)
   GPU pool     0–2× g2-standard-8 + 1× L4 + gVisor (private nodes)
-Cloud SQL      zonal PostgreSQL 16, private IP, Auth Proxy --private-ip
+Cloud SQL      regional-HA PostgreSQL 16, backups + PITR, private IP, Auth Proxy --private-ip
 API            kubectl port-forward svc/ignition-api 8080:8080
 ```
 
@@ -275,7 +277,7 @@ Inspect an existing request with `gcloud quotas preferences describe ignition-gl
 
 ### 2. APIs, VPC, GKE, GPU pool, SQL, AR, IAM
 
-Private nodes, no public IPs on GPU VMs. Cloud NAT for image pulls. Do **not** enable GPU time-sharing, MPS, or MIG. SQL is **zonal** (one env); the *cluster* is regional.
+Private nodes, no public IPs on GPU VMs. Cloud NAT is reserved for a future internet-enabled pool; the current node tag is restricted to private Google APIs and Cloud SQL. Do **not** enable GPU time-sharing, MPS, or MIG. Both GKE and the primary Cloud SQL instance are regional; the optional SQL DR replica is cross-region.
 
 The cluster is created with **GKE Dataplane V2** (`--enable-dataplane-v2`) for cluster-owned defense in depth. Client networking input is not converted into Kubernetes NetworkPolicy. `network.internetAccess` selects a preconfigured GCP network profile; VPC, subnet, firewall, NAT, and metadata protections are the enforcement boundary.
 
@@ -285,7 +287,7 @@ gcloud services enable \
   artifactregistry.googleapis.com secretmanager.googleapis.com \
   iamcredentials.googleapis.com cloudresourcemanager.googleapis.com \
   servicenetworking.googleapis.com cloudbuild.googleapis.com \
-  containerfilesystem.googleapis.com
+  containerfilesystem.googleapis.com dns.googleapis.com
 
 gcloud compute networks create "${NETWORK}" --subnet-mode=custom
 gcloud compute networks subnets create "${SUBNET}" \
@@ -304,6 +306,57 @@ gcloud services vpc-peerings connect \
   --service=servicenetworking.googleapis.com \
   --ranges="${PSA_RANGE}" --network="${NETWORK}"
 
+# --- Node egress lockdown ----------------------------------------------------
+# A node (and any Pod egressing through it) may reach ONLY this VPC, the GKE
+# control plane, Google APIs, and the private Cloud SQL range. Every other
+# destination -- other VPCs, the public internet -- is dropped.
+#
+# Pin Google APIs and image pulls to the Private Google Access VIP so they never
+# need a public route: point googleapis.com / *.pkg.dev / *.gcr.io at it.
+export PGA_VIP=199.36.153.8/30
+gcloud compute routes create ignition-private-google-apis \
+  --network="${NETWORK}" --destination-range="${PGA_VIP}" \
+  --next-hop-gateway=default-internet-gateway --priority=1000
+
+for zone_domain in googleapis.com pkg.dev gcr.io; do
+  zone_name="ignition-${zone_domain//./-}"
+  gcloud dns managed-zones create "${zone_name}" \
+    --dns-name="${zone_domain}." --visibility=private --networks="${NETWORK}" \
+    --description="Ignition: pin ${zone_domain} to the Private Google Access VIP"
+  gcloud dns record-sets create "${zone_domain}." --zone="${zone_name}" \
+    --type=A --ttl=300 --rrdatas=199.36.153.8,199.36.153.9,199.36.153.10,199.36.153.11
+  gcloud dns record-sets create "*.${zone_domain}." --zone="${zone_name}" \
+    --type=CNAME --ttl=300 --rrdatas="${zone_domain}."
+done
+
+# CIDR that Service Networking allocated for private Cloud SQL.
+export PSA_CIDR="$(gcloud compute addresses describe "${PSA_RANGE}" --global \
+  --format='csv[no-heading](address,prefixLength)' | tr ',' '/')"
+
+# Deny-all egress for tagged nodes, then higher-priority (lower number) allows.
+gcloud compute firewall-rules create ignition-node-egress-deny \
+  --network="${NETWORK}" --direction=EGRESS --action=DENY --rules=all \
+  --destination-ranges=0.0.0.0/0 --priority=65500 --target-tags=ignition-node
+
+gcloud compute firewall-rules create ignition-node-egress-allow-cluster \
+  --network="${NETWORK}" --direction=EGRESS --action=ALLOW --rules=all \
+  --destination-ranges="${NODES_RANGE},${PODS_RANGE},${SVCS_RANGE}" \
+  --priority=1000 --target-tags=ignition-node
+
+gcloud compute firewall-rules create ignition-node-egress-allow-control-plane \
+  --network="${NETWORK}" --direction=EGRESS --action=ALLOW \
+  --rules=tcp:443,tcp:8132,tcp:10250 --destination-ranges="${MASTER_RANGE}" \
+  --priority=1000 --target-tags=ignition-node
+
+gcloud compute firewall-rules create ignition-node-egress-allow-google-apis \
+  --network="${NETWORK}" --direction=EGRESS --action=ALLOW --rules=tcp:443 \
+  --destination-ranges="${PGA_VIP}" --priority=1000 --target-tags=ignition-node
+
+gcloud compute firewall-rules create ignition-node-egress-allow-cloudsql \
+  --network="${NETWORK}" --direction=EGRESS --action=ALLOW --rules=tcp:3307 \
+  --destination-ranges="${PSA_CIDR}" --priority=1000 --target-tags=ignition-node
+# ---------------------------------------------------------------------------
+
 gcloud iam service-accounts create "${NODE_SA}" \
   --display-name="Ignition GKE nodes"
 gcloud projects add-iam-policy-binding "${PROJECT}" \
@@ -321,6 +374,7 @@ gcloud container clusters create "${CLUSTER}" \
   --no-enable-private-endpoint --master-ipv4-cidr="${MASTER_RANGE}" \
   --workload-pool="${PROJECT}.svc.id.goog" --enable-image-streaming \
   --image-type=COS_CONTAINERD \
+  --tags=ignition-node \
   --node-locations="${ZONE}" \
   --service-account="${NODE_SA}@${PROJECT}.iam.gserviceaccount.com" \
   --scopes=cloud-platform \
@@ -344,13 +398,17 @@ gcloud container node-pools create gpu-sandbox-l4 \
   --disk-type=pd-balanced --disk-size=100 \
   --node-labels=ignition.io/node-pool=gpu-sandbox-l4 \
   --node-taints=ignition.io/gpu-sandbox=true:NoSchedule \
+  --tags=ignition-node \
   --enable-private-nodes --enable-autorepair --enable-autoupgrade
 
 # CPU sandbox pool: the default runtime is CPU-only, so bare CreateSandbox
 # requests land here. gVisor, no accelerator, scale-to-zero.
+# CPU_SANDBOX_MACHINE can be any gVisor-capable type; the seed sandbox only asks
+# for 1 vCPU / 2 GiB. e2-standard-8 has the broadest regional availability.
+export CPU_SANDBOX_MACHINE="${CPU_SANDBOX_MACHINE:-e2-standard-8}"
 gcloud container node-pools create cpu-sandbox \
   --cluster="${CLUSTER}" --region="${REGION}" \
-  --machine-type=n2-standard-8 \
+  --machine-type="${CPU_SANDBOX_MACHINE}" \
   --service-account="${NODE_SA}@${PROJECT}.iam.gserviceaccount.com" \
   --scopes=cloud-platform \
   --image-type=COS_CONTAINERD --sandbox=type=gvisor \
@@ -358,14 +416,18 @@ gcloud container node-pools create cpu-sandbox \
   --disk-type=pd-balanced --disk-size=100 \
   --node-labels=ignition.io/node-pool=cpu-sandbox \
   --node-taints=ignition.io/sandbox=true:NoSchedule \
+  --tags=ignition-node \
   --enable-private-nodes --enable-autorepair --enable-autoupgrade
 
 gcloud sql instances create "${SQL_INSTANCE}" \
   --database-version=POSTGRES_16 --edition=ENTERPRISE \
   --tier=db-custom-1-3840 \
-  --region="${REGION}" --availability-type=ZONAL \
+  --region="${REGION}" --availability-type=REGIONAL \
   --network="${NETWORK}" --no-assign-ip \
-  --storage-auto-increase --no-backup
+  --storage-auto-increase \
+  --backup-start-time=03:00 --retained-backups-count=14 \
+  --enable-point-in-time-recovery --retained-transaction-log-days=7 \
+  --deletion-protection --retain-backups-on-delete
 gcloud sql databases create ignition --instance="${SQL_INSTANCE}"
 
 gcloud artifacts repositories create "${AR_REPO}" \
@@ -401,6 +463,49 @@ gcloud artifacts repositories add-iam-policy-binding "${SANDBOX_REPO}" \
   --role=roles/artifactregistry.reader
 ```
 
+The SQL settings above address automated-backup, PITR, zonal-failover, and accidental-deletion findings. `REGIONAL` is synchronous high availability across two zones in one region; it is not protection from a whole-region outage. It also costs more than the former zonal dev configuration. For an existing instance created by an older version of this guide, update it in place (the availability change restarts the instance, so schedule downtime):
+
+```bash
+gcloud sql instances patch "${SQL_INSTANCE}" \
+  --availability-type=REGIONAL \
+  --backup-start-time=03:00 --retained-backups-count=14 \
+  --enable-point-in-time-recovery --retained-transaction-log-days=7 \
+  --deletion-protection --retain-backups-on-delete
+
+gcloud sql instances describe "${SQL_INSTANCE}" \
+  --format='yaml(settings.availabilityType,settings.backupConfiguration,settings.deletionProtectionEnabled,settings.retainBackupsOnDelete)'
+```
+
+Verify that the output shows `REGIONAL`, backups and PITR enabled, and deletion protection enabled. Security findings can remain visible until the service reevaluates the resource.
+
+To address the separate multi-region disaster-recovery finding, create a cross-region replica. This adds another billable database; pick a region that meets the workload's residency and latency requirements, monitor replication lag, and test the promotion/runbook before treating it as DR:
+
+```bash
+export DR_REGION=us-east1
+export SQL_DR_INSTANCE="${SQL_INSTANCE}-dr"
+gcloud sql instances create "${SQL_DR_INSTANCE}" \
+  --master-instance-name="${SQL_INSTANCE}" \
+  --region="${DR_REGION}" --availability-type=REGIONAL \
+  --tier=db-custom-1-3840 \
+  --network="${NETWORK}" --no-assign-ip \
+  --deletion-protection
+
+gcloud sql instances describe "${SQL_DR_INSTANCE}" \
+  --format='yaml(name,region,state,masterInstanceName,settings.availabilityType,replicaConfiguration)'
+```
+
+Cross-region PostgreSQL replication is asynchronous, so promotion can lose transactions that have not reached the replica. Keep the primary's regional HA and backups even when the DR replica exists. If this is intentionally a low-cost disposable dev environment, omit the replica and document acceptance of the multi-region finding rather than claiming regional HA covers it.
+
+### Node egress is default-deny
+
+The `ignition-node` tag on every pool plus the `ignition-node-egress-*` rules close the node to everything except this VPC, the control-plane CIDR (`tcp:443,8132,10250`), the Private Google Access VIP (`199.36.153.8/30:443`), and the private Cloud SQL range (`tcp:3307`). The priority-65500 deny overrides the implied allow-egress; there is no route to any other VPC or to the public internet. This is what enforces the internet-**disabled** sandbox default at the infrastructure layer: a Pod that escapes gVisor still has no network path to another tenant, to a peered network, or to the internet. DHCP, NTP, and the metadata server (`169.254.169.254`) are always permitted by GCP regardless of these rules, so node bootstrap and Workload Identity are unaffected; sandbox metadata isolation stays with the GKE Metadata Server as before.
+
+Consequences:
+
+- **Every image the cluster pulls must resolve to `*.pkg.dev` or `*.gcr.io`.** Control-plane images are in Artifact Registry; runtime bases are `gcr.io/distroless/*`; the GPU seed base is the in-region `nvidia/cuda` mirror. Mirror any other third-party image (notably `postgres:16`, used by the bootstrap Pod in step 4) into `${AR_REPO}` first — a Docker Hub pull will hang and time out.
+- **Cloud NAT is now unused by nodes.** It is kept only so a future internet-enabled sandbox pool — which must carry a *different* tag and network profile — has a path. Delete `${NAT}` if you never add one.
+- **Build machines are unaffected.** `make push-images`, `docker build/push`, and `buf` run on your workstation or Cloud Build, not on cluster nodes.
+
 The intended IAM boundary is:
 
 | Identity | Required access | Explicitly not granted |
@@ -418,16 +523,23 @@ Do not grant Artifact Registry reader to the controller GSA: kubelet pulls image
 Confirm the cluster, node-pool configuration, and RuntimeClass. If any command fails, stop:
 
 ```bash
+# gpu-sandbox-l4 exists only when GPU quota was available; skip this line for a CPU-only bring-up.
 gcloud container node-pools describe gpu-sandbox-l4 \
   --cluster="${CLUSTER}" --region="${REGION}" \
   --format='yaml(config.accelerators,config.sandboxConfig,config.serviceAccount,autoscaling)'
+gcloud container node-pools describe cpu-sandbox \
+  --cluster="${CLUSTER}" --region="${REGION}" \
+  --format='yaml(config.machineType,config.sandboxConfig,config.labels,config.taints,autoscaling)'
 gcloud container clusters describe "${CLUSTER}" --region="${REGION}" \
   --format='value(networkConfig.datapathProvider, nodePools[].config.serviceAccount)'
 kubectl get runtimeclass gvisor
 kubectl -n kube-system get ds anetd
+gcloud compute firewall-rules list \
+  --filter="network=${NETWORK} AND name~^ignition-node-egress" \
+  --format='table(name,priority,direction,allowed[].map().firewall_rule().list(),denied[].map().firewall_rule().list())'
 ```
 
-`datapathProvider` should read `ADVANCED_DATAPATH` (Dataplane V2). Internet-access enforcement must not depend on client-authored Kubernetes policy.
+`datapathProvider` should read `ADVANCED_DATAPATH` (Dataplane V2). The firewall list must show one `DENY all` at priority 65500 and four `ALLOW` rules at 1000. Internet-access enforcement must not depend on client-authored Kubernetes policy.
 
 ### 3. Namespaces, identities, and PriorityClasses
 
@@ -456,16 +568,24 @@ globalDefault: false
 EOF
 ```
 
-The API defaults `network.internetAccess` to `DISABLED`. The current application no longer creates per-sandbox NetworkPolicy resources and its KSA has no NetworkPolicy RBAC. Before advertising either mode, provision distinct GCP network profiles and verify that `DISABLED` has no public egress while both modes block metadata, Cloud SQL, private control ranges, cross-tenant traffic, and unsolicited ingress. Never silently place a `DISABLED` request onto an internet-enabled profile.
+The API defaults `network.internetAccess` to `DISABLED`, and step 2's node-egress lockdown is the current enforcement for that default. The current application no longer creates per-sandbox NetworkPolicy resources and its KSA has no NetworkPolicy RBAC. Before advertising either mode, provision distinct GCP network profiles and verify that `DISABLED` has no public egress while both modes block metadata, Cloud SQL, private control ranges, cross-tenant traffic, and unsolicited ingress. Never silently place a `DISABLED` request onto an internet-enabled profile.
 
 
 ### 4. Bootstrap Cloud SQL
 
 The applications use the password user `ignition`; the Auth Proxy uses the KSA/GSA identity only to open the Cloud SQL connection. The API applies schema on startup, so `ignition` must own the database. Use distinct random passwords for the application and the `postgres` bootstrap user.
 
+Node egress is Google-only (step 2), so the bootstrap Pod cannot pull `postgres:16` from Docker Hub. Mirror it into Artifact Registry once:
+
+```bash
+docker pull postgres:16
+docker tag postgres:16 "${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/postgres:16"
+docker push "${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/postgres:16"
+```
+
 ```bash
 export POSTGRES_PASS="$(openssl rand -hex 24)"
-export SQL_PASS="$(openssl rand -hex 24)"
+export SQL_PASS="${SQL_PASS:-$(openssl rand -hex 24)}"
 
 cleanup_db_bootstrap() {
   kubectl -n ignition-system delete pod ignition-db-bootstrap --ignore-not-found --wait=true
@@ -475,8 +595,10 @@ trap cleanup_db_bootstrap EXIT
 
 gcloud sql users set-password postgres \
   --instance="${SQL_INSTANCE}" --password="${POSTGRES_PASS}"
-gcloud sql users create ignition \
-  --instance="${SQL_INSTANCE}" --password="${SQL_PASS}"
+if [[ "${SQL_USER_ALREADY_EXISTS:-false}" != "true" ]]; then
+  gcloud sql users create ignition \
+    --instance="${SQL_INSTANCE}" --password="${SQL_PASS}"
+fi
 
 kubectl -n ignition-system create secret generic ignition-db-bootstrap \
   --from-literal=POSTGRES_PASSWORD="${POSTGRES_PASS}" \
@@ -494,7 +616,7 @@ spec:
   restartPolicy: Never
   containers:
     - name: psql
-      image: postgres:16
+      image: ${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}/postgres:16
       command: ["sh", "-c", "trap : TERM INT; sleep infinity & wait"]
       env:
         - name: POSTGRES_PASSWORD
@@ -531,17 +653,39 @@ unset POSTGRES_PASS
 
 The temporary Pod runs inside the VPC because a private-IP Cloud SQL instance is not reachable from ordinary Cloud Shell or a laptop without a private network path. `db/grants.sql` temporarily grants the `ignition` role to the Cloud SQL bootstrap user before transferring database/schema ownership, then revokes it. This is required because Cloud SQL's `postgres` user is not a PostgreSQL superuser. The cleanup trap prevents bootstrap credentials and the temporary Pod from being left behind when `psql` fails.
 
+When Terraform owns the instance, it already creates the `ignition` user. Before running this section, set `SQL_PASS` to the exact value supplied as `TF_VAR_sql_password` and set `SQL_USER_ALREADY_EXISTS=true`; the conditional then preserves Terraform ownership instead of trying to create the user twice.
+
 ### 5. Images, rendered overlay, and control-plane secret
 
-Dockerfiles: `deploy/docker/ignition-api.Dockerfile`, `ignition-controller.Dockerfile`. Do not put the sandbox GPU image in the same Dockerfile. `ignition-gateway` has no Dockerfile yet.
+Dockerfiles: `deploy/docker/ignition-api.Dockerfile`, `ignition-controller.Dockerfile`. Do not put the sandbox GPU image in the same Dockerfile.
+
+`make push-images` also builds `ignition-gateway`, `ignition-prober`, and `ignition-gpu-agent` (the last needs CGO for `cuda-check`). The dev overlay only deploys `ignition-api` and `ignition-controller`; for a CPU-only bring-up build just those two:
 
 ```bash
 export AR="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}"
-make push-images IMAGE_REGISTRY="${AR}" IMAGE_TAG=dev
+for c in ignition-api ignition-controller; do
+  docker build -f "deploy/docker/${c}.Dockerfile" -t "${AR}/${c}:dev" .
+  docker push "${AR}/${c}:dev"
+done
+# or the full set: make push-images IMAGE_REGISTRY="${AR}" IMAGE_TAG=dev
 
+# Sandbox seed image. The dev bearer seeds exactly one image id -- `img_seed` --
+# and the controller resolves it to ${SANDBOX_REPO}/img_seed (implicit :latest).
+# Push the variant that matches the pool you will exercise; only one can be the
+# active `img_seed` at a time.
+
+# CPU variant (accelerator: NONE) — minimal, no CUDA. Use this for the CPU quick check.
 export SANDBOX_IMAGE="${REGION}-docker.pkg.dev/${PROJECT}/${SANDBOX_REPO}/img_seed:latest"
 docker build -f images/sandbox-init/Dockerfile -t "${SANDBOX_IMAGE}" .
 docker push "${SANDBOX_IMAGE}"
+
+# GPU variant (accelerator: NVIDIA_L4) — FROM a same-region mirror of
+# nvidia/cuda:*-base so the injected nvidia-smi runs and cuda-check can dlopen
+# libcuda.so.1. Keep CUDA_BASE at/under the GKE L4 default driver's CUDA version.
+# Tag it as the same `img_seed` id (overwrites the CPU variant above).
+#   export CUDA_BASE="${REGION}-docker.pkg.dev/${PROJECT}/mirror/nvidia/cuda:12.4.1-base-ubuntu22.04"
+#   docker build -f images/sandbox-init/gpu.Dockerfile --build-arg CUDA_BASE="${CUDA_BASE}" -t "${SANDBOX_IMAGE}" .
+#   docker push "${SANDBOX_IMAGE}"
 
 export DEPLOY_RENDER_DIR="$(mktemp -d)"
 cp -R deploy/k8s "${DEPLOY_RENDER_DIR}/k8s"
@@ -568,9 +712,32 @@ gcloud builds submit . --config=deploy/cloudbuild/build.yaml \
   --substitutions="_EXTRA_TAG=dev,_REGION=${REGION},_AR_REPO=${AR_REPO},SHORT_SHA=${SHORT_SHA}"
 ```
 
-`deploy/cloudbuild/build.yaml` also runs `go test ./...` and the Postgres store tests. The automated
-PR-merge / nightly / noon-staging pipeline built on it is documented in
-[`deploy/PIPELINE.md`](../../deploy/PIPELINE.md).
+### Test layers and PostgreSQL
+
+Use package tests for domain behavior, `internal/store` for SQL correctness, and
+`tests/integration` for API/controller workflows. The SQL tests are not mocks: the package starts
+`postgres:16-alpine` through Testcontainers, applies the complete embedded schema, exercises pgx
+queries and transactions, and removes the container after the package finishes.
+
+```bash
+# Everything. Requires Docker because internal/store starts PostgreSQL.
+go test ./... -count=1
+
+# Schema, constraints, queries, transactions, idempotency, quota, and leases.
+go test ./internal/store -count=1
+
+# Cross-package workflows using the Memory store and k8s.Fake.
+go test ./tests/integration/... -count=1
+```
+
+If CI already provisions a disposable PostgreSQL 16 database, set
+`IGNITION_TEST_DATABASE_URL=postgres://...` and the store tests use it instead of starting a
+container. Never point this variable at staging or production. A missing Docker daemon, image-pull
+failure, schema error, or SQL failure fails the suite; PostgreSQL coverage is not silently skipped.
+
+`deploy/cloudbuild/build.yaml` runs `go test ./...` and also supports its explicitly provisioned
+PostgreSQL test step through `IGNITION_TEST_DATABASE_URL`. The automated PR-merge / nightly /
+noon-staging pipeline built on it is documented in [`deploy/PIPELINE.md`](../../deploy/PIPELINE.md).
 
 Create or update the control-plane secret declaratively, deploy the rendered overlay, and require both rollouts to complete:
 
@@ -641,6 +808,17 @@ if [[ "${DELETE_SHARED_INFRA:-false}" == "true" ]]; then
   gcloud services vpc-peerings delete \
     --service=servicenetworking.googleapis.com --network="${NETWORK}" --quiet
   gcloud compute addresses delete "${PSA_RANGE}" --global --quiet
+  for rule in $(gcloud compute firewall-rules list \
+    --filter="network=${NETWORK} AND name~^ignition-node-egress" --format='value(name)'); do
+    gcloud compute firewall-rules delete "${rule}" --quiet
+  done
+  gcloud compute routes delete ignition-private-google-apis --quiet
+  for zone_domain in googleapis.com pkg.dev gcr.io; do
+    zone_name="ignition-${zone_domain//./-}"
+    gcloud dns record-sets delete "${zone_domain}." --zone="${zone_name}" --type=A --quiet || true
+    gcloud dns record-sets delete "*.${zone_domain}." --zone="${zone_name}" --type=CNAME --quiet || true
+    gcloud dns managed-zones delete "${zone_name}" --quiet || true
+  done
   gcloud compute routers nats delete "${NAT}" \
     --router="${ROUTER}" --region="${REGION}" --quiet
   gcloud compute routers delete "${ROUTER}" --region="${REGION}" --quiet
@@ -653,11 +831,45 @@ if [[ "${DELETE_SHARED_INFRA:-false}" == "true" ]]; then
 fi
 ```
 
-Without the optional flags, the VPC, NAT, reserved private-services range, service accounts, and Artifact Registry repositories remain for a subsequent cluster. Delete the project instead if it was created only for this run and you want to remove everything: `gcloud projects delete "${PROJECT}"`.
+Without the optional flags, the VPC, node-egress firewall rules, the Private Google Access route and DNS zones, NAT, reserved private-services range, service accounts, and Artifact Registry repositories remain for a subsequent cluster. Delete the project instead if it was created only for this run and you want to remove everything: `gcloud projects delete "${PROJECT}"`.
 
 ## Verify the implemented sandbox path
 
 Create requires only `imageId` and `Idempotency-Key`; any omitted `resources` / `timeouts` / `network` fields come from the default runtime. The body below pins an `NVIDIA_L4` sandbox with the maximum 600-second startup timeout (a cold L4 node can take several minutes). For a CPU sandbox, drop `resources` entirely.
+
+### CPU quick check (no GPU quota required)
+
+`img_seed` is the single image id the dev bearer seeds; the controller resolves it to `${SANDBOX_REPO}/img_seed`, so step 5 must push the **CPU** seed variant there when this is the path under test. A bare body lands on the default (CPU-only) runtime and the `cpu-sandbox` pool; readiness is kubelet PodReady alone — no `ignition-gpu-agent` attestation gate.
+
+```bash
+export CREATE_KEY="cpu-$(date +%s)"
+export SBX="$(curl --fail-with-body -sS -X POST \
+  "http://127.0.0.1:${LOCAL_API_PORT}/v1/projects/prj_dev/sandboxes" \
+  -H "Authorization: Bearer dev-only-token" \
+  -H "Idempotency-Key: ${CREATE_KEY}" \
+  -H "Content-Type: application/json" \
+  --data '{"imageId":"img_seed"}' | jq -er '.sandbox.id')"
+
+for attempt in $(seq 1 60); do
+  STATE="$(curl --fail-with-body -sS -H "Authorization: Bearer dev-only-token" \
+    "http://127.0.0.1:${LOCAL_API_PORT}/v1/projects/prj_dev/sandboxes/${SBX}" | jq -er '.state,.stateReason' | paste -sd' ')"
+  echo "${STATE}"
+  case "${STATE%% *}" in READY|FAILED|FINISHED) break;; esac
+  sleep 5
+done
+
+curl --fail-with-body -sS -X POST \
+  "http://127.0.0.1:${LOCAL_API_PORT}/v1/projects/prj_dev/sandboxes/${SBX}:terminate" \
+  -H "Authorization: Bearer dev-only-token" -H "Idempotency-Key: term-$(date +%s)" | jq .
+```
+
+`FAILED / CAPACITY_UNAVAILABLE` here means the pool's `FailedScaleUp: GCE out of resources` — a zonal machine-type stockout in `${ZONE}`, **not** a quota problem (confirm with `gcloud compute regions describe "${REGION}"` — the relevant `*_CPUS` metric shows headroom). The control plane surfaces it correctly and cleans up the pending Pod. Recreate the pool on an available type and retry:
+
+```bash
+gcloud container node-pools delete cpu-sandbox --cluster="${CLUSTER}" --region="${REGION}" --quiet
+CPU_SANDBOX_MACHINE=e2-standard-8   # or another available gVisor-capable type
+# ...re-run the `gcloud container node-pools create cpu-sandbox` block from step 2
+```
 
 ```bash
 export CREATE_KEY="create-$(date +%s)"
@@ -720,9 +932,9 @@ done
 [[ "${SANDBOX_STATE}" == "FINISHED" ]]
 ```
 
-This is the current acceptance boundary. The controller creates and schedules the GPU Pod. `sandbox-init` becomes ready only after it observes exactly one GPU assignment, so the kubelet readiness probe and controller advance the sandbox to `READY`. If the cold node does not arrive within 600 seconds, inspect the retained events. `FailedScaleUp` with quota exceeded means either the regional L4 or global all-regions GPU quota is insufficient; `CAPACITY_UNAVAILABLE` is the expected public infrastructure failure. Terminating the test sandbox removes the Pod and makes the GPU node eligible for autoscaler scale-down.
+This is the current acceptance boundary. The controller creates and schedules the GPU Pod. `sandbox-init` `/readyz` passes once its local probe (device nodes + `nvidia-smi` + `cuInit()`) succeeds, and `ignition-gpu-agent` independently stamps the canonical `ignition.io/gpu-uuid` + `ignition.io/init-healthy`; the controller advances the sandbox to `READY` only when both hold. If the cold node does not arrive within 600 seconds, inspect the retained events. `FailedScaleUp` with quota exceeded means either the regional L4 or global all-regions GPU quota is insufficient; `CAPACITY_UNAVAILABLE` is the expected public infrastructure failure. Terminating the test sandbox removes the Pod and makes the GPU node eligible for autoscaler scale-down.
 
-Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes token; readiness comes only from kubelet probing `sandbox-init`. Process execution and attach verification remain the next slice and additionally require `ignition-gateway`, which is not shipped.
+Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes token; the GPU attestation annotations come only from `ignition-gpu-agent`, and kubelet PodReady only from probing `sandbox-init`. Process execution and attach verification remain the next slice and additionally require `ignition-gateway`, which is not shipped.
 
 ## What not to do
 
@@ -730,6 +942,7 @@ Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes
 - Do not give the API ServiceAccount Pod RBAC.
 - Do not give sandbox Pods Workload Identity or a usable metadata identity.
 - Do not enable public IPs on the GPU pool.
+- Do not put an internet-enabled sandbox pool on the `ignition-node` tag; that tag's egress is default-deny and Google-only. Internet-enabled pods need their own pool, tag, and network profile (next slice).
 - Do not share a GPU node across two customer sandboxes (no time-sharing, MPS, or MIG).
 - Do not use Autopilot; this pool shape is **GKE Standard**.
 - Do not implement `network.internetAccess` by translating client input into arbitrary Kubernetes NetworkPolicy rules.
@@ -744,11 +957,13 @@ Project, image, and event APIs; digest-pinned images; GCP network profiles for i
 | Item | Value |
 |---|---|
 | Region | `us-central1` |
-| Machine (sandbox) | `g2-standard-8` + 1× `nvidia-l4` |
+| Machine (GPU sandbox) | `g2-standard-8` + 1× `nvidia-l4` |
+| Machine (CPU sandbox) | `e2-standard-8` (any available gVisor-capable type) |
 | RuntimeClass | `gvisor` |
-| Taint | `ignition.io/gpu-sandbox=true:NoSchedule` |
-| Label | `ignition.io/node-pool=gpu-sandbox-l4` |
+| Taint (GPU / CPU) | `ignition.io/gpu-sandbox=true:NoSchedule` / `ignition.io/sandbox=true:NoSchedule` |
+| Label (GPU / CPU) | `ignition.io/node-pool=gpu-sandbox-l4` / `ignition.io/node-pool=cpu-sandbox` |
 | Namespaces | `ignition-system`, `ignition-sandboxes` |
 | Datapath | Dataplane V2 (`ADVANCED_DATAPATH`) for cluster-owned defense in depth |
+| Node egress | default-deny (tag `ignition-node`); allow only in-VPC, control plane, PGA VIP `199.36.153.8/30`, Cloud SQL `:3307` |
 | Overlay | `deploy/k8s/overlays/dev` |
 | Warm SLO | p95 API-to-`READY` ≤ 9s (pre-warmed nodes only) |
