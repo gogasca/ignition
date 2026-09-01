@@ -27,12 +27,12 @@ func OpenPostgres(ctx context.Context, dsn string) (*Postgres, error) {
 	return openPostgres(ctx, dsn, true)
 }
 
-// OpenPostgresNoMigrate connects without applying DDL (controller identity).
-func OpenPostgresNoMigrate(ctx context.Context, dsn string) (*Postgres, error) {
+// OpenPostgresWithoutSchema connects without applying DDL (controller identity).
+func OpenPostgresWithoutSchema(ctx context.Context, dsn string) (*Postgres, error) {
 	return openPostgres(ctx, dsn, false)
 }
 
-func openPostgres(ctx context.Context, dsn string, migrate bool) (*Postgres, error) {
+func openPostgres(ctx context.Context, dsn string, initializeSchema bool) (*Postgres, error) {
 	cfg, err := pgxpool.ParseConfig(dsn)
 	if err != nil {
 		return nil, fmt.Errorf("postgres dsn: %w", err)
@@ -65,8 +65,8 @@ func openPostgres(ctx context.Context, dsn string, migrate bool) (*Postgres, err
 	}
 
 	p := &Postgres{pool: pool}
-	if migrate {
-		if err := p.migrate(ctx); err != nil {
+	if initializeSchema {
+		if err := p.applySchema(ctx); err != nil {
 			pool.Close()
 			return nil, err
 		}
@@ -86,14 +86,14 @@ func (p *Postgres) Ping(ctx context.Context) error {
 	return p.pool.Ping(ctx)
 }
 
-func (p *Postgres) migrate(ctx context.Context) error {
+func (p *Postgres) applySchema(ctx context.Context) error {
 	for _, stmt := range splitSQL(schemaSQL) {
 		if _, err := p.pool.Exec(ctx, stmt); err != nil {
 			head := stmt
 			if len(head) > 80 {
 				head = head[:80]
 			}
-			return fmt.Errorf("migrate %q: %w", head, err)
+			return fmt.Errorf("apply schema %q: %w", head, err)
 		}
 	}
 	return nil

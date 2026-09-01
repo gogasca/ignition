@@ -52,12 +52,13 @@ func (s *Server) watchOperation(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(w, r, project, auth.PermOperationGet, false) {
 		return
 	}
-	op, err := s.store.GetOperation(r.Context(), project, r.PathValue("operation"))
-	if err != nil {
-		writeStoreError(w, s.requestID(r.Context()), err)
-		return
-	}
-	writeSSE(w, r, op)
+	operationID := r.PathValue("operation")
+	writeSSE(w, r, s.requestID(r.Context()), func() (any, error) {
+		return s.store.GetOperation(r.Context(), project, operationID)
+	}, func(v any) bool {
+		op := v.(store.Operation)
+		return op.State == "SUCCEEDED" || op.State == "FAILED" || op.State == "CANCELLED"
+	})
 }
 
 func (s *Server) cancelOperation(w http.ResponseWriter, r *http.Request) {

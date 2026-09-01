@@ -15,6 +15,7 @@ var Components = map[string][]string{
 	"api": {
 		"cmd/ignition-api/**",
 		"internal/api/**",
+		"internal/adminz/**",
 		"internal/auth/**",
 		"internal/config/**",
 		"internal/store/**",
@@ -28,7 +29,9 @@ var Components = map[string][]string{
 	"controller": {
 		"cmd/ignition-controller/**",
 		"internal/controller/**",
+		"internal/adminz/**",
 		"internal/k8s/**",
+		"internal/gpuid/**",
 		"internal/capacity/**",
 		"internal/secrets/**",
 		"internal/config/**",

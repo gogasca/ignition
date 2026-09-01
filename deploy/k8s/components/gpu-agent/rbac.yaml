@@ -1,0 +1,62 @@
+# ignition-gpu-agent needs to read the sandbox Pod on its node and stamp the
+# GPU attestation annotations onto it, and to annotate its Node after a failed
+# reuse check. Both are scoped as tightly as RBAC allows: pods only in the
+# sandbox namespace, nodes cluster-wide (nodes are not namespaced and cannot be
+# selected by label in RBAC) with get/list/patch only.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: gpu-agent-pods
+  namespace: ignition-sandboxes
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-gpu-agent
+rules:
+  - apiGroups: [""]
+    resources: [pods]
+    verbs: [get, list, watch, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: gpu-agent-pods
+  namespace: ignition-sandboxes
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-gpu-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: gpu-agent-pods
+subjects:
+  - kind: ServiceAccount
+    name: ignition-gpu-agent
+    namespace: ignition-system
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: ignition-gpu-agent-nodes
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-gpu-agent
+rules:
+  - apiGroups: [""]
+    resources: [nodes]
+    verbs: [get, list, patch]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: ignition-gpu-agent-nodes
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-gpu-agent
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: ignition-gpu-agent-nodes
+subjects:
+  - kind: ServiceAccount
+    name: ignition-gpu-agent
+    namespace: ignition-system

@@ -74,7 +74,7 @@ api/gen/ignition/v1/           generated Go (do not edit)
 - Public JSON uses proto `json_name` (lowerCamelCase). Public enums drop the prefix: `SANDBOX_STATE_READY` → `"READY"`.
 - `Authorization: Bearer` on every route.
 - `Idempotency-Key` required on create, terminate, operation cancel, and process create/attach/signal/cancel.
-- Watch is **SSE** (`text/event-stream`). This slice emits one snapshot, heartbeats, and closes after ~60s. The v1 contract still calls for `Last-Event-ID` and push-on-change; until that lands, clients re-GET or re-watch.
+- Watch is **SSE** (`text/event-stream`). It emits a content-addressed snapshot whenever product state changes, honors `Last-Event-ID`, sends heartbeats, and closes on a terminal state or after ~60s.
 
 gRPC may exist internally later. It is not the public v1 edge.
 
@@ -91,7 +91,7 @@ Then load `role_bindings` for `(project_id, principal)`. SQL is project-scoped *
 
 Staging/prod (`IGNITION_ENV`) refuse to start with `IGNITION_DEV_BEARER`, a missing issuer, or the default stream secret.
 
-Until Project APIs exist, migrations seed one organization, one project, and bind the operator OIDC subject as `owner` or `developer`.
+Until Project APIs exist, operators seed one project and bind the operator OIDC subject as `owner` or `developer`.
 
 Required permissions:
 
@@ -182,7 +182,7 @@ State mapping:
 | `CREATING` | admitted; Pod missing or not scheduled |
 | `SCHEDULED` | `PodScheduled=True` |
 | `STARTED` | container running; readiness incomplete |
-| `READY` | init supervisor healthy (`ignition.io/init-healthy`) and one GPU UUID (`ignition.io/gpu-uuid`); kube `PodReady` alone is `STARTED` |
+| `READY` | CPU: kube `PodReady`. GPU: kube `PodReady` **and** `ignition-gpu-agent` has stamped `ignition.io/init-healthy=true` + a canonical `ignition.io/gpu-uuid` (`GPU-…`); `PodReady` alone is `STARTED` |
 | `FAILED` | terminal Pod failure, deadline, image error, node loss |
 | `TERMINATING` / `FINISHED` | terminate requested / Pod deleted and cleanup verified |
 
@@ -230,7 +230,7 @@ Every customer-owned row has non-null `project_id`. Indexes: `(project_id, id)`,
 
 Database: Cloud SQL for PostgreSQL, regional HA, private IP, Auth Proxy sidecar, Workload Identity. First slice uses a password DSN in `DATABASE_URL`; IAM DB users remain the staging/prod hardening path.
 
-`ignition-api` owns DDL (`store.Open`). `ignition-controller` is DML only (`store.OpenWithoutMigrate`).
+`ignition-api` owns DDL (`store.Open`). `ignition-controller` is DML only (`store.OpenWithoutSchema`).
 
 ## 8. Identity and IAM (runtime)
 

@@ -358,6 +358,55 @@ func TestAmbiguousGPUCordon(t *testing.T) {
 	}
 }
 
+// The authoritative dirty signal is the Node annotation ignition-gpu-agent
+// writes after a failed reuse check — not a Pod annotation.
+func TestDirtyNodeCordonOnTeardown(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	res := admit(t, m, store.TimeoutSpec{})
+	ctx := context.Background()
+	_ = c.Reconcile(ctx)
+	name := k8s.PodName(res.Sandbox.ID)
+	fake.SetScheduled(name, "gke-node-7")
+	fake.SetReady(name, k8s.FakeGPUUUID)
+	_ = c.Reconcile(ctx)
+
+	fake.MarkNodeDirty("gke-node-7") // agent's verdict
+	if _, err := m.TerminateSandbox(ctx, "prj_dev", res.Sandbox.ID, "alice", "t", "h", "tr"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Nodes) != 1 || fake.Nodes[0] != "gke-node-7" {
+		t.Fatalf("expected gke-node-7 cordoned, got %v", fake.Nodes)
+	}
+}
+
+// A clean node returns to the warm pool untouched.
+func TestCleanNodeNotCordonedOnTeardown(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	res := admit(t, m, store.TimeoutSpec{})
+	ctx := context.Background()
+	_ = c.Reconcile(ctx)
+	name := k8s.PodName(res.Sandbox.ID)
+	fake.SetScheduled(name, "gke-node-8")
+	fake.SetReady(name, k8s.FakeGPUUUID)
+	_ = c.Reconcile(ctx)
+	if _, err := m.TerminateSandbox(ctx, "prj_dev", res.Sandbox.ID, "alice", "t", "h", "tr"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if len(fake.Nodes) != 0 {
+		t.Fatalf("clean node was cordoned: %v", fake.Nodes)
+	}
+}
+
 func TestLeasePreventsStandbyMutations(t *testing.T) {
 	m := store.NewMemory()
 	fake := k8s.NewFake()
@@ -471,11 +520,21 @@ func TestBalloonsMatchMinWarm(t *testing.T) {
 	}
 }
 
-func TestSupervisorBackedKubeReadyIsPublicReady(t *testing.T) {
+func TestCPUSupervisorBackedKubeReadyIsPublicReady(t *testing.T) {
 	m := store.NewMemory()
 	fake := k8s.NewFake()
 	c := controller.New(m, fake, fake, controller.Options{})
-	res := admit(t, m, store.TimeoutSpec{})
+	m.SeedImage("prj_dev", "img_seed")
+	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
+		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
+		ImageID:   "img_seed",
+		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
 	ctx := context.Background()
 	_ = c.Reconcile(ctx)
 	name := k8s.PodName(res.Sandbox.ID)
@@ -484,7 +543,67 @@ func TestSupervisorBackedKubeReadyIsPublicReady(t *testing.T) {
 		t.Fatal(err)
 	}
 	if mustGet(t, m, res.Sandbox.ID).State != "READY" {
-		t.Fatalf("supervisor-backed PodReady must be READY, got %s", mustGet(t, m, res.Sandbox.ID).State)
+		t.Fatalf("CPU sandbox: supervisor-backed PodReady must be READY, got %s", mustGet(t, m, res.Sandbox.ID).State)
+	}
+}
+
+// A GPU sandbox must NOT reach public READY on kubelet PodReady alone: it also
+// needs ignition-gpu-agent's attestation (canonical UUID + init-healthy), which
+// the sandbox Pod cannot write for itself.
+func TestGPUKubeReadyWithoutAgentAttestationStaysStarted(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	res := admit(t, m, store.TimeoutSpec{})
+	ctx := context.Background()
+	_ = c.Reconcile(ctx)
+	name := k8s.PodName(res.Sandbox.ID)
+
+	fake.SetKubeReady(name)
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustGet(t, m, res.Sandbox.ID).State; got != "STARTED" {
+		t.Fatalf("GPU sandbox without attestation: want STARTED, got %s", got)
+	}
+
+	// ignition-gpu-agent attests: canonical UUID + init-healthy.
+	if err := fake.PatchAnnotations(name, map[string]string{
+		k8s.AnnotGPUUUID:     k8s.FakeGPUUUID,
+		k8s.AnnotInitHealthy: "true",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustGet(t, m, res.Sandbox.ID).State; got != "READY" {
+		t.Fatalf("GPU sandbox after attestation: want READY, got %s", got)
+	}
+}
+
+// A non-canonical UUID annotation (a device index, a device-node name) never
+// satisfies the READY gate.
+func TestGPUNonCanonicalUUIDAnnotationDoesNotGateReady(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	res := admit(t, m, store.TimeoutSpec{})
+	ctx := context.Background()
+	_ = c.Reconcile(ctx)
+	name := k8s.PodName(res.Sandbox.ID)
+	fake.SetKubeReady(name)
+	if err := fake.PatchAnnotations(name, map[string]string{
+		k8s.AnnotGPUUUID:     "nvidia0",
+		k8s.AnnotInitHealthy: "true",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustGet(t, m, res.Sandbox.ID).State; got == "READY" {
+		t.Fatalf("non-canonical UUID must not gate READY, got %s", got)
 	}
 }
 

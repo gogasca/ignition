@@ -22,6 +22,7 @@ const (
 type Config struct {
 	Env                 string
 	ListenAddr          string
+	AdminAddr           string
 	DatabaseURL         string
 	OIDCIssuer          string
 	OIDCJWKSURL         string
@@ -63,6 +64,7 @@ func Load() (Config, error) {
 	cfg := Config{
 		Env:               env,
 		ListenAddr:        getenv("IGNITION_LISTEN_ADDR", ":8080"),
+		AdminAddr:         getenv("IGNITION_ADMIN_ADDR", ":9090"),
 		DatabaseURL:       strings.TrimSpace(os.Getenv("DATABASE_URL")),
 		OIDCIssuer:        strings.TrimSpace(os.Getenv("IGNITION_OIDC_ISSUER")),
 		OIDCJWKSURL:       strings.TrimSpace(os.Getenv("IGNITION_OIDC_JWKS_URL")),

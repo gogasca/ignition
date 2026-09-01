@@ -1,0 +1,6 @@
+project_id      = "your-gcp-project"
+region          = "us-central1"
+zone            = "us-central1-a"
+operator_cidr   = "203.0.113.10/32"
+gpu_max_nodes   = 2
+# dr_region     = "us-east1" # Optional; adds a billable cross-region HA replica.

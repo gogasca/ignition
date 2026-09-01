@@ -1,0 +1,12 @@
+# Adds ignition-gpu-agent: the node-local trusted GPU authority (attestation +
+# node-reuse verification) for the GPU sandbox pool. Include from an overlay
+# that provisions a gpu-sandbox-l4 node pool:
+#   components:
+#     - ../../components/gpu-agent
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+resources:
+  - serviceaccount.yaml
+  - rbac.yaml
+  - daemonset.yaml
+  # podmonitoring.yaml requires GKE Managed Prometheus; add it when enabled.

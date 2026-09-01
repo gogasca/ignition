@@ -10,12 +10,12 @@ func Open(ctx context.Context, dsn string) (Store, ControllerStore, func() error
 	return openStore(ctx, dsn, true)
 }
 
-// OpenWithoutMigrate is for ignition-controller: DML only, no schema owner.
-func OpenWithoutMigrate(ctx context.Context, dsn string) (Store, ControllerStore, func() error, error) {
+// OpenWithoutSchema is for ignition-controller: DML only, no schema owner.
+func OpenWithoutSchema(ctx context.Context, dsn string) (Store, ControllerStore, func() error, error) {
 	return openStore(ctx, dsn, false)
 }
 
-func openStore(ctx context.Context, dsn string, migrate bool) (Store, ControllerStore, func() error, error) {
+func openStore(ctx context.Context, dsn string, initializeSchema bool) (Store, ControllerStore, func() error, error) {
 	if dsn == "" {
 		m := NewMemory()
 		return m, m, func() error { return nil }, nil
@@ -24,10 +24,10 @@ func openStore(ctx context.Context, dsn string, migrate bool) (Store, Controller
 		p   *Postgres
 		err error
 	)
-	if migrate {
+	if initializeSchema {
 		p, err = OpenPostgres(ctx, dsn)
 	} else {
-		p, err = OpenPostgresNoMigrate(ctx, dsn)
+		p, err = OpenPostgresWithoutSchema(ctx, dsn)
 	}
 	if err != nil {
 		return nil, nil, nil, err

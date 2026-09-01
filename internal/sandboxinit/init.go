@@ -3,12 +3,9 @@ package sandboxinit
 import (
 	"context"
 	"errors"
-	"fmt"
 	"net/http"
 	"os"
 	"os/signal"
-	"path/filepath"
-	"regexp"
 	"strings"
 	"sync"
 	"syscall"
@@ -60,69 +57,24 @@ func (s *Supervisor) Handler() http.Handler {
 			http.Error(w, "not ready", http.StatusServiceUnavailable)
 			return
 		}
-		w.Header().Set("X-Ignition-GPU-UUID", uuid)
+		if uuid != "" {
+			w.Header().Set("X-Ignition-GPU-UUID", uuid)
+			w.Header().Set("X-Ignition-GPU-Health", "ok")
+		}
 		w.WriteHeader(http.StatusOK)
 		_, _ = w.Write([]byte("ready\n"))
 	})
 	return mux
 }
 
-func detectGPUFromEnvironment() (string, error) {
-	raw := strings.TrimSpace(os.Getenv("NVIDIA_VISIBLE_DEVICES"))
-	if raw == "" || strings.EqualFold(raw, "void") || strings.EqualFold(raw, "none") {
-		return "", errors.New("NVIDIA_VISIBLE_DEVICES does not identify a GPU")
-	}
-	parts := strings.Split(raw, ",")
-	if len(parts) != 1 {
-		return "", fmt.Errorf("expected exactly one GPU, got %d", len(parts))
-	}
-	uuid := strings.TrimSpace(parts[0])
-	if uuid == "" || strings.EqualFold(uuid, "all") {
-		return "", errors.New("GPU assignment must be one explicit device UUID")
-	}
-	return uuid, nil
-}
-
-var gpuDeviceName = regexp.MustCompile(`^nvidia[0-9]+$`)
-
+// detectAssignedGPU is the readiness probe for GPU sandboxes. It never consults
+// NVIDIA_VISIBLE_DEVICES or a device-node name: it stats the device nodes, runs
+// nvidia-smi for a canonical UUID and ECC health, and runs the cuda-check
+// helper for a real cuInit(). The authoritative identity plus the
+// residual-process verdict still come from ignition-gpu-agent via Pod
+// annotations the controller gates on.
 func detectAssignedGPU() (string, error) {
-	if uuid, err := detectGPUFromEnvironment(); err == nil {
-		return uuid, nil
-	}
-	infos, _ := filepath.Glob("/proc/driver/nvidia/gpus/*/information")
-	var uuids []string
-	for _, path := range infos {
-		raw, err := os.ReadFile(path)
-		if err != nil {
-			continue
-		}
-		for _, line := range strings.Split(string(raw), "\n") {
-			key, value, ok := strings.Cut(line, ":")
-			if ok && strings.EqualFold(strings.TrimSpace(key), "GPU UUID") {
-				if uuid := strings.TrimSpace(value); uuid != "" {
-					uuids = append(uuids, uuid)
-				}
-			}
-		}
-	}
-	if len(uuids) == 1 {
-		return uuids[0], nil
-	}
-	if len(uuids) > 1 {
-		return "", fmt.Errorf("expected exactly one GPU, got %d", len(uuids))
-	}
-	devices, _ := filepath.Glob("/dev/nvidia*")
-	var assigned []string
-	for _, path := range devices {
-		name := filepath.Base(path)
-		if gpuDeviceName.MatchString(name) {
-			assigned = append(assigned, name)
-		}
-	}
-	if len(assigned) != 1 {
-		return "", fmt.Errorf("expected exactly one assigned GPU device, got %d", len(assigned))
-	}
-	return assigned[0], nil
+	return defaultGPUProbe().run(context.Background())
 }
 
 // Run serves kubelet probes until SIGTERM/SIGINT. Process supervision is added

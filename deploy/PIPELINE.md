@@ -336,9 +336,9 @@ auto-promote staging→prod after a soak while keeping the approval gate.
 
 ### Known gaps
 
-- **DB migrations are not run by the pipeline.** `db/migrations/` currently has two colliding
-  `000002_*` versions; fix the numbering, then add a Cloud Deploy `predeploy` job that runs
-  `migrate ... up`.
+- **Database schema rollout is not separated from API startup.** `ignition-api` currently applies
+  the complete, idempotent `internal/store/schema.sql` baseline when it starts. Before schema
+  evolution is needed, add a reviewed predeploy schema job and remove DDL privileges from the API.
 - **Cloud Deploy `verify` runs only the read-only journeys** (`lite`, unauthenticated). Full lifecycle
   CUJ coverage on staging comes from the continuous `ignition-prober` Deployment and from
   `tests/integration` (`TestProbeJourneys`) in CI. To run the full set in `verify` too, give the

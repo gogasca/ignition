@@ -225,6 +225,9 @@ paths:
       parameters:
         - $ref: "#/components/parameters/ProjectId"
         - $ref: "#/components/parameters/OperationId"
+        - name: Last-Event-ID
+          in: header
+          schema: { type: string }
       responses:
         "200":
           description: SSE stream of Operation snapshots

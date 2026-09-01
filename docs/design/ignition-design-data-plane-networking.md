@@ -99,7 +99,12 @@ On attach/reconnect the client presents a newly minted exec stream token and its
 
 The worker reports a sandbox `READY` only after runtime start, GPU/device visibility, ingress local registration, and the Postgres route/outbox transaction commits. Gateway independently validates generation and route state. Initial production has no user application readiness probe; it does not infer that a user application is healthy.
 
-In the MVP there is no ingress registration or route/outbox commit: `ignition-controller` marks a sandbox `READY` when the Pod is scheduled and running, the init supervisor has set `ignition.io/init-healthy=true`, and exactly one GPU UUID is annotated (`ignition.io/gpu-uuid`). See the state-mapping table in [API and Controller proposal](ignition-design-api-controller.md) §6.2.
+In the MVP there is no ingress registration or route/outbox commit. `ignition-controller` marks a sandbox `READY` when the Pod is scheduled and running **and**:
+
+- **CPU sandboxes** (`accelerator: NONE`): kubelet `PodReady` is the whole signal — `sandbox-init` `/readyz` returns 200 once the supervisor is up.
+- **GPU sandboxes**: additionally, `ignition-gpu-agent` (a trusted DaemonSet on the GPU pool) has stamped a **canonical** GPU UUID (`ignition.io/gpu-uuid`, `GPU-…` form) and `ignition.io/init-healthy=true` onto the Pod. The sandbox Pod holds no Kubernetes credential, so it cannot write these itself. `sandbox-init` `/readyz` still runs its own local check — device nodes present, `nvidia-smi` clean, `cuInit()` succeeds — but that check makes no identity claim.
+
+`sandbox-init` never consults `NVIDIA_VISIBLE_DEVICES` or a device-node name. See the state-mapping table in [API and Controller proposal](ignition-design-api-controller.md) §6.2 and [GKE Sandbox design](ignition-design-gke-sandbox.md).
 
 ## Egress policy
 

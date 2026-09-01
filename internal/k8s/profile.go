@@ -37,3 +37,16 @@ func ProfileFor(acceleratorType string) (Profile, bool) {
 	p, ok := profiles[acceleratorType]
 	return p, ok
 }
+
+// IsGPUProfile reports whether the accelerator type schedules a physical GPU
+// (and therefore needs the ignition-gpu-agent's UUID + health attestation
+// before its sandbox may become public READY). An unknown type is treated as a
+// GPU type: the empty/legacy default is NVIDIA_L4, and failing closed keeps a
+// mis-sequenced call from skipping the attestation gate.
+func IsGPUProfile(acceleratorType string) bool {
+	p, ok := ProfileFor(acceleratorType)
+	if !ok {
+		return true
+	}
+	return p.GPUQuantity != ""
+}

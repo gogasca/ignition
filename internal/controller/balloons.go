@@ -38,6 +38,7 @@ func (c *Controller) reconcileBalloons(ctx context.Context, sbs []store.Sandbox)
 			queued++
 		}
 	}
+	c.stats.setBalloons(len(balloons))
 	want := capacity.DesiredWarm(capacity.Inputs{
 		Busy:    busy,
 		Queued:  queued,

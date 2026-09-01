@@ -28,6 +28,8 @@ func writeStatus(w http.ResponseWriter, requestID string, httpStatus int, code, 
 	if retryAfter > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(retryAfter))
 	}
+	// Surfaced to clients and read by the adminz request recorder / metrics.
+	w.Header().Set("X-Ignition-Error-Code", code)
 	writeJSON(w, httpStatus, statusBody{
 		Code:              code,
 		Message:           message,

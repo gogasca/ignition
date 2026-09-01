@@ -1,0 +1,102 @@
+# Fail closed before any sandbox Pod is created. The controller only chooses
+# between these server-owned profiles by applying ignition.io/network-access.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-default-deny
+  namespace: ignition-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      ignition.io/workload: gpu-sandbox
+  policyTypes: [Ingress, Egress]
+---
+# sandbox-init needs cluster DNS for user processes. DNS does not itself grant
+# access to a resolved address; the selected egress profile must also allow it.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-dns
+  namespace: ignition-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      ignition.io/workload: gpu-sandbox
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: kube-system
+          podSelector:
+            matchLabels:
+              k8s-app: kube-dns
+      ports:
+        - { protocol: UDP, port: 53 }
+        - { protocol: TCP, port: 53 }
+---
+# Future gateway traffic is admitted only from the system namespace and only
+# from Pods carrying the server-owned gateway workload label.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-gateway-ingress
+  namespace: ignition-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      ignition.io/workload: gpu-sandbox
+  policyTypes: [Ingress]
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ignition-system
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: ignition-gateway
+      ports:
+        - { protocol: TCP, port: 8081 }
+---
+# ENABLED means public Internet egress, not access to platform, tenant, node,
+# metadata, or private networks. Dataplane V2 enforces both address families.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: sandbox-public-internet
+  namespace: ignition-sandboxes
+spec:
+  podSelector:
+    matchLabels:
+      ignition.io/workload: gpu-sandbox
+      ignition.io/network-access: enabled
+  policyTypes: [Egress]
+  egress:
+    - to:
+        - ipBlock:
+            cidr: 0.0.0.0/0
+            except:
+              - 0.0.0.0/8
+              - 10.0.0.0/8
+              - 100.64.0.0/10
+              - 127.0.0.0/8
+              - 169.254.0.0/16
+              - 172.16.0.0/12
+              - 192.0.0.0/24
+              - 192.0.2.0/24
+              - 192.168.0.0/16
+              - 198.18.0.0/15
+              - 198.51.100.0/24
+              - 203.0.113.0/24
+              - 224.0.0.0/4
+              - 240.0.0.0/4
+        - ipBlock:
+            cidr: ::/0
+            except:
+              - ::/128
+              - ::1/128
+              - 100::/64
+              - 2001:db8::/32
+              - fc00::/7
+              - fe80::/10
+              - ff00::/8

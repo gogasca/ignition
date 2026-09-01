@@ -119,6 +119,17 @@ func TestSandboxPodCPUProfile(t *testing.T) {
 	}
 }
 
+func TestSandboxPodNetworkProfile(t *testing.T) {
+	sb := store.Sandbox{Network: store.NetworkSpec{InternetAccess: store.InternetAccessDisabled}}
+	if got := k8s.SandboxPod(sb, "img@sha256:abc").Labels[k8s.LabelNetworkAccess]; got != k8s.NetworkAccessDisabled {
+		t.Fatalf("disabled network label = %q", got)
+	}
+	sb.Network.InternetAccess = store.InternetAccessEnabled
+	if got := k8s.SandboxPod(sb, "img@sha256:abc").Labels[k8s.LabelNetworkAccess]; got != k8s.NetworkAccessEnabled {
+		t.Fatalf("enabled network label = %q", got)
+	}
+}
+
 func TestFakeCreateIdempotent(t *testing.T) {
 	f := k8s.NewFake()
 	p := &k8s.Pod{Name: "sbx-a", Namespace: k8s.Namespace}

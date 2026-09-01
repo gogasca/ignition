@@ -2,11 +2,17 @@ package api
 
 import (
 	"context"
+	"errors"
 	"log"
 	"net/http"
+	"os/signal"
 	"strings"
+	"syscall"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
+	"ignition.dev/ignition/internal/adminz"
 	"ignition.dev/ignition/internal/auth"
 	"ignition.dev/ignition/internal/config"
 	"ignition.dev/ignition/internal/store"
@@ -21,14 +27,29 @@ const (
 
 // Server is the public API.
 type Server struct {
-	cfg   config.Config
-	store store.Store
-	authn auth.Authenticator
-	now   func() time.Time
+	cfg      config.Config
+	store    store.Store
+	authn    auth.Authenticator
+	now      func() time.Time
+	started  time.Time
+	registry *prometheus.Registry
+	recorder *adminz.Recorder
+	metrics  *adminz.HTTPMetrics
 }
 
 func New(cfg config.Config, st store.Store, authn auth.Authenticator) *Server {
-	return &Server{cfg: cfg, store: st, authn: authn, now: time.Now}
+	reg := prometheus.NewRegistry()
+	rec := adminz.NewRecorder(200)
+	return &Server{
+		cfg:      cfg,
+		store:    st,
+		authn:    authn,
+		now:      time.Now,
+		started:  time.Now(),
+		registry: reg,
+		recorder: rec,
+		metrics:  adminz.NewHTTPMetrics(reg, rec),
+	}
 }
 
 // Handler returns the authenticated HTTP handler. It does not listen.
@@ -47,7 +68,8 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/operations/{operation}", s.getOrWatchOperation)
 	mux.HandleFunc("POST /v1/projects/{project}/operations/{operation}", s.postOperation)
 	mux.HandleFunc("GET /healthz", s.healthz)
-	return s.middleware(mux)
+	// authMiddleware (outer) → metrics middleware (records the matched route) → mux.
+	return s.authMiddleware(s.metrics.Middleware(mux))
 }
 
 // Go ServeMux wildcards must be a full path segment, so AIP custom methods
@@ -159,14 +181,35 @@ func Run(cfg config.Config) error {
 	}
 
 	s := New(cfg, st, authn)
-	log.Printf("ignition-api: listening on %s", cfg.ListenAddr)
+	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
+	defer stop()
+
 	srv := &http.Server{
 		Addr:              cfg.ListenAddr,
 		Handler:           s.Handler(),
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       90 * time.Second,
 	}
-	return srv.ListenAndServe()
+	errc := make(chan error, 2)
+	go func() {
+		log.Printf("ignition-api: listening on %s", cfg.ListenAddr)
+		errc <- srv.ListenAndServe()
+	}()
+	go func() {
+		log.Printf("ignition-api: admin listening on %s", cfg.AdminAddr)
+		errc <- adminz.Serve(ctx, cfg.AdminAddr, s.AdminHandler())
+	}()
+
+	select {
+	case err := <-errc:
+		if err != nil && !errors.Is(err, http.ErrServerClosed) {
+			return err
+		}
+	case <-ctx.Done():
+	}
+	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	return srv.Shutdown(shutdownCtx)
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {

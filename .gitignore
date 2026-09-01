@@ -20,5 +20,10 @@ __pycache__/
 .venv/
 sdks/python/.venv/
 sdks/typescript/node_modules/
+deploy/terraform/.terraform/
+deploy/terraform/terraform.tfvars
+deploy/terraform/tfplan
+deploy/terraform/crash.log
+deploy/terraform/crash.*.log
 .DS_Store
 Thumbs.db
