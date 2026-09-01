@@ -25,5 +25,7 @@ deploy/terraform/terraform.tfvars
 deploy/terraform/tfplan
 deploy/terraform/crash.log
 deploy/terraform/crash.*.log
+deploy/terraform/*.tfstate
+deploy/terraform/*.tfstate.*
 .DS_Store
 Thumbs.db

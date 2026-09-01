@@ -130,10 +130,34 @@ variable "node_service_account_id" {
   default = "ignition-nodes"
 }
 
+variable "prober_service_account_id" {
+  type        = string
+  default     = "ignition-prober"
+  description = "Service account the CUJ prober runs as. It authenticates to ignition-api with a Workload Identity ID token; it holds no project IAM roles and is bound in the database's role_bindings table."
+}
+
+variable "iap_enabled" {
+  type        = bool
+  default     = false
+  description = "Grant Cloud IAP access to the project's HTTPS load balancers. IAP itself is turned on per-backend by the deploy/k8s/components/iap overlay and uses Google-managed OAuth. Leave false for dev; enable for staging/prod."
+}
+
+variable "iap_members" {
+  type        = list(string)
+  default     = []
+  description = "Identities granted IAP access to every HTTPS backend in the project, e.g. [\"group:eng@ignition.dev\", \"user:alice@ignition.dev\"]. Applied only when iap_enabled is true."
+}
+
 variable "node_network_tag" {
   type        = string
   default     = "ignition-node"
   description = "Network tag selecting the default-deny node egress firewall policy."
+}
+
+variable "internet_node_network_tag" {
+  type        = string
+  default     = "ignition-sandbox-internet"
+  description = "Network tag for sandbox pools that may egress to the public internet through Cloud NAT."
 }
 
 variable "private_google_access_vip_cidr" {
@@ -154,5 +178,5 @@ variable "sandbox_repository_id" {
 
 variable "enabled_services" {
   type    = set(string)
-  default = ["artifactregistry.googleapis.com", "cloudbuild.googleapis.com", "cloudresourcemanager.googleapis.com", "compute.googleapis.com", "container.googleapis.com", "containerfilesystem.googleapis.com", "dns.googleapis.com", "iamcredentials.googleapis.com", "secretmanager.googleapis.com", "servicenetworking.googleapis.com", "sqladmin.googleapis.com"]
+  default = ["artifactregistry.googleapis.com", "cloudbuild.googleapis.com", "cloudresourcemanager.googleapis.com", "compute.googleapis.com", "container.googleapis.com", "containerfilesystem.googleapis.com", "dns.googleapis.com", "iamcredentials.googleapis.com", "iap.googleapis.com", "secretmanager.googleapis.com", "servicenetworking.googleapis.com", "sqladmin.googleapis.com"]
 }

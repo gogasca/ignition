@@ -1,0 +1,13 @@
+# Turns on IAP for the ignition-api backend service. `enabled: true` with no
+# oauthclientCredentials uses Google-managed OAuth (GKE 1.29.3-gke.1282000+).
+# On older clusters, create a secret with client_id/client_secret keys and add:
+#   oauthclientCredentials:
+#     secretName: ignition-api-iap-oauth
+apiVersion: cloud.google.com/v1
+kind: BackendConfig
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+spec:
+  iap:
+    enabled: true

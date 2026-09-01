@@ -9,6 +9,11 @@ metadata:
 data:
   IGNITION_LISTEN_ADDR: ":8080"
   IGNITION_REGION: "us-central1"
+  # Google mints the ID tokens for both service accounts (Workload Identity /
+  # impersonation) and users. The dev overlay keeps IGNITION_DEV_BEARER, which
+  # takes precedence over this issuer.
+  IGNITION_OIDC_ISSUER: "https://accounts.google.com"
+  IGNITION_OIDC_SUBJECT_CLAIM: "email"
   IGNITION_OIDC_AUDIENCE: "https://api.ignition.dev"
   IGNITION_GATEWAY_URL: "https://gateway.us-central1.ignition.dev"
   IGNITION_MAX_ACTIVE_SANDBOXES: "100"
@@ -67,12 +72,6 @@ spec:
                 secretKeyRef:
                   name: ignition-control-plane
                   key: STREAM_TOKEN_SECRET
-            - name: IGNITION_OIDC_ISSUER
-              valueFrom:
-                secretKeyRef:
-                  name: ignition-control-plane
-                  key: OIDC_ISSUER
-                  optional: true
             - name: DATABASE_URL
               valueFrom:
                 secretKeyRef:

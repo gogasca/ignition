@@ -8,6 +8,7 @@ output "sandbox_registry" { value = "${var.region}-docker.pkg.dev/${var.project_
 output "api_service_account" { value = google_service_account.api.email }
 output "controller_service_account" { value = google_service_account.controller.email }
 output "node_service_account" { value = google_service_account.nodes.email }
+output "prober_service_account" { value = google_service_account.prober.email }
 output "sql_dr_connection_name" {
   value       = try(google_sql_database_instance.dr[0].connection_name, null)
   description = "Cross-region DR replica connection name, or null when dr_region is unset."

@@ -6,11 +6,12 @@ This directory provisions the Google Cloud resources used by the regional dev de
 
 - Enabled GCP APIs, custom VPC, secondary ranges, Cloud NAT, and Private Services Access.
 - Private Google API DNS/route configuration and the guide's default-deny node egress firewall policy.
-- Regional private GKE with Dataplane V2, Workload Identity, image streaming, a 1–3 node system pool, a scale-to-zero CPU gVisor pool, and a scale-to-zero NVIDIA L4/gVisor pool.
+- Regional private GKE with Dataplane V2, Workload Identity, image streaming, a 1–3 node system pool, scale-to-zero restricted CPU/GPU gVisor pools, and matching scale-to-zero internet-enabled CPU/GPU pools. Internet pools use a separate network tag and Cloud NAT-backed egress policy.
 - Regional-HA PostgreSQL 16 Cloud SQL with private IP, automated backups, seven-day PITR logs, deletion protection, the `ignition` database, and password-authenticated `ignition` user.
 - An optional regional-HA cross-region Cloud SQL read replica when `dr_region` is set.
 - Control-plane and sandbox Artifact Registry repositories.
-- Dedicated node, API, and controller Google service accounts; Workload Identity bindings; repository-scoped image-pull access; and the IAM roles required by the runbook.
+- Dedicated node, API, controller, and CUJ-prober Google service accounts; Workload Identity bindings; repository-scoped image-pull access; and the IAM roles required by the runbook. The prober SA holds no project IAM role - it is authorized inside ignition-api by a `role_bindings` row (`db/rolebindings.sql`).
+- Optional Cloud IAP access grants (`iap_enabled` + `iap_members`) for the ignition-api HTTPS load balancer. IAP itself is turned on per-backend by `deploy/k8s/components/iap` and uses Google-managed OAuth, so there is no OAuth client to create; Terraform only enables `iap.googleapis.com` and grants `roles/iap.httpsResourceAccessor` at the project compute-web scope (the GKE Ingress names the backend service dynamically).
 
 Terraform deliberately does not create Kubernetes objects. Apply the appropriate Kustomize overlay after infrastructure is ready. Do not run the old `gcloud` provisioning commands against the same resources after Terraform takes ownership.
 
@@ -52,7 +53,9 @@ export SQL_PASS="${TF_VAR_sql_password:?TF_VAR_sql_password must still contain t
 export SQL_USER_ALREADY_EXISTS=true
 ```
 
-Useful outputs include the cluster name and region, registry paths, Cloud SQL connection name/private IP, and Google service-account emails. Use the service-account outputs when rendering the Workload Identity annotations; do not commit a project-specific email to the reusable Kustomize base.
+Useful outputs include the cluster name and region, registry paths, Cloud SQL connection name/private IP, and Google service-account emails (`api_service_account`, `controller_service_account`, `node_service_account`, `prober_service_account`). Use the service-account outputs when rendering the Workload Identity annotations and `db/rolebindings.sql`; do not commit a project-specific email to the reusable Kustomize base.
+
+For staging/prod, set `iap_enabled = true` and `iap_members` (e.g. `["group:eng@your-domain"]`), apply, then include `deploy/k8s/components/iap` in the overlay after filling `IGNITION_IAP_AUDIENCE` (the backend-service resource path, obtainable only after the Ingress first syncs).
 
 ## Migrating an existing gcloud environment
 

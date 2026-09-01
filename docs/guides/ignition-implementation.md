@@ -25,7 +25,7 @@ Public transport is **HTTP/JSON**. Protobuf is the schema; JSON field names foll
 
 - GCP project with billing. GPU capacity requires both regional **NVIDIA L4 quota** (`NVIDIA_L4_GPUS`) and global all-regions GPU quota (`GPUS_ALL_REGIONS`).
 - Go 1.26.7+, Docker, `gcloud`, `gke-gcloud-auth-plugin`, `kubectl`, `jq`, `curl`, and `openssl`. `buf` is required only if you change protos (`buf lint` works; `buf generate` is not wired — there is no `buf.gen.yaml` yet).
-- This overlay uses `IGNITION_DEV_BEARER`. Real OIDC (RS256 + JWKS) is required if you later set `IGNITION_ENV` to staging or prod.
+- This overlay uses `IGNITION_DEV_BEARER`. Staging/prod verify Google ID tokens and (via `deploy/k8s/components/iap`) Cloud IAP assertions instead — see [Auth](#auth).
 - `ignitionctl` is a stub (`not implemented`). Use `curl` against the API.
 
 Start at the repository root and fail on unset variables or failed commands:
@@ -113,19 +113,37 @@ GET    /v1/projects/{project}/operations/{operation}:watch
 POST   /v1/projects/{project}/operations/{operation}:cancel
 ```
 
-Require `Authorization: Bearer <access JWT>` on every route except `GET /healthz`. Require `Idempotency-Key` (max 128 bytes) on create, terminate, cancel, and process create/attach/signal/cancel.
+Require `Authorization: Bearer <token>` on every route except `GET /healthz` (Cloud IAP callers send `X-Goog-IAP-JWT-Assertion` instead — see below). Require `Idempotency-Key` (max 128 bytes) on create, terminate, cancel, and process create/attach/signal/cancel.
 
 ### Auth
 
-Production validates RFC 9068 access JWTs over **RS256 + JWKS** (not the attach stream HMAC): exact issuer (`IGNITION_OIDC_ISSUER`) and audience (`IGNITION_OIDC_AUDIENCE`); `typ=at+jwt`; RS256; `exp` / `iat` (and `nbf` when present) with ≤ 60s skew; JWKS from `IGNITION_OIDC_JWKS_URL` or `{issuer}/.well-known/openid-configuration` → `jwks_uri`.
+Two identity paths reach the same `Principal{Subject, Email, Kind, Domain}` and the same RBAC:
 
-Then check project RBAC for `sandbox.create` / `sandbox.get` / `sandbox.terminate` / `sandbox.exec` / `process.get` / `operation.get` / `operation.cancel`.
+| Path | Caller | Credential | Verification |
+| --- | --- | --- | --- |
+| In-cluster / impersonation | Probers, CI, service-to-service | `Authorization: Bearer <Google ID token>` | issuer `https://accounts.google.com`, `typ=JWT`, RS256, `aud` ∈ `IGNITION_OIDC_AUDIENCE` + `IGNITION_OIDC_AUDIENCES`, `email_verified`, and (users only) `hd` ∈ `IGNITION_OIDC_HOSTED_DOMAINS` |
+| Through the Ingress | Human Workspace users, external automation | Cloud IAP browser flow → `X-Goog-IAP-JWT-Assertion` | issuer `https://cloud.google.com/iap`, ES256, `aud` = `IGNITION_IAP_AUDIENCE` (the backend-service resource path) |
 
-- no/invalid bearer → `401`
+The middleware verifies the IAP assertion header when present, otherwise the bearer. `IGNITION_OIDC_SUBJECT_CLAIM=email` makes the verified email the RBAC subject; a `*.gserviceaccount.com` email is classified as a service account (exempt from the hosted-domain check; no role restriction). First-party RFC 9068 `at+jwt` access tokens are still accepted when `IGNITION_OIDC_ALLOWED_TYPES` includes `at+jwt`.
+
+RBAC checks the project role for `sandbox.create` / `sandbox.get` / `sandbox.terminate` / `sandbox.exec` / `process.get` / `operation.get` / `operation.cancel` / `rolebinding.get` / `rolebinding.admin`. Role lookup resolves the exact subject, then a `domain:<hd>` binding for a Workspace user.
+
+- no/invalid credential → `401`
 - no role binding, unknown IDs, **and** in-project deny of terminate/cancel → `404`
 - in-project deny of create/exec (viewer) → `403`
 
-Until Project APIs exist, seed one project in Cloud SQL and bind the OIDC subject in `role_bindings`. This overlay sets `IGNITION_DEV_BEARER` (forbidden when `IGNITION_ENV` is staging/prod).
+Manage bindings over the API (owner/admin only): `GET/PUT/DELETE /v1/projects/{project}/roleBindings/{subject}` where `{subject}` is an email or `domain:<fqdn>`; the last owner cannot be removed. Bootstrap the first owner with `IGNITION_BOOTSTRAP_PROJECT` + `IGNITION_BOOTSTRAP_ADMIN` (seeds one owner when the project has none) or `db/rolebindings.sql`. The dev overlay instead sets `IGNITION_DEV_BEARER` (forbidden when `IGNITION_ENV` is staging/prod), which bypasses all of the above.
+
+Get a token:
+
+```bash
+# Service account (has roles/iam.serviceAccountTokenCreator on the SA):
+gcloud auth print-identity-token \
+  --impersonate-service-account="ignition-cli@${PROJECT}.iam.gserviceaccount.com" \
+  --audiences="https://api.${ENV}.ignition.dev" --include-email
+# In a pod with Workload Identity: the GKE metadata server (internal/probe/gcptoken.go).
+# Human, browser: open https://api.${ENV}.ignition.dev/... and complete IAP sign-in.
+```
 
 ### Admission and store
 
@@ -145,11 +163,16 @@ Tables (`internal/store/schema.sql`, embedded by the API): `projects`, `role_bin
 |---|---|---|
 | `IGNITION_ENV` | both | this overlay sets `dev`; `staging` / `prod` / `production` fail closed |
 | `DATABASE_URL` | both | required when `IGNITION_ENV` is staging/prod |
-| `IGNITION_OIDC_ISSUER` | API | required when `IGNITION_ENV` is staging/prod |
-| `IGNITION_OIDC_JWKS_URL` | API | optional explicit JWKS |
-| `IGNITION_OIDC_AUDIENCE` | API | default `https://api.ignition.dev` |
+| `IGNITION_OIDC_ISSUER` | API | required when `IGNITION_ENV` is staging/prod; base sets `https://accounts.google.com` |
+| `IGNITION_OIDC_JWKS_URL` | API | optional explicit JWKS (discovery works for Google) |
+| `IGNITION_OIDC_AUDIENCE` / `IGNITION_OIDC_AUDIENCES` | API | primary + additional accepted `aud` values (CSV) |
+| `IGNITION_OIDC_SUBJECT_CLAIM` | API | `email` (default for the Google issuer) or `sub` |
+| `IGNITION_OIDC_HOSTED_DOMAINS` | API | CSV of Workspace domains required on user tokens; SAs exempt |
+| `IGNITION_OIDC_ALLOWED_TYPES` | API | CSV of accepted JWT `typ` values; default `JWT` for Google, else `at+jwt` |
+| `IGNITION_IAP_ENABLED` / `IGNITION_IAP_AUDIENCE` | API | verify `X-Goog-IAP-JWT-Assertion`; audience is the backend-service resource path (see `deploy/k8s/components/iap`) |
+| `IGNITION_BOOTSTRAP_PROJECT` / `IGNITION_BOOTSTRAP_ADMIN` | API | seed one owner binding when the project has none |
 | `IGNITION_STREAM_TOKEN_SECRET` | API | attach tokens; required non-default in staging/prod |
-| `IGNITION_DEV_BEARER` | API | allowed in this overlay |
+| `IGNITION_DEV_BEARER` | API | dev overlay only; forbidden in staging/prod |
 | `IGNITION_GATEWAY_URL` | API | stream token audience |
 | `IGNITION_ALLOWED_ACCELERATORS` | API | AcceleratorType allowlist; default `NONE,NVIDIA_L4` (alias: `IGNITION_ALLOWED_GPU_TYPES`) |
 | `IGNITION_DEFAULT_RUNTIME` | API | JSON `RuntimeSpec` merged over the built-in CPU default; validated at startup |
@@ -159,7 +182,7 @@ Tables (`internal/store/schema.sql`, embedded by the API): `projects`, `role_bin
 | `IGNITION_SANDBOX_IMAGE_PREFIX` | controller | Artifact Registry prefix, e.g. `us-central1-docker.pkg.dev/${PROJECT}/sandboxes` |
 | `IGNITION_GCP_PROJECT` | controller | used to compose the image prefix and Secret Manager project |
 
-Kubernetes secret keys: `DATABASE_URL`, `STREAM_TOKEN_SECRET`, `OIDC_ISSUER`, optional `DEV_BEARER`. DSN through the Auth Proxy sidecar: `postgres://ignition:…@127.0.0.1:5432/ignition?sslmode=disable`.
+Kubernetes secret keys: `DATABASE_URL`, `STREAM_TOKEN_SECRET`, optional `DEV_BEARER` (dev only). The OIDC issuer is now a ConfigMap value, not a secret. DSN through the Auth Proxy sidecar: `postgres://ignition:…@127.0.0.1:5432/ignition?sslmode=disable`.
 
 HTTP: `ReadHeaderTimeout` 10s, `IdleTimeout` 90s (no short `WriteTimeout`, so SSE can flush). `X-Request-Id` sanitized to `[A-Za-z0-9._-]`, max 128.
 
@@ -744,7 +767,6 @@ Create or update the control-plane secret declaratively, deploy the rendered ove
 ```bash
 kubectl -n ignition-system create secret generic ignition-control-plane \
   --from-literal=STREAM_TOKEN_SECRET="$(openssl rand -base64 48)" \
-  --from-literal=OIDC_ISSUER="https://dev.invalid/" \
   --from-literal=DEV_BEARER="dev-only-token" \
   --from-literal=DATABASE_URL="postgres://ignition:${SQL_PASS}@127.0.0.1:5432/ignition?sslmode=disable" \
   --dry-run=client -o yaml | kubectl apply -f -

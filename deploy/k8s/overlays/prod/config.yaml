@@ -6,6 +6,9 @@ metadata:
 data:
   IGNITION_ENV: "prod"
   IGNITION_OIDC_AUDIENCE: "https://api.ignition.dev"
+  # Restrict human (non-service-account) tokens to this Workspace domain and
+  # allow `domain:<this>` role bindings. Adjust to the real primary domain.
+  IGNITION_OIDC_HOSTED_DOMAINS: "ignition.dev"
   IGNITION_GATEWAY_URL: "https://gateway.us-central1.ignition.dev"
   IGNITION_MAX_ACTIVE_SANDBOXES: "100"
 ---

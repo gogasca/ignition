@@ -186,6 +186,50 @@ resource "google_compute_firewall" "node_egress_allow_cloud_sql" {
     ports    = ["3307"]
   }
 }
+
+# Internet-enabled sandbox nodes use a separate tag. Private destinations are
+# denied before the broad public allow; Kubernetes NetworkPolicy provides the
+# per-Pod selector and remains the primary tenant boundary.
+resource "google_compute_firewall" "internet_node_egress_allow_cluster" {
+  name               = "ignition-internet-node-egress-allow-cluster"
+  project            = var.project_id
+  network            = google_compute_network.main.name
+  direction          = "EGRESS"
+  priority           = 800
+  destination_ranges = [var.nodes_ipv4_cidr, var.pods_ipv4_cidr, var.services_ipv4_cidr]
+  target_tags        = [var.internet_node_network_tag]
+  allow { protocol = "all" }
+}
+resource "google_compute_firewall" "internet_node_egress_allow_control_plane" {
+  name               = "ignition-internet-node-egress-allow-control-plane"
+  project            = var.project_id
+  network            = google_compute_network.main.name
+  direction          = "EGRESS"
+  priority           = 800
+  destination_ranges = [var.master_ipv4_cidr, var.private_google_access_vip_cidr]
+  target_tags        = [var.internet_node_network_tag]
+  allow { protocol = "all" }
+}
+resource "google_compute_firewall" "internet_node_egress_deny_private" {
+  name               = "ignition-internet-node-egress-deny-private"
+  project            = var.project_id
+  network            = google_compute_network.main.name
+  direction          = "EGRESS"
+  priority           = 900
+  destination_ranges = ["10.0.0.0/8", "100.64.0.0/10", "127.0.0.0/8", "169.254.0.0/16", "172.16.0.0/12", "192.168.0.0/16"]
+  target_tags        = [var.internet_node_network_tag]
+  deny { protocol = "all" }
+}
+resource "google_compute_firewall" "internet_node_egress_allow_public" {
+  name               = "ignition-internet-node-egress-allow-public"
+  project            = var.project_id
+  network            = google_compute_network.main.name
+  direction          = "EGRESS"
+  priority           = 1000
+  destination_ranges = ["0.0.0.0/0"]
+  target_tags        = [var.internet_node_network_tag]
+  allow { protocol = "all" }
+}
 resource "google_service_networking_connection" "private_services" {
   network                 = google_compute_network.main.id
   service                 = "servicenetworking.googleapis.com"
@@ -383,6 +427,89 @@ resource "google_container_node_pool" "gpu_sandbox" {
   depends_on = [google_project_iam_member.nodes]
 }
 
+resource "google_container_node_pool" "cpu_sandbox_internet" {
+  name     = "cpu-sandbox-internet"
+  project  = var.project_id
+  location = google_container_cluster.main.location
+  cluster  = google_container_cluster.main.name
+  autoscaling {
+    total_min_node_count = 0
+    total_max_node_count = var.sandbox_max_nodes
+  }
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+  node_config {
+    machine_type    = var.cpu_sandbox_machine_type
+    image_type      = "COS_CONTAINERD"
+    service_account = google_service_account.nodes.email
+    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
+    labels          = { "ignition.io/node-pool" = "cpu-sandbox-internet" }
+    tags            = [var.internet_node_network_tag]
+    disk_type       = "pd-balanced"
+    disk_size_gb    = 100
+    metadata        = { "disable-legacy-endpoints" = "true" }
+    gcfs_config { enabled = true }
+    workload_metadata_config { mode = "GKE_METADATA" }
+    sandbox_config { type = "gvisor" }
+    taint {
+      key    = "ignition.io/sandbox"
+      value  = "true"
+      effect = "NO_SCHEDULE"
+    }
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
+    }
+  }
+  depends_on = [google_project_iam_member.nodes]
+}
+
+resource "google_container_node_pool" "gpu_sandbox_internet" {
+  name     = "gpu-sandbox-l4-internet"
+  project  = var.project_id
+  location = google_container_cluster.main.location
+  cluster  = google_container_cluster.main.name
+  autoscaling {
+    total_min_node_count = 0
+    total_max_node_count = var.gpu_max_nodes
+  }
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+  node_config {
+    machine_type    = var.gpu_sandbox_machine_type
+    image_type      = "COS_CONTAINERD"
+    service_account = google_service_account.nodes.email
+    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
+    labels          = { "ignition.io/node-pool" = "gpu-sandbox-l4-internet" }
+    tags            = [var.internet_node_network_tag]
+    disk_type       = "pd-balanced"
+    disk_size_gb    = 100
+    metadata        = { "disable-legacy-endpoints" = "true" }
+    gcfs_config { enabled = true }
+    workload_metadata_config { mode = "GKE_METADATA" }
+    sandbox_config { type = "gvisor" }
+    guest_accelerator {
+      type  = "nvidia-l4"
+      count = 1
+      gpu_driver_installation_config { gpu_driver_version = "DEFAULT" }
+    }
+    taint {
+      key    = "ignition.io/gpu-sandbox"
+      value  = "true"
+      effect = "NO_SCHEDULE"
+    }
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
+    }
+  }
+  depends_on = [google_project_iam_member.nodes]
+}
+
 resource "google_sql_database_instance" "main" {
   name                = var.sql_instance_name
   project             = var.project_id
@@ -491,6 +618,38 @@ resource "google_project_iam_member" "controller_secret_manager" {
   project = var.project_id
   role    = "roles/secretmanager.secretAccessor"
   member  = "serviceAccount:${google_service_account.controller.email}"
+}
+
+# The CUJ prober authenticates to ignition-api with a Workload Identity ID
+# token (see internal/probe/gcptoken.go). It needs no project IAM role - only
+# the KSA -> GSA impersonation binding - and is authorized inside ignition-api
+# by a row in role_bindings (db/rolebindings.sql).
+resource "google_service_account" "prober" {
+  project      = var.project_id
+  account_id   = var.prober_service_account_id
+  display_name = "Ignition CUJ prober"
+}
+resource "google_service_account_iam_member" "prober_wi" {
+  service_account_id = google_service_account.prober.name
+  role               = "roles/iam.workloadIdentityUser"
+  member             = "serviceAccount:${var.project_id}.svc.id.goog[ignition-system/ignition-prober]"
+}
+
+# ---------------------------------------------------------------------------
+# Cloud IAP for the ignition-api HTTPS load balancer (staging/prod).
+#
+# IAP runs with Google-managed OAuth (the legacy per-project OAuth brand/client
+# admin APIs were shut down in March 2026), so there is no brand or client to
+# create here: the deploy/k8s/components/iap BackendConfig enables IAP on the
+# backend and Google supplies the consent screen. Terraform only enables the
+# API and grants access. The grant is at the project compute-web scope because
+# the GKE Ingress controller names the backend service dynamically.
+# ---------------------------------------------------------------------------
+resource "google_iap_web_type_compute_iam_member" "access" {
+  for_each = var.iap_enabled ? toset(var.iap_members) : toset([])
+  project  = var.project_id
+  role     = "roles/iap.httpsResourceAccessor"
+  member   = each.value
 }
 
 resource "google_sql_database_instance" "dr" {

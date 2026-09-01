@@ -1,0 +1,15 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+data:
+  IGNITION_IAP_ENABLED: "true"
+  # REQUIRED. The IAP assertion `aud` is the backend service resource path.
+  # Find it after the Ingress has synced:
+  #   PN=$(gcloud projects describe "$PROJECT" --format='value(projectNumber)')
+  #   BID=$(gcloud compute backend-services list \
+  #         --filter="name~ignition-api" --format='value(id)')
+  #   echo "/projects/$PN/global/backendServices/$BID"
+  # An empty value makes ignition-api fail to start.
+  IGNITION_IAP_AUDIENCE: ""
