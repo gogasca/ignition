@@ -83,7 +83,7 @@ func (s *Server) authorizeHidden(w http.ResponseWriter, r *http.Request, project
 func (s *Server) authorizeResult(w http.ResponseWriter, r *http.Request, projectID string, perm auth.Permission, own, hideDeny bool) bool {
 	rid := s.requestID(r.Context())
 	p := s.principal(r.Context())
-	role, ok, err := s.store.Role(r.Context(), projectID, p.Subject)
+	role, ok, err := s.store.ResolveRole(r.Context(), projectID, p.Subject, p.Domain)
 	if err != nil {
 		writeStoreError(w, rid, err)
 		return false

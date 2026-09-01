@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"reflect"
 	"testing"
 	"time"
 
@@ -151,15 +152,55 @@ func TestPostgresQuotaAndLease(t *testing.T) {
 	}
 }
 
-func TestPostgresRoleLookup(t *testing.T) {
+func TestPostgresResolveRole(t *testing.T) {
+	ctx := context.Background()
 	p := postgresForTest(t)
 	project := "prj_pg_" + t.Name()
-	p.SeedRole(project, "alice", auth.RoleOwner)
-	role, ok, err := p.Role(context.Background(), project, "alice")
-	if err != nil || !ok || role != auth.RoleOwner {
-		t.Fatalf("role=%s ok=%v err=%v", role, ok, err)
+	p.SeedRole(project, "alice@corp.example", auth.RoleOwner)
+	p.SeedRole(project, store.DomainSubject("corp.example"), auth.RoleViewer)
+
+	if role, ok, err := p.ResolveRole(ctx, project, "alice@corp.example", "corp.example"); err != nil || !ok || role != auth.RoleOwner {
+		t.Fatalf("exact: role=%s ok=%v err=%v", role, ok, err)
 	}
-	if _, ok, err := p.Role(context.Background(), project, "bob"); err != nil || ok {
-		t.Fatalf("missing binding ok=%v err=%v", ok, err)
+	if role, ok, err := p.ResolveRole(ctx, project, "bob@corp.example", "corp.example"); err != nil || !ok || role != auth.RoleViewer {
+		t.Fatalf("domain fallback: role=%s ok=%v err=%v", role, ok, err)
+	}
+	if _, ok, err := p.ResolveRole(ctx, project, "carol@other.example", "other.example"); err != nil || ok {
+		t.Fatalf("foreign domain ok=%v err=%v", ok, err)
+	}
+}
+
+func TestPostgresRoleBindingAdmin(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+
+	if err := p.PutRoleBinding(ctx, project, "alice@corp.example", auth.RoleDeveloper); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PutRoleBinding(ctx, project, "alice@corp.example", auth.RoleOperator); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PutRoleBinding(ctx, project, "svc@prj.iam.gserviceaccount.com", auth.RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := p.ListRoleBindings(ctx, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []store.RoleBinding{
+		{Subject: "alice@corp.example", Role: auth.RoleOperator},
+		{Subject: "svc@prj.iam.gserviceaccount.com", Role: auth.RoleOwner},
+	}
+	if !reflect.DeepEqual(list, want) {
+		t.Fatalf("list = %+v, want %+v", list, want)
+	}
+
+	if existed, err := p.DeleteRoleBinding(ctx, project, "alice@corp.example"); err != nil || !existed {
+		t.Fatalf("delete existed=%v err=%v", existed, err)
+	}
+	if existed, err := p.DeleteRoleBinding(ctx, project, "missing@corp.example"); err != nil || existed {
+		t.Fatalf("delete missing existed=%v err=%v", existed, err)
 	}
 }

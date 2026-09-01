@@ -3,6 +3,7 @@ package store_test
 import (
 	"context"
 	"errors"
+	"reflect"
 	"testing"
 	"time"
 
@@ -131,15 +132,62 @@ func TestProcessRequiresReady(t *testing.T) {
 	}
 }
 
-func TestRoleLookup(t *testing.T) {
+func TestResolveRole(t *testing.T) {
+	ctx := context.Background()
 	m := store.NewMemory()
-	m.SeedRole("prj", "alice", auth.RoleOwner)
-	role, ok, err := m.Role(context.Background(), "prj", "alice")
-	if err != nil || !ok || role != auth.RoleOwner {
-		t.Fatalf("role=%s ok=%v err=%v", role, ok, err)
+	m.SeedRole("prj", "alice@corp.example", auth.RoleOwner)
+	m.SeedRole("prj", store.DomainSubject("corp.example"), auth.RoleViewer)
+
+	// Exact subject binding wins over the domain binding.
+	if role, ok, err := m.ResolveRole(ctx, "prj", "alice@corp.example", "corp.example"); err != nil || !ok || role != auth.RoleOwner {
+		t.Fatalf("exact: role=%s ok=%v err=%v", role, ok, err)
 	}
-	if _, ok, err := m.Role(context.Background(), "prj", "bob"); err != nil || ok {
-		t.Fatalf("missing binding ok=%v err=%v", ok, err)
+	// No exact binding: fall back to the domain binding.
+	if role, ok, err := m.ResolveRole(ctx, "prj", "bob@corp.example", "corp.example"); err != nil || !ok || role != auth.RoleViewer {
+		t.Fatalf("domain fallback: role=%s ok=%v err=%v", role, ok, err)
+	}
+	// Different domain, no binding.
+	if _, ok, err := m.ResolveRole(ctx, "prj", "carol@other.example", "other.example"); err != nil || ok {
+		t.Fatalf("foreign domain ok=%v err=%v", ok, err)
+	}
+	// Service account (no domain) with no exact binding.
+	if _, ok, err := m.ResolveRole(ctx, "prj", "svc@prj.iam.gserviceaccount.com", ""); err != nil || ok {
+		t.Fatalf("unbound service account ok=%v err=%v", ok, err)
+	}
+}
+
+func TestRoleBindingAdmin(t *testing.T) {
+	ctx := context.Background()
+	m := store.NewMemory()
+
+	if err := m.PutRoleBinding(ctx, "prj", "svc@prj.iam.gserviceaccount.com", auth.RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := m.PutRoleBinding(ctx, "prj", "alice@corp.example", auth.RoleDeveloper); err != nil {
+		t.Fatal(err)
+	}
+	// Update in place.
+	if err := m.PutRoleBinding(ctx, "prj", "alice@corp.example", auth.RoleOperator); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := m.ListRoleBindings(ctx, "prj")
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []store.RoleBinding{
+		{Subject: "alice@corp.example", Role: auth.RoleOperator},
+		{Subject: "svc@prj.iam.gserviceaccount.com", Role: auth.RoleOwner},
+	}
+	if !reflect.DeepEqual(list, want) {
+		t.Fatalf("list = %+v, want %+v", list, want)
+	}
+
+	if existed, err := m.DeleteRoleBinding(ctx, "prj", "alice@corp.example"); err != nil || !existed {
+		t.Fatalf("delete existed=%v err=%v", existed, err)
+	}
+	if existed, err := m.DeleteRoleBinding(ctx, "prj", "alice@corp.example"); err != nil || existed {
+		t.Fatalf("second delete existed=%v err=%v", existed, err)
 	}
 }
 

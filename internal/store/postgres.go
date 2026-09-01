@@ -174,24 +174,80 @@ func mapErr(err error) error {
 	return err
 }
 
-func (p *Postgres) Role(ctx context.Context, projectID, subject string) (string, bool, error) {
-	var role string
-	err := p.pool.QueryRow(ctx, `SELECT role FROM role_bindings WHERE project_id=$1 AND subject=$2`, projectID, subject).Scan(&role)
-	if errors.Is(err, pgx.ErrNoRows) {
-		return "", false, nil
+func (p *Postgres) ResolveRole(ctx context.Context, projectID, subject, domain string) (string, bool, error) {
+	subjects := []string{subject}
+	if domain != "" {
+		subjects = append(subjects, DomainSubject(domain))
 	}
+	rows, err := p.pool.Query(ctx,
+		`SELECT subject, role FROM role_bindings WHERE project_id=$1 AND subject = ANY($2)`,
+		projectID, subjects)
 	if err != nil {
 		return "", false, err
 	}
-	return role, true, nil
+	defer rows.Close()
+	found := map[string]string{}
+	for rows.Next() {
+		var s, r string
+		if err := rows.Scan(&s, &r); err != nil {
+			return "", false, err
+		}
+		found[s] = r
+	}
+	if err := rows.Err(); err != nil {
+		return "", false, err
+	}
+	if r, ok := found[subject]; ok {
+		return r, true, nil
+	}
+	if domain != "" {
+		if r, ok := found[DomainSubject(domain)]; ok {
+			return r, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func (p *Postgres) PutRoleBinding(ctx context.Context, projectID, subject, role string) error {
+	// Upsert the project row: there is no Projects API yet, so a role
+	// binding is often the first thing created for a project. Remove this
+	// once project lifecycle management exists.
+	if _, err := p.pool.Exec(ctx, `INSERT INTO projects (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, projectID); err != nil {
+		return err
+	}
+	_, err := p.pool.Exec(ctx, `
+		INSERT INTO role_bindings (project_id, subject, role) VALUES ($1, $2, $3)
+		ON CONFLICT (project_id, subject) DO UPDATE SET role = EXCLUDED.role`, projectID, subject, role)
+	return err
+}
+
+func (p *Postgres) DeleteRoleBinding(ctx context.Context, projectID, subject string) (bool, error) {
+	tag, err := p.pool.Exec(ctx, `DELETE FROM role_bindings WHERE project_id=$1 AND subject=$2`, projectID, subject)
+	if err != nil {
+		return false, err
+	}
+	return tag.RowsAffected() > 0, nil
+}
+
+func (p *Postgres) ListRoleBindings(ctx context.Context, projectID string) ([]RoleBinding, error) {
+	rows, err := p.pool.Query(ctx, `SELECT subject, role FROM role_bindings WHERE project_id=$1 ORDER BY subject`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []RoleBinding
+	for rows.Next() {
+		var b RoleBinding
+		if err := rows.Scan(&b.Subject, &b.Role); err != nil {
+			return nil, err
+		}
+		out = append(out, b)
+	}
+	return out, rows.Err()
 }
 
 func (p *Postgres) SeedRole(projectID, subject, role string) {
-	ctx := context.Background()
-	_, _ = p.pool.Exec(ctx, `INSERT INTO projects (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, projectID)
-	_, _ = p.pool.Exec(ctx, `
-		INSERT INTO role_bindings (project_id, subject, role) VALUES ($1, $2, $3)
-		ON CONFLICT (project_id, subject) DO UPDATE SET role = EXCLUDED.role`, projectID, subject, role)
+	_ = p.PutRoleBinding(context.Background(), projectID, subject, role)
 }
 
 func (p *Postgres) SeedImage(projectID, imageID string) {

@@ -16,6 +16,15 @@ const (
 	// Both accelerator classes are allowed by default so the built-in CPU
 	// default runtime is usable without extra configuration.
 	defaultAccelerators = "NONE,NVIDIA_L4"
+
+	// GoogleOIDCIssuer is the issuer for Google-minted ID tokens (service
+	// accounts via Workload Identity / impersonation, and users). When
+	// IGNITION_OIDC_ISSUER is this value the loader defaults the subject
+	// claim to `email` and the accepted token type to `JWT`.
+	GoogleOIDCIssuer = "https://accounts.google.com"
+	// Defaults for the Cloud IAP assertion verifier.
+	defaultIAPIssuer  = "https://cloud.google.com/iap"
+	defaultIAPJWKSURL = "https://www.gstatic.com/iap/verify/public_key-jwk"
 )
 
 // Config is process configuration shared by control-plane binaries.
@@ -27,6 +36,16 @@ type Config struct {
 	OIDCIssuer          string
 	OIDCJWKSURL         string
 	OIDCAudience        string
+	OIDCAudiences       []string
+	OIDCSubjectClaim    string
+	OIDCHostedDomains   []string
+	OIDCAllowedTypes    []string
+	IAPEnabled          bool
+	IAPIssuer           string
+	IAPAudience         string
+	IAPJWKSURL          string
+	BootstrapProject    string
+	BootstrapAdmin      string
 	GatewayURL          string
 	StreamTokenSecret   string
 	DevBearer           string
@@ -61,14 +80,36 @@ func Load() (Config, error) {
 	if secret == "" && !RequiresDatabase(env) {
 		secret = defaultStreamSecret
 	}
+	oidcIssuer := strings.TrimSpace(os.Getenv("IGNITION_OIDC_ISSUER"))
+	google := oidcIssuer == GoogleOIDCIssuer
+
+	subjectClaim := strings.TrimSpace(os.Getenv("IGNITION_OIDC_SUBJECT_CLAIM"))
+	if subjectClaim == "" && google {
+		subjectClaim = "email"
+	}
+	allowedTypes := splitCSV(os.Getenv("IGNITION_OIDC_ALLOWED_TYPES"))
+	if len(allowedTypes) == 0 && google {
+		allowedTypes = []string{"JWT"}
+	}
+
 	cfg := Config{
 		Env:               env,
 		ListenAddr:        getenv("IGNITION_LISTEN_ADDR", ":8080"),
 		AdminAddr:         getenv("IGNITION_ADMIN_ADDR", ":9090"),
 		DatabaseURL:       strings.TrimSpace(os.Getenv("DATABASE_URL")),
-		OIDCIssuer:        strings.TrimSpace(os.Getenv("IGNITION_OIDC_ISSUER")),
+		OIDCIssuer:        oidcIssuer,
 		OIDCJWKSURL:       strings.TrimSpace(os.Getenv("IGNITION_OIDC_JWKS_URL")),
 		OIDCAudience:      getenv("IGNITION_OIDC_AUDIENCE", "https://api.ignition.dev"),
+		OIDCAudiences:     splitCSV(os.Getenv("IGNITION_OIDC_AUDIENCES")),
+		OIDCSubjectClaim:  subjectClaim,
+		OIDCHostedDomains: splitCSV(os.Getenv("IGNITION_OIDC_HOSTED_DOMAINS")),
+		OIDCAllowedTypes:  allowedTypes,
+		IAPEnabled:        boolEnv("IGNITION_IAP_ENABLED"),
+		IAPIssuer:         getenv("IGNITION_IAP_ISSUER", defaultIAPIssuer),
+		IAPAudience:       strings.TrimSpace(os.Getenv("IGNITION_IAP_AUDIENCE")),
+		IAPJWKSURL:        getenv("IGNITION_IAP_JWKS_URL", defaultIAPJWKSURL),
+		BootstrapProject:  strings.TrimSpace(os.Getenv("IGNITION_BOOTSTRAP_PROJECT")),
+		BootstrapAdmin:    strings.ToLower(strings.TrimSpace(os.Getenv("IGNITION_BOOTSTRAP_ADMIN"))),
 		GatewayURL:        getenv("IGNITION_GATEWAY_URL", "https://gateway.us-central1.ignition.dev"),
 		StreamTokenSecret: secret,
 		DevBearer:         strings.TrimSpace(os.Getenv("IGNITION_DEV_BEARER")),
@@ -124,6 +165,17 @@ func (c Config) Validate() error {
 	if !c.AcceleratorAllowed(rt.Resources.Accelerator.Type) {
 		return fmt.Errorf("default runtime accelerator %q is not permitted by IGNITION_ALLOWED_ACCELERATORS", rt.Resources.Accelerator.Type)
 	}
+	switch c.OIDCSubjectClaim {
+	case "", "sub", "email":
+	default:
+		return fmt.Errorf("IGNITION_OIDC_SUBJECT_CLAIM must be empty, \"sub\", or \"email\"")
+	}
+	if c.IAPEnabled && strings.TrimSpace(c.IAPAudience) == "" {
+		return fmt.Errorf("IGNITION_IAP_ENABLED requires IGNITION_IAP_AUDIENCE")
+	}
+	if (c.BootstrapProject == "") != (c.BootstrapAdmin == "") {
+		return fmt.Errorf("IGNITION_BOOTSTRAP_PROJECT and IGNITION_BOOTSTRAP_ADMIN must be set together")
+	}
 	// IGNITION_ENV is free-form: only staging/prod/production are database-backed
 	// (see RequiresDatabase). Any other label (dev, test, ci, local, a per-branch
 	// name, ...) runs the in-memory dev path with no further checks.
@@ -145,7 +197,16 @@ func (c Config) Validate() error {
 	if c.OIDCIssuer == "" {
 		return fmt.Errorf("IGNITION_ENV=%s requires IGNITION_OIDC_ISSUER", c.Env)
 	}
-	for name, raw := range map[string]string{"IGNITION_OIDC_ISSUER": c.OIDCIssuer, "IGNITION_OIDC_JWKS_URL": c.OIDCJWKSURL, "IGNITION_GATEWAY_URL": c.GatewayURL} {
+	httpsURLs := map[string]string{
+		"IGNITION_OIDC_ISSUER":   c.OIDCIssuer,
+		"IGNITION_OIDC_JWKS_URL": c.OIDCJWKSURL,
+		"IGNITION_GATEWAY_URL":   c.GatewayURL,
+	}
+	if c.IAPEnabled {
+		httpsURLs["IGNITION_IAP_ISSUER"] = c.IAPIssuer
+		httpsURLs["IGNITION_IAP_JWKS_URL"] = c.IAPJWKSURL
+	}
+	for name, raw := range httpsURLs {
 		if raw == "" {
 			continue
 		}
@@ -211,6 +272,15 @@ func ResolveSandboxImage(imageID, prefix, region, gcpProject string) string {
 		prefix = region + "-docker.pkg.dev/" + gcpProject + "/sandboxes"
 	}
 	return prefix + "/" + imageID
+}
+
+func boolEnv(key string) bool {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv(key))) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
 }
 
 func atoiEnv(key string, fallback int) int {

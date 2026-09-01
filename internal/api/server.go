@@ -58,6 +58,10 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("POST /v1/projects/{project}/sandboxes", s.createSandbox)
 	mux.HandleFunc("GET /v1/projects/{project}/sandboxes", s.listSandboxes)
 	mux.HandleFunc("GET /v1/projects/{project}/runtimes/default", s.getDefaultRuntime)
+	mux.HandleFunc("GET /v1/projects/{project}/roleBindings", s.listRoleBindings)
+	mux.HandleFunc("GET /v1/projects/{project}/roleBindings/{subject}", s.getRoleBinding)
+	mux.HandleFunc("PUT /v1/projects/{project}/roleBindings/{subject}", s.putRoleBinding)
+	mux.HandleFunc("DELETE /v1/projects/{project}/roleBindings/{subject}", s.deleteRoleBinding)
 	mux.HandleFunc("GET /v1/projects/{project}/sandboxes/{sandbox}", s.getOrWatchSandbox)
 	mux.HandleFunc("POST /v1/projects/{project}/sandboxes/{sandbox}", s.postSandbox)
 	mux.HandleFunc("POST /v1/projects/{project}/sandboxes/{sandbox}/processes", s.createProcess)
@@ -170,14 +174,13 @@ func Run(cfg config.Config) error {
 		}
 		log.Printf("ignition-api: DEV bearer enabled for subject=dev project=prj_dev")
 	case cfg.OIDCIssuer != "":
-		authn = &auth.JWT{
-			Issuer:    cfg.OIDCIssuer,
-			Audience:  cfg.OIDCAudience,
-			JWKSURL:   cfg.OIDCJWKSURL,
-			Algorithm: "RS256",
-		}
+		authn = buildOIDCAuthenticator(cfg)
 	default:
 		authn = auth.Static{Tokens: map[string]auth.Principal{}}
+	}
+
+	if err := bootstrapAdmin(context.Background(), st, cfg); err != nil {
+		log.Printf("ignition-api: bootstrap admin: %v", err)
 	}
 
 	s := New(cfg, st, authn)
@@ -210,6 +213,71 @@ func Run(cfg config.Config) error {
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	return srv.Shutdown(shutdownCtx)
+}
+
+// buildOIDCAuthenticator wires the token authenticator(s) for an OIDC issuer.
+// The primary verifier handles `Authorization: Bearer` tokens (first-party
+// access tokens or Google ID tokens). When IAP is enabled, an ES256 verifier
+// for the `X-Goog-IAP-JWT-Assertion` header is chained after it; the middleware
+// feeds whichever header is present, and Chain falls through on a plain
+// authentication failure.
+func buildOIDCAuthenticator(cfg config.Config) auth.Authenticator {
+	primary := &auth.JWT{
+		Issuer:               cfg.OIDCIssuer,
+		Audience:             cfg.OIDCAudience,
+		Audiences:            cfg.OIDCAudiences,
+		JWKSURL:              cfg.OIDCJWKSURL,
+		Algorithm:            "RS256",
+		AllowedTypes:         cfg.OIDCAllowedTypes,
+		SubjectClaim:         cfg.OIDCSubjectClaim,
+		RequireEmailVerified: cfg.OIDCSubjectClaim == "email",
+		HostedDomains:        cfg.OIDCHostedDomains,
+	}
+	if !cfg.IAPEnabled {
+		log.Printf("ignition-api: auth oidc issuer=%s subject_claim=%s", cfg.OIDCIssuer, orNone(cfg.OIDCSubjectClaim))
+		return primary
+	}
+	iap := &auth.JWT{
+		Issuer:        cfg.IAPIssuer,
+		Audience:      cfg.IAPAudience,
+		JWKSURL:       cfg.IAPJWKSURL,
+		Algorithm:     "ES256",
+		AllowedTypes:  []string{"JWT", ""},
+		SubjectClaim:  "email",
+		HostedDomains: cfg.OIDCHostedDomains,
+	}
+	log.Printf("ignition-api: auth oidc issuer=%s + IAP issuer=%s aud=%s", cfg.OIDCIssuer, cfg.IAPIssuer, cfg.IAPAudience)
+	return auth.Chain{primary, iap}
+}
+
+// bootstrapAdmin seeds a single owner binding for cfg.BootstrapProject when
+// that project has no owner yet. It is a no-op when the bootstrap vars are
+// unset or an owner already exists, so it is safe to leave configured.
+func bootstrapAdmin(ctx context.Context, st store.Store, cfg config.Config) error {
+	if cfg.BootstrapAdmin == "" || cfg.BootstrapProject == "" {
+		return nil
+	}
+	list, err := st.ListRoleBindings(ctx, cfg.BootstrapProject)
+	if err != nil {
+		return err
+	}
+	for _, b := range list {
+		if b.Role == auth.RoleOwner {
+			return nil
+		}
+	}
+	if err := st.PutRoleBinding(ctx, cfg.BootstrapProject, cfg.BootstrapAdmin, auth.RoleOwner); err != nil {
+		return err
+	}
+	log.Printf("ignition-api: bootstrap seeded owner %s for project %s", cfg.BootstrapAdmin, cfg.BootstrapProject)
+	return nil
+}
+
+func orNone(s string) string {
+	if s == "" {
+		return "(default)"
+	}
+	return s
 }
 
 func (s *Server) healthz(w http.ResponseWriter, r *http.Request) {
