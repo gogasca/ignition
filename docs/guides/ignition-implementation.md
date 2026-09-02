@@ -809,6 +809,60 @@ Port `18080` avoids the common local Jupyter conflict on `8080`. Keeping `--addr
 
 Then [verify the implemented sandbox path](#verify-the-implemented-sandbox-path). Creating a sandbox scales the L4 pool up to `GPU_MAX`.
 
+### Testing real authentication
+
+The dev overlay above uses `IGNITION_DEV_BEARER`. To exercise the Google ID token path:
+
+**Local (no cluster).** In-memory store, bootstrap yourself as owner, accept the `gcloud` user client id as an audience:
+
+```bash
+go build -o /tmp/ignition-api ./cmd/ignition-api
+IGNITION_ENV=local IGNITION_LISTEN_ADDR=127.0.0.1:18080 IGNITION_ADMIN_ADDR=127.0.0.1:19090 \
+IGNITION_OIDC_ISSUER=https://accounts.google.com \
+IGNITION_OIDC_AUDIENCES=32555940559.apps.googleusercontent.com \
+IGNITION_BOOTSTRAP_PROJECT=prj_local \
+IGNITION_BOOTSTRAP_ADMIN="$(gcloud config get-value account)" \
+/tmp/ignition-api &
+
+TOK="$(gcloud auth print-identity-token)"
+curl -s -o /dev/null -w '%{http_code}\n' localhost:18080/v1/projects/prj_local/roleBindings           # 401 (no token)
+curl -s -H "Authorization: Bearer $TOK" localhost:18080/v1/projects/prj_local/roleBindings | jq .     # 200, you as owner
+curl -s -X PUT -H "Authorization: Bearer $TOK" -H 'content-type: application/json' -d '{"role":"developer"}' \
+  localhost:18080/v1/projects/prj_local/roleBindings/svc@example.iam.gserviceaccount.com | jq .       # 200
+```
+
+Add `IGNITION_OIDC_HOSTED_DOMAINS=<your-domain>` to see a non-Workspace token rejected with 401.
+
+**In-cluster dev.** Recreate the control-plane secret without `DEV_BEARER`, add a bootstrap admin, and roll:
+
+```bash
+kubectl -n ignition-system create secret generic ignition-control-plane \
+  --from-literal=STREAM_TOKEN_SECRET="$(openssl rand -base64 48)" \
+  --from-literal=DATABASE_URL="postgres://ignition:${SQL_PASS}@127.0.0.1:5432/ignition?sslmode=disable" \
+  --dry-run=client -o yaml | kubectl apply -f -
+kubectl -n ignition-system patch configmap ignition-api --type merge -p \
+  '{"data":{"IGNITION_BOOTSTRAP_PROJECT":"prj_dev","IGNITION_BOOTSTRAP_ADMIN":"you@your-domain"}}'
+kubectl -n ignition-system rollout restart deploy/ignition-api
+```
+
+`/statusz` on the admin port shows `auth: oidc: https://accounts.google.com`. Call the API through the port-forward with an impersonated service-account token (works around the fixed `aud` on user credentials):
+
+```bash
+gcloud iam service-accounts add-iam-policy-binding "cli@${PROJECT}.iam.gserviceaccount.com" \
+  --role=roles/iam.serviceAccountTokenCreator --member="user:$(gcloud config get-value account)"
+TOK="$(gcloud auth print-identity-token \
+  --impersonate-service-account="cli@${PROJECT}.iam.gserviceaccount.com" \
+  --audiences="https://api.dev.ignition.dev" --include-email)"
+# bind that SA first: psql "$DSN" -v project=prj_dev -v owner_email="cli@${PROJECT}.iam.gserviceaccount.com" -f db/rolebindings.sql
+curl -s -H "Authorization: Bearer $TOK" "http://127.0.0.1:${LOCAL_API_PORT}/v1/projects/prj_dev/sandboxes" | jq .
+```
+
+Restore dev-bearer by re-adding `DEV_BEARER` to the secret and rolling again.
+
+**Prober** validates the same path continuously on staging: its Workload Identity ID token authenticates as `ignition-prober@<project>.iam.gserviceaccount.com`, which must be bound `developer` (`db/rolebindings.sql`). See [`deploy/PIPELINE.md`](../../deploy/PIPELINE.md).
+
+**IAP** (staging/prod only, needs the HTTPS Ingress): after `terraform apply` with `iap_enabled=true`, capture the backend-service audience, set it in `deploy/k8s/components/iap/enable-iap-config.yaml`, add the component to the overlay, and open `https://api.<env>.ignition.dev/...` in a browser — IAP runs sign-in and the API verifies the `X-Goog-IAP-JWT-Assertion`.
+
 ### 7. Optional destructive teardown
 
 Do not run this section merely to complete deployment verification. When the environment is no longer needed, stop the local port-forward, then delete billable compute and database resources. Set `DELETE_ARTIFACTS=true` only if the pushed images are no longer needed. Set `DELETE_SHARED_INFRA=true` only if the VPC will not be reused.

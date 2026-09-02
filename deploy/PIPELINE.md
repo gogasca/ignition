@@ -276,16 +276,14 @@ runs the read-only subset once per rollout (`skaffold.yaml`, `IGNITION_PROBE_JOU
 The continuous prober authenticates with a **Workload Identity ID token** (no secrets). For that to
 work on staging:
 
-1. **Staging API OIDC must trust Google.** `IGNITION_OIDC_ISSUER` is read from the
-   `ignition-control-plane` **Secret** (`base/ignition-api.yaml` sets it via `secretKeyRef`, which
-   overrides the ConfigMap), so set it in the secret from the Prerequisites step:
-   ```bash
-   --from-literal=OIDC_ISSUER='https://accounts.google.com'
-   ```
-   The API audience is already `https://api.staging.ignition.dev` (`overlays/staging/config.yaml`);
-   the prober ConfigMap's `IGNITION_PROBE_AUDIENCE` (same file) must equal it.
+1. **Staging API OIDC must trust Google.** `IGNITION_OIDC_ISSUER=https://accounts.google.com` and
+   `IGNITION_OIDC_SUBJECT_CLAIM=email` are set in the base `ignition-api` **ConfigMap** - no secret
+   key. The API audience is `https://api.staging.ignition.dev` (`overlays/staging/config.yaml`); the
+   prober ConfigMap's `IGNITION_PROBE_AUDIENCE` (same file) must equal it. The prober now fails to
+   start if that variable is unset.
 
-2. **Prober GSA + Workload Identity binding** (no project-level roles — it only mints its own token):
+2. **Prober GSA + Workload Identity binding** (no project-level roles — it only mints its own token).
+   Terraform does this (`google_service_account.prober` + `prober_wi`); by hand:
    ```bash
    gcloud iam service-accounts create ignition-prober
    PRB="ignition-prober@${PROJECT}.iam.gserviceaccount.com"
@@ -294,14 +292,13 @@ work on staging:
      --member="serviceAccount:${PROJECT}.svc.id.goog[ignition-system/ignition-prober]"
    ```
 
-3. **Authorize the prober in the product store.** The API maps an OIDC token's `sub` claim to a
-   principal; for a Google ID token that is the GSA's numeric unique id. Bind it as `developer` on the
-   probe project so the lifecycle journey can create + exec + terminate:
+3. **Authorize the prober in the product store.** With `IGNITION_OIDC_SUBJECT_CLAIM=email` the RBAC
+   subject is the GSA email itself. Bind it as `developer` on the probe project so the lifecycle
+   journey can create + exec + terminate (own):
    ```bash
-   PRB_SUB="$(gcloud iam service-accounts describe "${PRB}" --format='value(uniqueId)')"
-   # against the staging DB (via the cloud-sql-proxy or a bootstrap pod):
-   #   INSERT INTO role_bindings (project_id, subject, role)
-   #   VALUES ('prj_dev', '<PRB_SUB>', 'developer');
+   # against the staging DB via the cloud-sql-proxy:
+   psql "$STAGING_DSN" -v project=prj_dev -v prober_sa="$PRB" -f db/rolebindings.sql
+   #   -> INSERT INTO role_bindings VALUES ('prj_dev', 'ignition-prober@...', 'developer')
    ```
 
 4. **Seed the probe image.** `img_seed` must be pushed to the staging sandboxes repo
@@ -342,7 +339,8 @@ auto-promote staging→prod after a soak while keeping the approval gate.
 - **Cloud Deploy `verify` runs only the read-only journeys** (`lite`, unauthenticated). Full lifecycle
   CUJ coverage on staging comes from the continuous `ignition-prober` Deployment and from
   `tests/integration` (`TestProbeJourneys`) in CI. To run the full set in `verify` too, give the
-  skaffold verify Job the `ignition-prober` ServiceAccount and `IGNITION_PROBE_AUTH=gcp-idtoken`.
+  skaffold verify Job the `ignition-prober` ServiceAccount, `IGNITION_PROBE_AUTH=gcp-idtoken`, and
+  `IGNITION_PROBE_AUDIENCE` equal to the API's `IGNITION_OIDC_AUDIENCE`.
 - **`tests/conformance/` is superseded** by `internal/probe` + `cmd/ignition-prober` and can be removed.
 - **The controller has no health signal.** `cmd/ignition-controller` serves no HTTP, so its Deployment
   has no liveness/readiness probe, and `controller.Run` uses a non-cancellable `context.Background()`

@@ -14,8 +14,10 @@ data:
   IGNITION_PROBE_INTERVAL: "300s"
   IGNITION_PROBE_TIMEOUT: "600s"
   IGNITION_PROBE_AUTH: "gcp-idtoken"
-  # IGNITION_PROBE_AUDIENCE must equal the API's IGNITION_OIDC_AUDIENCE.
-  # Set it in the overlay (see overlays/staging/config.yaml).
+  # IGNITION_PROBE_AUDIENCE is REQUIRED and must equal the API's
+  # IGNITION_OIDC_AUDIENCE. Set it in the overlay (see overlays/staging/config.yaml).
+  # The prober's GSA email must also be bound as `developer` on IGNITION_PROBE_PROJECT
+  # in role_bindings (db/rolebindings.sql) - the API uses the email as the subject.
 ---
 apiVersion: apps/v1
 kind: Deployment
