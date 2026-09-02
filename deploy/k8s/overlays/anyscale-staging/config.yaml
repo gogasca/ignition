@@ -1,0 +1,38 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+data:
+  IGNITION_ENV: "staging"
+  # No public DNS: the audience is a fixed opaque string the prober also
+  # requests. The gcloud client id is accepted too so an operator's own
+  # `gcloud auth print-identity-token` works without SA impersonation.
+  IGNITION_OIDC_AUDIENCE: "https://api.anyscale-demo.ignition.dev"
+  IGNITION_OIDC_AUDIENCES: "32555940559.apps.googleusercontent.com"
+  IGNITION_GATEWAY_URL: "https://gateway.anyscale-demo.ignition.dev"
+  IGNITION_MAX_ACTIVE_SANDBOXES: "5"
+  # Seed the first owner on startup (idempotent once an owner exists).
+  IGNITION_BOOTSTRAP_PROJECT: "prj_dev"
+  IGNITION_BOOTSTRAP_ADMIN: "gascagonzalo@gmail.com"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-controller
+  namespace: ignition-system
+data:
+  IGNITION_ENV: "staging"
+  IGNITION_GCP_PROJECT: "anyscale-demo"
+  IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/anyscale-demo/sandboxes"
+  IGNITION_MIN_WARM: "0"
+  IGNITION_MAX_WARM: "0"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-prober
+  namespace: ignition-system
+data:
+  IGNITION_PROBE_PROJECT: "prj_dev"
+  IGNITION_PROBE_AUDIENCE: "https://api.anyscale-demo.ignition.dev"

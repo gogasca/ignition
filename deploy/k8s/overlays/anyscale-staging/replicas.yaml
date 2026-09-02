@@ -1,0 +1,31 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+spec:
+  replicas: 1
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ignition-api
+  namespace: ignition-system
+spec:
+  minAvailable: 0
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ignition-controller
+  namespace: ignition-system
+spec:
+  replicas: 1
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ignition-controller
+  namespace: ignition-system
+spec:
+  minAvailable: 0
