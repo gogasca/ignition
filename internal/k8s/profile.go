@@ -12,6 +12,14 @@ type Profile struct {
 	AntiAffinity  bool   // require one sandbox per node
 }
 
+// Internet-specific pools are intentionally separate from restricted pools so
+// the VPC firewall tag is part of the scheduling decision, not just a Pod
+// label.
+const (
+	CPUInternetNodePoolValue = "cpu-sandbox-internet"
+	GPUInternetNodePoolValue = "gpu-sandbox-l4-internet"
+)
+
 var profiles = map[string]Profile{
 	store.AcceleratorNone: {
 		Accelerator:   store.AcceleratorNone,
@@ -31,10 +39,27 @@ var profiles = map[string]Profile{
 // empty type is treated as NVIDIA_L4 for rows created before the field existed.
 // ok is false when the type has no serviceable profile.
 func ProfileFor(acceleratorType string) (Profile, bool) {
+	return ProfileForNetwork(acceleratorType, false)
+}
+
+// ProfileForNetwork returns the server-owned scheduling profile for an
+// accelerator and internet-access mode.
+func ProfileForNetwork(acceleratorType string, internetEnabled bool) (Profile, bool) {
 	if acceleratorType == "" {
 		acceleratorType = store.AcceleratorNVIDIAL4
 	}
 	p, ok := profiles[acceleratorType]
+	if !ok {
+		return p, false
+	}
+	if internetEnabled {
+		switch acceleratorType {
+		case store.AcceleratorNone:
+			p.NodePoolValue = CPUInternetNodePoolValue
+		case store.AcceleratorNVIDIAL4:
+			p.NodePoolValue = GPUInternetNodePoolValue
+		}
+	}
 	return p, ok
 }
 

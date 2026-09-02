@@ -3,4 +3,7 @@ region          = "us-central1"
 zone            = "us-central1-a"
 operator_cidr   = "203.0.113.10/32"
 gpu_max_nodes   = 2
+# internet_subnet_name      = "ignition-internet-subnet"
+# internet_nodes_ipv4_cidr  = "10.40.0.0/20"
+# internet_pods_ipv4_cidr   = "10.50.0.0/16"
 # dr_region     = "us-east1" # Optional; adds a billable cross-region HA replica.

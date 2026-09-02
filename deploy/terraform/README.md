@@ -4,9 +4,9 @@ This directory provisions the Google Cloud resources used by the regional dev de
 
 ## What Terraform owns
 
-- Enabled GCP APIs, custom VPC, secondary ranges, Cloud NAT, and Private Services Access.
-- Private Google API DNS/route configuration and the guide's default-deny node egress firewall policy.
-- Regional private GKE with Dataplane V2, Workload Identity, image streaming, a 1–3 node system pool, scale-to-zero restricted CPU/GPU gVisor pools, and matching scale-to-zero internet-enabled CPU/GPU pools. Internet pools use a separate network tag and Cloud NAT-backed egress policy.
+- Enabled GCP APIs, one custom VPC, restricted and internet sandbox subnets, secondary Pod ranges, Cloud NAT, and Private Services Access.
+- Private Google API DNS/route configuration, default-deny restricted node egress, and internet sandbox egress firewall policies.
+- Regional private GKE with Dataplane V2, Workload Identity, image streaming, a 1–3 node system pool, scale-to-zero restricted CPU/GPU gVisor pools, and matching scale-to-zero internet-enabled CPU/GPU pools. Internet pools stay in the same cluster but use a separate subnet, Pod range, network tag, and Cloud NAT-backed egress policy.
 - Regional-HA PostgreSQL 16 Cloud SQL with private IP, automated backups, seven-day PITR logs, deletion protection, the `ignition` database, and password-authenticated `ignition` user.
 - An optional regional-HA cross-region Cloud SQL read replica when `dr_region` is set.
 - Control-plane and sandbox Artifact Registry repositories.
@@ -64,17 +64,20 @@ Use a backup and a dedicated state file. Import every existing resource before a
 ```bash
 terraform import google_compute_network.main projects/PROJECT/global/networks/ignition-vpc
 terraform import google_compute_subnetwork.main projects/PROJECT/regions/us-central1/subnetworks/ignition-subnet
+terraform import google_compute_subnetwork.internet_sandbox projects/PROJECT/regions/us-central1/subnetworks/ignition-internet-subnet
 terraform import google_compute_router.main projects/PROJECT/regions/us-central1/routers/ignition-router
 terraform import google_compute_router_nat.main projects/PROJECT/regions/us-central1/routers/ignition-router/ignition-nat
 terraform import google_container_cluster.main projects/PROJECT/locations/us-central1/clusters/ignition
 terraform import google_container_node_pool.system projects/PROJECT/locations/us-central1/clusters/ignition/nodePools/cpu-system
 terraform import google_container_node_pool.cpu_sandbox projects/PROJECT/locations/us-central1/clusters/ignition/nodePools/cpu-sandbox
+terraform import google_container_node_pool.cpu_sandbox_internet projects/PROJECT/locations/us-central1/clusters/ignition/nodePools/cpu-sandbox-internet
 terraform import google_container_node_pool.gpu_sandbox projects/PROJECT/locations/us-central1/clusters/ignition/nodePools/gpu-sandbox-l4
+terraform import google_container_node_pool.gpu_sandbox_internet projects/PROJECT/locations/us-central1/clusters/ignition/nodePools/gpu-sandbox-l4-internet
 terraform import google_sql_database_instance.main PROJECT:ignition-sql
 terraform import google_artifact_registry_repository.control_plane projects/PROJECT/locations/us-central1/repositories/ignition
 ```
 
-The configuration uses explicit `cpu-system`, `cpu-sandbox`, and `gpu-sandbox-l4` pools. If the existing cluster still has the gcloud-managed default pool, reconcile that pool in a reviewable plan (or migrate into a fresh cluster) before applying. Import the remaining database, IAM, API, PSA, and repository resources as appropriate for the project, then require a no-recreate plan review.
+The configuration uses explicit `cpu-system`, `cpu-sandbox`, `cpu-sandbox-internet`, `gpu-sandbox-l4`, and `gpu-sandbox-l4-internet` pools. If the existing cluster still has the gcloud-managed default pool, reconcile that pool in a reviewable plan (or migrate into a fresh cluster) before applying. Import the remaining database, IAM, API, PSA, DNS, firewall, and repository resources as appropriate for the project, then require a no-recreate plan review.
 
 ## Destruction
 

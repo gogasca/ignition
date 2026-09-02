@@ -29,6 +29,19 @@ resource "google_compute_subnetwork" "main" {
   }
 }
 
+resource "google_compute_subnetwork" "internet_sandbox" {
+  name                     = var.internet_subnet_name
+  project                  = var.project_id
+  region                   = var.region
+  network                  = google_compute_network.main.id
+  ip_cidr_range            = var.internet_nodes_ipv4_cidr
+  private_ip_google_access = true
+  secondary_ip_range {
+    range_name    = "internet-pods"
+    ip_cidr_range = var.internet_pods_ipv4_cidr
+  }
+}
+
 resource "google_compute_router" "main" {
   name    = "ignition-router"
   project = var.project_id
@@ -41,7 +54,12 @@ resource "google_compute_router_nat" "main" {
   region                             = var.region
   router                             = google_compute_router.main.name
   nat_ip_allocate_option             = "AUTO_ONLY"
-  source_subnetwork_ip_ranges_to_nat = "ALL_SUBNETWORKS_ALL_IP_RANGES"
+  source_subnetwork_ip_ranges_to_nat = "LIST_OF_SUBNETWORKS"
+
+  subnetwork {
+    name                    = google_compute_subnetwork.internet_sandbox.id
+    source_ip_ranges_to_nat = ["ALL_IP_RANGES"]
+  }
 }
 
 resource "google_compute_route" "private_google_apis" {
@@ -134,7 +152,7 @@ resource "google_compute_firewall" "node_egress_allow_cluster" {
   network            = google_compute_network.main.name
   direction          = "EGRESS"
   priority           = 1000
-  destination_ranges = [var.nodes_ipv4_cidr, var.pods_ipv4_cidr, var.services_ipv4_cidr]
+  destination_ranges = [var.nodes_ipv4_cidr, var.pods_ipv4_cidr, var.services_ipv4_cidr, var.internet_nodes_ipv4_cidr, var.internet_pods_ipv4_cidr]
   target_tags        = [var.node_network_tag]
 
   allow {
@@ -196,7 +214,7 @@ resource "google_compute_firewall" "internet_node_egress_allow_cluster" {
   network            = google_compute_network.main.name
   direction          = "EGRESS"
   priority           = 800
-  destination_ranges = [var.nodes_ipv4_cidr, var.pods_ipv4_cidr, var.services_ipv4_cidr]
+  destination_ranges = [var.nodes_ipv4_cidr, var.pods_ipv4_cidr, var.services_ipv4_cidr, var.internet_nodes_ipv4_cidr, var.internet_pods_ipv4_cidr]
   target_tags        = [var.internet_node_network_tag]
   allow { protocol = "all" }
 }
@@ -259,6 +277,11 @@ resource "google_container_cluster" "main" {
   ip_allocation_policy {
     cluster_secondary_range_name  = "pods"
     services_secondary_range_name = "svcs"
+
+    additional_ip_ranges_config {
+      subnetwork           = google_compute_subnetwork.internet_sandbox.id
+      pod_ipv4_range_names = ["internet-pods"]
+    }
   }
   private_cluster_config {
     enable_private_nodes    = true
@@ -463,6 +486,11 @@ resource "google_container_node_pool" "cpu_sandbox_internet" {
       enable_integrity_monitoring = true
     }
   }
+  network_config {
+    enable_private_nodes = true
+    subnetwork           = google_compute_subnetwork.internet_sandbox.id
+    pod_range            = "internet-pods"
+  }
   depends_on = [google_project_iam_member.nodes]
 }
 
@@ -506,6 +534,11 @@ resource "google_container_node_pool" "gpu_sandbox_internet" {
       enable_secure_boot          = true
       enable_integrity_monitoring = true
     }
+  }
+  network_config {
+    enable_private_nodes = true
+    subnetwork           = google_compute_subnetwork.internet_sandbox.id
+    pod_range            = "internet-pods"
   }
   depends_on = [google_project_iam_member.nodes]
 }

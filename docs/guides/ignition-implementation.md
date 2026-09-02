@@ -227,6 +227,7 @@ export ZONE=us-central1-a
 export CLUSTER=ignition
 export NETWORK=ignition-vpc
 export SUBNET=ignition-subnet
+export INTERNET_SUBNET=ignition-internet-subnet
 export ROUTER=ignition-router
 export NAT=ignition-nat
 export PSA_RANGE=ignition-psa
@@ -234,6 +235,8 @@ export MASTER_RANGE=172.16.0.0/28
 export NODES_RANGE=10.10.0.0/20
 export PODS_RANGE=10.20.0.0/16
 export SVCS_RANGE=10.30.0.0/20
+export INTERNET_NODES_RANGE=10.40.0.0/20
+export INTERNET_PODS_RANGE=10.50.0.0/16
 export SQL_INSTANCE=ignition-sql
 export AR_REPO=ignition
 export SANDBOX_REPO=sandboxes
@@ -300,7 +303,7 @@ Inspect an existing request with `gcloud quotas preferences describe ignition-gl
 
 ### 2. APIs, VPC, GKE, GPU pool, SQL, AR, IAM
 
-Private nodes, no public IPs on GPU VMs. Cloud NAT is reserved for a future internet-enabled pool; the current node tag is restricted to private Google APIs and Cloud SQL. Do **not** enable GPU time-sharing, MPS, or MIG. Both GKE and the primary Cloud SQL instance are regional; the optional SQL DR replica is cross-region.
+Private nodes, no public IPs on sandbox VMs. Restricted and internet-enabled sandbox pools run in the same GKE cluster but on separate node pools. The internet-enabled pools use a separate subnet, Pod range, node network tag, and Cloud NAT scope. Do **not** enable GPU time-sharing, MPS, or MIG. Both GKE and the primary Cloud SQL instance are regional; the optional SQL DR replica is cross-region.
 
 The cluster is created with **GKE Dataplane V2** (`--enable-dataplane-v2`) for cluster-owned defense in depth. Client networking input is not converted into Kubernetes NetworkPolicy. `network.internetAccess` selects a preconfigured GCP network profile; VPC, subnet, firewall, NAT, and metadata protections are the enforcement boundary.
 
@@ -317,11 +320,16 @@ gcloud compute networks subnets create "${SUBNET}" \
   --network="${NETWORK}" --region="${REGION}" --range="${NODES_RANGE}" \
   --secondary-range=pods="${PODS_RANGE}",svcs="${SVCS_RANGE}" \
   --enable-private-ip-google-access
+gcloud compute networks subnets create "${INTERNET_SUBNET}" \
+  --network="${NETWORK}" --region="${REGION}" --range="${INTERNET_NODES_RANGE}" \
+  --secondary-range=internet-pods="${INTERNET_PODS_RANGE}" \
+  --enable-private-ip-google-access
 
 gcloud compute routers create "${ROUTER}" --network="${NETWORK}" --region="${REGION}"
 gcloud compute routers nats create "${NAT}" \
   --router="${ROUTER}" --region="${REGION}" \
-  --nat-all-subnet-ip-ranges --auto-allocate-nat-external-ips
+  --nat-custom-subnet-ip-ranges="${INTERNET_SUBNET}:ALL" \
+  --auto-allocate-nat-external-ips
 
 gcloud compute addresses create "${PSA_RANGE}" --global \
   --purpose=VPC_PEERING --prefix-length=16 --network="${NETWORK}"
@@ -363,7 +371,7 @@ gcloud compute firewall-rules create ignition-node-egress-deny \
 
 gcloud compute firewall-rules create ignition-node-egress-allow-cluster \
   --network="${NETWORK}" --direction=EGRESS --action=ALLOW --rules=all \
-  --destination-ranges="${NODES_RANGE},${PODS_RANGE},${SVCS_RANGE}" \
+  --destination-ranges="${NODES_RANGE},${PODS_RANGE},${SVCS_RANGE},${INTERNET_NODES_RANGE},${INTERNET_PODS_RANGE}" \
   --priority=1000 --target-tags=ignition-node
 
 gcloud compute firewall-rules create ignition-node-egress-allow-control-plane \
@@ -378,6 +386,29 @@ gcloud compute firewall-rules create ignition-node-egress-allow-google-apis \
 gcloud compute firewall-rules create ignition-node-egress-allow-cloudsql \
   --network="${NETWORK}" --direction=EGRESS --action=ALLOW --rules=tcp:3307 \
   --destination-ranges="${PSA_CIDR}" --priority=1000 --target-tags=ignition-node
+
+# Internet-enabled sandbox nodes use a separate tag and subnet. They may reach
+# public destinations through Cloud NAT, but private/link-local ranges are still
+# denied after the explicit cluster/control-plane/PGA allows.
+gcloud compute firewall-rules create ignition-internet-node-egress-allow-cluster \
+  --network="${NETWORK}" --direction=EGRESS --action=ALLOW --rules=all \
+  --destination-ranges="${NODES_RANGE},${PODS_RANGE},${SVCS_RANGE},${INTERNET_NODES_RANGE},${INTERNET_PODS_RANGE}" \
+  --priority=800 --target-tags=ignition-sandbox-internet
+
+gcloud compute firewall-rules create ignition-internet-node-egress-allow-control-plane \
+  --network="${NETWORK}" --direction=EGRESS --action=ALLOW --rules=all \
+  --destination-ranges="${MASTER_RANGE},${PGA_VIP}" \
+  --priority=800 --target-tags=ignition-sandbox-internet
+
+gcloud compute firewall-rules create ignition-internet-node-egress-deny-private \
+  --network="${NETWORK}" --direction=EGRESS --action=DENY --rules=all \
+  --destination-ranges=10.0.0.0/8,100.64.0.0/10,127.0.0.0/8,169.254.0.0/16,172.16.0.0/12,192.168.0.0/16 \
+  --priority=900 --target-tags=ignition-sandbox-internet
+
+gcloud compute firewall-rules create ignition-internet-node-egress-allow-public \
+  --network="${NETWORK}" --direction=EGRESS --action=ALLOW --rules=all \
+  --destination-ranges=0.0.0.0/0 \
+  --priority=1000 --target-tags=ignition-sandbox-internet
 # ---------------------------------------------------------------------------
 
 gcloud iam service-accounts create "${NODE_SA}" \
@@ -410,6 +441,9 @@ gcloud container clusters create "${CLUSTER}" \
 
 gcloud container clusters get-credentials "${CLUSTER}" --region="${REGION}"
 
+gcloud container clusters update "${CLUSTER}" --region="${REGION}" \
+  --additional-ip-ranges="subnetwork=${INTERNET_SUBNET},pod-ipv4-range=internet-pods"
+
 gcloud container node-pools create gpu-sandbox-l4 \
   --cluster="${CLUSTER}" --region="${REGION}" \
   --machine-type=g2-standard-8 \
@@ -440,6 +474,21 @@ gcloud container node-pools create cpu-sandbox \
   --node-labels=ignition.io/node-pool=cpu-sandbox \
   --node-taints=ignition.io/sandbox=true:NoSchedule \
   --tags=ignition-node \
+  --enable-private-nodes --enable-autorepair --enable-autoupgrade
+
+gcloud container node-pools create cpu-sandbox-internet \
+  --cluster="${CLUSTER}" --region="${REGION}" \
+  --subnetwork="${INTERNET_SUBNET}" \
+  --pod-ipv4-range=internet-pods \
+  --machine-type="${CPU_SANDBOX_MACHINE}" \
+  --service-account="${NODE_SA}@${PROJECT}.iam.gserviceaccount.com" \
+  --scopes=cloud-platform \
+  --image-type=COS_CONTAINERD --sandbox=type=gvisor \
+  --num-nodes=0 --enable-autoscaling --total-min-nodes=0 --total-max-nodes=3 \
+  --disk-type=pd-balanced --disk-size=100 \
+  --node-labels=ignition.io/node-pool=cpu-sandbox-internet \
+  --node-taints=ignition.io/sandbox=true:NoSchedule \
+  --tags=ignition-sandbox-internet \
   --enable-private-nodes --enable-autorepair --enable-autoupgrade
 
 gcloud sql instances create "${SQL_INSTANCE}" \
@@ -521,12 +570,18 @@ Cross-region PostgreSQL replication is asynchronous, so promotion can lose trans
 
 ### Node egress is default-deny
 
-The `ignition-node` tag on every pool plus the `ignition-node-egress-*` rules close the node to everything except this VPC, the control-plane CIDR (`tcp:443,8132,10250`), the Private Google Access VIP (`199.36.153.8/30:443`), and the private Cloud SQL range (`tcp:3307`). The priority-65500 deny overrides the implied allow-egress; there is no route to any other VPC or to the public internet. This is what enforces the internet-**disabled** sandbox default at the infrastructure layer: a Pod that escapes gVisor still has no network path to another tenant, to a peered network, or to the internet. DHCP, NTP, and the metadata server (`169.254.169.254`) are always permitted by GCP regardless of these rules, so node bootstrap and Workload Identity are unaffected; sandbox metadata isolation stays with the GKE Metadata Server as before.
+The `ignition-node` tag on restricted pools plus the `ignition-node-egress-*` rules close the node to everything except the cluster ranges, the control-plane CIDR (`tcp:443,8132,10250`), the Private Google Access VIP (`199.36.153.8/30:443`), and the private Cloud SQL range (`tcp:3307`). The priority-65500 deny overrides the implied allow-egress; there is no route to any other VPC or to the public internet. This is what enforces the internet-**disabled** sandbox default at the infrastructure layer. DHCP, NTP, and the metadata server (`169.254.169.254`) are always permitted by GCP regardless of these rules, so node bootstrap and Workload Identity are unaffected; sandbox metadata isolation stays with the GKE Metadata Server as before.
+
+The `ignition-sandbox-internet` tag on internet-enabled sandbox pools uses the
+same GKE cluster but a separate subnet and firewall profile. It explicitly
+allows cluster/control-plane/Private Google Access traffic, denies private and
+link-local ranges, and then allows public `0.0.0.0/0` through Cloud NAT. Cloud
+NAT is scoped to `${INTERNET_SUBNET}:ALL`, not every subnet in the VPC.
 
 Consequences:
 
 - **Every image the cluster pulls must resolve to `*.pkg.dev` or `*.gcr.io`.** Control-plane images are in Artifact Registry; runtime bases are `gcr.io/distroless/*`; the GPU seed base is the in-region `nvidia/cuda` mirror. Mirror any other third-party image (notably `postgres:16`, used by the bootstrap Pod in step 4) into `${AR_REPO}` first — a Docker Hub pull will hang and time out.
-- **Cloud NAT is now unused by nodes.** It is kept only so a future internet-enabled sandbox pool — which must carry a *different* tag and network profile — has a path. Delete `${NAT}` if you never add one.
+- **Cloud NAT is used only by internet-enabled sandbox nodes.** Restricted nodes keep the default-deny `ignition-node` tag and do not depend on NAT for image pulls or Google APIs.
 - **Build machines are unaffected.** `make push-images`, `docker build/push`, and `buf` run on your workstation or Cloud Build, not on cluster nodes.
 
 The intended IAM boundary is:
@@ -553,16 +608,21 @@ gcloud container node-pools describe gpu-sandbox-l4 \
 gcloud container node-pools describe cpu-sandbox \
   --cluster="${CLUSTER}" --region="${REGION}" \
   --format='yaml(config.machineType,config.sandboxConfig,config.labels,config.taints,autoscaling)'
+gcloud container node-pools describe cpu-sandbox-internet \
+  --cluster="${CLUSTER}" --region="${REGION}" \
+  --format='yaml(config.machineType,config.sandboxConfig,config.labels,config.taints,networkConfig,autoscaling)'
 gcloud container clusters describe "${CLUSTER}" --region="${REGION}" \
-  --format='value(networkConfig.datapathProvider, nodePools[].config.serviceAccount)'
+  --format='yaml(network,subnetwork,networkConfig.datapathProvider,ipAllocationPolicy.additionalIpRangesConfigs,nodePools[].config.serviceAccount)'
 kubectl get runtimeclass gvisor
 kubectl -n kube-system get ds anetd
 gcloud compute firewall-rules list \
-  --filter="network=${NETWORK} AND name~^ignition-node-egress" \
+  --filter="network=${NETWORK} AND (name~^ignition-node-egress OR name~^ignition-internet-node-egress)" \
   --format='table(name,priority,direction,allowed[].map().firewall_rule().list(),denied[].map().firewall_rule().list())'
+gcloud compute routers nats describe "${NAT}" --router="${ROUTER}" --region="${REGION}" \
+  --format='yaml(sourceSubnetworkIpRangesToNat,subnetworks)'
 ```
 
-`datapathProvider` should read `ADVANCED_DATAPATH` (Dataplane V2). The firewall list must show one `DENY all` at priority 65500 and four `ALLOW` rules at 1000. Internet-access enforcement must not depend on client-authored Kubernetes policy.
+`datapathProvider` should read `ADVANCED_DATAPATH` (Dataplane V2). The firewall list must show the restricted `ignition-node` deny-all plus its higher-priority allows, and the internet-profile rules for `ignition-sandbox-internet`: cluster/control-plane/PGA allows, private-range deny, and public allow. NAT must be `LIST_OF_SUBNETWORKS` and include only `${INTERNET_SUBNET}:ALL`. Internet-access enforcement must not depend on client-authored Kubernetes policy.
 
 ### 3. Namespaces, identities, and PriorityClasses
 
@@ -591,7 +651,7 @@ globalDefault: false
 EOF
 ```
 
-The API defaults `network.internetAccess` to `DISABLED`, and step 2's node-egress lockdown is the current enforcement for that default. The current application no longer creates per-sandbox NetworkPolicy resources and its KSA has no NetworkPolicy RBAC. Before advertising either mode, provision distinct GCP network profiles and verify that `DISABLED` has no public egress while both modes block metadata, Cloud SQL, private control ranges, cross-tenant traffic, and unsolicited ingress. Never silently place a `DISABLED` request onto an internet-enabled profile.
+The API defaults `network.internetAccess` to `DISABLED`, and step 2's node-egress lockdown is the current enforcement for that default. Internet-enabled requests must schedule only onto the matching `*-internet` node pool. The current application no longer creates per-sandbox NetworkPolicy resources and its KSA has no NetworkPolicy RBAC. Before advertising either mode, verify that `DISABLED` has no public egress while both modes block metadata, private control ranges, cross-tenant traffic, and unsolicited ingress. Never silently place a `DISABLED` request onto an internet-enabled profile.
 
 
 ### 4. Bootstrap Cloud SQL
@@ -1018,7 +1078,7 @@ Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes
 - Do not give the API ServiceAccount Pod RBAC.
 - Do not give sandbox Pods Workload Identity or a usable metadata identity.
 - Do not enable public IPs on the GPU pool.
-- Do not put an internet-enabled sandbox pool on the `ignition-node` tag; that tag's egress is default-deny and Google-only. Internet-enabled pods need their own pool, tag, and network profile (next slice).
+- Do not put an internet-enabled sandbox pool on the `ignition-node` tag or restricted subnet; that tag's egress is default-deny and Google-only. Internet-enabled pods need their own node pool, subnet, tag, and NAT-scoped network profile.
 - Do not share a GPU node across two customer sandboxes (no time-sharing, MPS, or MIG).
 - Do not use Autopilot; this pool shape is **GKE Standard**.
 - Do not implement `network.internetAccess` by translating client input into arbitrary Kubernetes NetworkPolicy rules.
@@ -1028,7 +1088,7 @@ Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes
 
 ## Next slices (out of scope here)
 
-Project, image, and event APIs; digest-pinned images; GCP network profiles for internet-disabled and internet-enabled sandboxes; `ignition-gateway` image; custom Compute Engine workers if GKE cannot meet the SLO. Designs: [Client API](../design/ignition-design-client-api-identity.md), [Data plane](../design/ignition-design-data-plane-networking.md).
+Project, image, and event APIs; digest-pinned images; `ignition-gateway` image; custom Compute Engine workers if GKE cannot meet the SLO. Designs: [Client API](../design/ignition-design-client-api-identity.md), [Data plane](../design/ignition-design-data-plane-networking.md).
 
 | Item | Value |
 |---|---|
@@ -1037,9 +1097,9 @@ Project, image, and event APIs; digest-pinned images; GCP network profiles for i
 | Machine (CPU sandbox) | `e2-standard-8` (any available gVisor-capable type) |
 | RuntimeClass | `gvisor` |
 | Taint (GPU / CPU) | `ignition.io/gpu-sandbox=true:NoSchedule` / `ignition.io/sandbox=true:NoSchedule` |
-| Label (GPU / CPU) | `ignition.io/node-pool=gpu-sandbox-l4` / `ignition.io/node-pool=cpu-sandbox` |
+| Label (GPU / CPU) | `ignition.io/node-pool=gpu-sandbox-l4` / `ignition.io/node-pool=cpu-sandbox`; internet-enabled pools append `-internet` |
 | Namespaces | `ignition-system`, `ignition-sandboxes` |
 | Datapath | Dataplane V2 (`ADVANCED_DATAPATH`) for cluster-owned defense in depth |
-| Node egress | default-deny (tag `ignition-node`); allow only in-VPC, control plane, PGA VIP `199.36.153.8/30`, Cloud SQL `:3307` |
+| Node egress | restricted tag `ignition-node`: default-deny except cluster, control plane, PGA VIP `199.36.153.8/30`, Cloud SQL `:3307`; internet tag `ignition-sandbox-internet`: deny private/link-local, allow public via NAT |
 | Overlay | `deploy/k8s/overlays/dev` |
 | Warm SLO | p95 API-to-`READY` ≤ 9s (pre-warmed nodes only) |

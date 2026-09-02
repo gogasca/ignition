@@ -27,6 +27,12 @@ variable "subnet_name" {
   default = "ignition-subnet"
 }
 
+variable "internet_subnet_name" {
+  type        = string
+  default     = "ignition-internet-subnet"
+  description = "Subnet for internet-enabled sandbox node pools in the same GKE cluster."
+}
+
 variable "operator_cidr" {
   type        = string
   description = "CIDR allowed to reach the GKE control plane."
@@ -50,6 +56,18 @@ variable "pods_ipv4_cidr" {
 variable "services_ipv4_cidr" {
   type    = string
   default = "10.30.0.0/20"
+}
+
+variable "internet_nodes_ipv4_cidr" {
+  type        = string
+  default     = "10.40.0.0/20"
+  description = "Primary node range for internet-enabled sandbox pools."
+}
+
+variable "internet_pods_ipv4_cidr" {
+  type        = string
+  default     = "10.50.0.0/16"
+  description = "Secondary Pod range for internet-enabled sandbox pools."
 }
 
 variable "sql_instance_name" {

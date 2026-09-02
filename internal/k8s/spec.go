@@ -51,7 +51,7 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 	}
 	// The caller (reconcile) fails closed when no profile exists; default to
 	// the L4 profile only so a mis-sequenced call still produces a valid Pod.
-	profile, ok := ProfileFor(accel)
+	profile, ok := ProfileForNetwork(accel, sb.Network.InternetAccess == store.InternetAccessEnabled)
 	if !ok {
 		profile = profiles[store.AcceleratorNVIDIAL4]
 	}

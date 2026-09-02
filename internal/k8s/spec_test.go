@@ -128,6 +128,13 @@ func TestSandboxPodNetworkProfile(t *testing.T) {
 	if got := k8s.SandboxPod(sb, "img@sha256:abc").Labels[k8s.LabelNetworkAccess]; got != k8s.NetworkAccessEnabled {
 		t.Fatalf("enabled network label = %q", got)
 	}
+	if got := k8s.SandboxPod(sb, "img@sha256:abc").Spec.NodeSelector[k8s.NodePoolLabel]; got != k8s.GPUInternetNodePoolValue {
+		t.Fatalf("enabled GPU node pool = %q", got)
+	}
+	sb.Resources.Accelerator.Type = store.AcceleratorNone
+	if got := k8s.SandboxPod(sb, "img@sha256:abc").Spec.NodeSelector[k8s.NodePoolLabel]; got != k8s.CPUInternetNodePoolValue {
+		t.Fatalf("enabled CPU node pool = %q", got)
+	}
 }
 
 func TestFakeCreateIdempotent(t *testing.T) {

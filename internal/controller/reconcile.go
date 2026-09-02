@@ -197,7 +197,7 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 		if ref == "" {
 			return c.fail(ctx, sb, "IMAGE_UNAVAILABLE")
 		}
-		if _, ok := k8s.ProfileFor(sb.Resources.Accelerator.Type); !ok {
+		if _, ok := k8s.ProfileForNetwork(sb.Resources.Accelerator.Type, sb.Network.InternetAccess == store.InternetAccessEnabled); !ok {
 			return c.fail(ctx, sb, "WORKLOAD_NOT_SUPPORTED")
 		}
 		secretEnv, err := c.resolveSecrets(ctx, sb)
