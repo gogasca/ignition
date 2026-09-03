@@ -3,23 +3,65 @@ package store_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"os"
+	"reflect"
 	"testing"
 	"time"
+
+	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"ignition.dev/ignition/internal/auth"
 	"ignition.dev/ignition/internal/store"
 )
 
-func postgresOrSkip(t *testing.T) *store.Postgres {
-	t.Helper()
-	dsn := os.Getenv("IGNITION_TEST_DATABASE_URL")
-	if dsn == "" {
-		t.Skip("set IGNITION_TEST_DATABASE_URL to run Cloud SQL/Postgres store tests")
+var postgresTestDSN string
+
+func TestMain(m *testing.M) {
+	if dsn := os.Getenv("IGNITION_TEST_DATABASE_URL"); dsn != "" {
+		postgresTestDSN = dsn
+		os.Exit(m.Run())
 	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+	container, err := tcpostgres.Run(ctx, "postgres:16-alpine",
+		tcpostgres.WithDatabase("ignition_test"),
+		tcpostgres.WithUsername("ignition"),
+		tcpostgres.WithPassword("ignition"),
+		tcpostgres.BasicWaitStrategies(),
+	)
+	if err != nil {
+		cancel()
+		fmt.Fprintf(os.Stderr, "start PostgreSQL test container: %v\n", err)
+		os.Exit(1)
+	}
+
+	postgresTestDSN, err = container.ConnectionString(ctx, "sslmode=disable")
+	if err != nil {
+		_ = container.Terminate(ctx)
+		cancel()
+		fmt.Fprintf(os.Stderr, "get PostgreSQL test DSN: %v\n", err)
+		os.Exit(1)
+	}
+	cancel()
+
+	code := m.Run()
+	stopCtx, stopCancel := context.WithTimeout(context.Background(), 30*time.Second)
+	if err := container.Terminate(stopCtx); err != nil {
+		fmt.Fprintf(os.Stderr, "stop PostgreSQL test container: %v\n", err)
+		if code == 0 {
+			code = 1
+		}
+	}
+	stopCancel()
+	os.Exit(code)
+}
+
+func postgresForTest(t *testing.T) *store.Postgres {
+	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	t.Cleanup(cancel)
-	p, err := store.OpenPostgres(ctx, dsn)
+	p, err := store.OpenPostgres(ctx, postgresTestDSN)
 	if err != nil {
 		t.Fatalf("open postgres: %v", err)
 	}
@@ -29,7 +71,7 @@ func postgresOrSkip(t *testing.T) *store.Postgres {
 
 func TestPostgresCreateSandboxIdempotency(t *testing.T) {
 	ctx := context.Background()
-	p := postgresOrSkip(t)
+	p := postgresForTest(t)
 	project := "prj_pg_" + t.Name()
 	p.SeedImage(project, "img")
 	in := store.CreateSandboxInput{
@@ -64,7 +106,7 @@ func TestPostgresCreateSandboxIdempotency(t *testing.T) {
 
 func TestPostgresQuotaAndLease(t *testing.T) {
 	ctx := context.Background()
-	p := postgresOrSkip(t)
+	p := postgresForTest(t)
 	project := "prj_pg_" + t.Name()
 	p.SeedImage(project, "img")
 	res, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
@@ -110,15 +152,55 @@ func TestPostgresQuotaAndLease(t *testing.T) {
 	}
 }
 
-func TestPostgresRoleLookup(t *testing.T) {
-	p := postgresOrSkip(t)
+func TestPostgresResolveRole(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
 	project := "prj_pg_" + t.Name()
-	p.SeedRole(project, "alice", auth.RoleOwner)
-	role, ok, err := p.Role(context.Background(), project, "alice")
-	if err != nil || !ok || role != auth.RoleOwner {
-		t.Fatalf("role=%s ok=%v err=%v", role, ok, err)
+	p.SeedRole(project, "alice@corp.example", auth.RoleOwner)
+	p.SeedRole(project, store.DomainSubject("corp.example"), auth.RoleViewer)
+
+	if role, ok, err := p.ResolveRole(ctx, project, "alice@corp.example", "corp.example"); err != nil || !ok || role != auth.RoleOwner {
+		t.Fatalf("exact: role=%s ok=%v err=%v", role, ok, err)
 	}
-	if _, ok, err := p.Role(context.Background(), project, "bob"); err != nil || ok {
-		t.Fatalf("missing binding ok=%v err=%v", ok, err)
+	if role, ok, err := p.ResolveRole(ctx, project, "bob@corp.example", "corp.example"); err != nil || !ok || role != auth.RoleViewer {
+		t.Fatalf("domain fallback: role=%s ok=%v err=%v", role, ok, err)
+	}
+	if _, ok, err := p.ResolveRole(ctx, project, "carol@other.example", "other.example"); err != nil || ok {
+		t.Fatalf("foreign domain ok=%v err=%v", ok, err)
+	}
+}
+
+func TestPostgresRoleBindingAdmin(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+
+	if err := p.PutRoleBinding(ctx, project, "alice@corp.example", auth.RoleDeveloper); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PutRoleBinding(ctx, project, "alice@corp.example", auth.RoleOperator); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PutRoleBinding(ctx, project, "svc@prj.iam.gserviceaccount.com", auth.RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+
+	list, err := p.ListRoleBindings(ctx, project)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := []store.RoleBinding{
+		{Subject: "alice@corp.example", Role: auth.RoleOperator},
+		{Subject: "svc@prj.iam.gserviceaccount.com", Role: auth.RoleOwner},
+	}
+	if !reflect.DeepEqual(list, want) {
+		t.Fatalf("list = %+v, want %+v", list, want)
+	}
+
+	if existed, err := p.DeleteRoleBinding(ctx, project, "alice@corp.example"); err != nil || !existed {
+		t.Fatalf("delete existed=%v err=%v", existed, err)
+	}
+	if existed, err := p.DeleteRoleBinding(ctx, project, "missing@corp.example"); err != nil || existed {
+		t.Fatalf("delete missing existed=%v err=%v", existed, err)
 	}
 }

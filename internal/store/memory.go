@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"sort"
+	"strings"
 	"sync"
 	"time"
 
@@ -85,11 +86,50 @@ func (m *Memory) SetSandboxState(projectID, sandboxID, state string) {
 	m.sandboxes[sandboxID] = sb
 }
 
-func (m *Memory) Role(_ context.Context, projectID, subject string) (string, bool, error) {
+func (m *Memory) ResolveRole(_ context.Context, projectID, subject, domain string) (string, bool, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	role, ok := m.roles[bindKey(projectID, subject)]
-	return role, ok, nil
+	if role, ok := m.roles[bindKey(projectID, subject)]; ok {
+		return role, true, nil
+	}
+	if domain != "" {
+		if role, ok := m.roles[bindKey(projectID, DomainSubject(domain))]; ok {
+			return role, true, nil
+		}
+	}
+	return "", false, nil
+}
+
+func (m *Memory) PutRoleBinding(_ context.Context, projectID, subject, role string) error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.roles[bindKey(projectID, subject)] = role
+	return nil
+}
+
+func (m *Memory) DeleteRoleBinding(_ context.Context, projectID, subject string) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := bindKey(projectID, subject)
+	if _, ok := m.roles[key]; !ok {
+		return false, nil
+	}
+	delete(m.roles, key)
+	return true, nil
+}
+
+func (m *Memory) ListRoleBindings(_ context.Context, projectID string) ([]RoleBinding, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	prefix := projectID + "\x1f"
+	var out []RoleBinding
+	for key, role := range m.roles {
+		if strings.HasPrefix(key, prefix) {
+			out = append(out, RoleBinding{Subject: strings.TrimPrefix(key, prefix), Role: role})
+		}
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Subject < out[j].Subject })
+	return out, nil
 }
 
 func (m *Memory) Ping(_ context.Context) error { return nil }

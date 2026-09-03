@@ -1,0 +1,19 @@
+# Puts Cloud IAP in front of ignition-api and turns on IAP-assertion
+# verification inside the API. Include from a staging/prod overlay that already
+# terminates HTTPS (ManagedCertificate + static IP):
+#
+#   components:
+#     - ../../components/iap
+#
+# IAP uses Google-managed OAuth, so there is no OAuth client secret to create.
+# Grant users access with the Terraform iap_enabled / iap_members variables
+# (roles/iap.httpsResourceAccessor).
+#
+# BEFORE APPLYING: set IGNITION_IAP_AUDIENCE in enable-iap-config.yaml. An empty
+# value makes ignition-api fail to start, by design - a failed rollout beats a
+# window where IAP is on but the API cannot verify the assertion.
+apiVersion: kustomize.config.k8s.io/v1alpha1
+kind: Component
+patches:
+  - path: enable-iap.yaml
+  - path: enable-iap-config.yaml

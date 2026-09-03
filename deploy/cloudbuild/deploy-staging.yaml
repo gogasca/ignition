@@ -2,9 +2,9 @@
 # via Google Cloud Deploy. Run daily at noon by the ignition-deploy-staging
 # trigger + Cloud Scheduler (see deploy/PIPELINE.md).
 #
-# This never builds. It resolves :nightly to an immutable digest and pins a
-# Cloud Deploy release to it; Cloud Deploy renders deploy/k8s/overlays/staging,
-# deploys, and runs the skaffold `verify` smoke test.
+# This never builds images. It gates on the test suite, then resolves :nightly to
+# an immutable digest and pins a Cloud Deploy release to it; Cloud Deploy renders
+# deploy/k8s/overlays/staging, deploys, and runs the skaffold verify (CUJ probes).
 
 substitutions:
   _REGION: us-central1
@@ -18,8 +18,26 @@ options:
 timeout: 3600s
 
 steps:
+  # Test gate. Runs on main HEAD; the :nightly image deployed below is from the
+  # nightly build's SHA (already test-gated there), so this is a second check on
+  # the current tip before anything reaches staging.
+  - name: golang:1.26.7-bookworm
+    id: gate-tests
+    entrypoint: bash
+    volumes:
+      - name: go-mod
+        path: /go/pkg/mod
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        go vet ./...
+        go test ./... -count=1
+
   - name: gcr.io/google.com/cloudsdktool/cloud-sdk
     id: release
+    waitFor: [gate-tests]
     entrypoint: bash
     args:
       - -euo

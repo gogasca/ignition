@@ -1,6 +1,7 @@
 package api
 
 import (
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -221,23 +222,59 @@ func (s *Server) watchSandbox(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(w, r, project, auth.PermSandboxGet, false) {
 		return
 	}
-	sb, err := s.store.GetSandbox(r.Context(), project, r.PathValue("sandbox"))
-	if err != nil {
-		writeStoreError(w, s.requestID(r.Context()), err)
-		return
-	}
-	writeSSE(w, r, sb)
+	sandboxID := r.PathValue("sandbox")
+	writeSSE(w, r, s.requestID(r.Context()), func() (any, error) {
+		return s.store.GetSandbox(r.Context(), project, sandboxID)
+	}, func(v any) bool {
+		sb := v.(store.Sandbox)
+		return sb.State == "FINISHED" || sb.State == "FAILED"
+	})
 }
 
-func writeSSE(w http.ResponseWriter, r *http.Request, v any) {
+// writeSSE emits a new snapshot whenever fetch observes a different resource.
+// Event IDs are content-derived and therefore stable across API replicas and
+// reconnects. A matching Last-Event-ID suppresses replay of the same snapshot.
+func writeSSE(w http.ResponseWriter, r *http.Request, requestID string, fetch func() (any, error), terminal func(any) bool) {
+	v, err := fetch()
+	if err != nil {
+		writeStoreError(w, requestID, err)
+		return
+	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
-	data, _ := json.Marshal(v)
+	w.Header().Set("X-Accel-Buffering", "no")
+	w.WriteHeader(http.StatusOK)
 	write := func(s string) { _, _ = w.Write([]byte(s)) }
-	write("id: 1\nevent: snapshot\ndata: " + string(data) + "\n\n")
-	if f, ok := w.(http.Flusher); ok {
-		f.Flush()
+	flush := func() {
+		if f, ok := w.(http.Flusher); ok {
+			f.Flush()
+		}
 	}
+	lastID := strings.TrimSpace(r.Header.Get("Last-Event-ID"))
+	emit := func(snapshot any) (string, error) {
+		data, err := json.Marshal(snapshot)
+		if err != nil {
+			return "", err
+		}
+		sum := sha256.Sum256(data)
+		id := fmt.Sprintf("%x", sum[:])
+		if id != lastID {
+			write("id: " + id + "\nevent: snapshot\ndata: " + string(data) + "\n\n")
+			flush()
+		}
+		return id, nil
+	}
+	lastID, err = emit(v)
+	if err != nil || terminal(v) {
+		return
+	}
+	// Ensure a resumed stream is established even when its current snapshot was
+	// already received and therefore suppressed.
+	write(": connected\n\n")
+	flush()
+
+	poll := time.NewTicker(time.Second)
+	defer poll.Stop()
 	ticker := time.NewTicker(15 * time.Second)
 	defer ticker.Stop()
 	deadline := time.NewTimer(60 * time.Second)
@@ -248,11 +285,22 @@ func writeSSE(w http.ResponseWriter, r *http.Request, v any) {
 			return
 		case <-deadline.C:
 			return
+		case <-poll.C:
+			v, err := fetch()
+			if err != nil {
+				return
+			}
+			id, err := emit(v)
+			if err != nil {
+				return
+			}
+			lastID = id
+			if terminal(v) {
+				return
+			}
 		case <-ticker.C:
 			write(": heartbeat\n\n")
-			if f, ok := w.(http.Flusher); ok {
-				f.Flush()
-			}
+			flush()
 		}
 	}
 }

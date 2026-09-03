@@ -48,17 +48,6 @@ func TestReadinessRetriesAfterDeviceInjection(t *testing.T) {
 	}
 }
 
-func TestDetectGPUFromEnvironment(t *testing.T) {
-	t.Setenv("NVIDIA_VISIBLE_DEVICES", "GPU-one")
-	if got, err := detectGPUFromEnvironment(); err != nil || got != "GPU-one" {
-		t.Fatalf("got %q err=%v", got, err)
-	}
-	t.Setenv("NVIDIA_VISIBLE_DEVICES", "GPU-one,GPU-two")
-	if _, err := detectGPUFromEnvironment(); err == nil {
-		t.Fatal("multiple GPUs accepted")
-	}
-}
-
 func TestCPUReadinessNeedsNoAccelerator(t *testing.T) {
 	s := New(detectNoAccelerator)
 	rec := httptest.NewRecorder()

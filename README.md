@@ -11,7 +11,7 @@ cmd/                  service and CLI entrypoints
 internal/             private packages (not importable by SDKs)
 api/proto/            public sandbox API (.proto)
 api/openapi/          HTTP/JSON stub (kept in sync with protos)
-db/migrations/        Cloud SQL schema
+internal/store/schema.sql  complete Cloud SQL schema (embedded by the API)
 deploy/               GKE manifests and Terraform
 images/sandbox-init/  container image for the in-sandbox supervisor
 sdks/                 Python and TypeScript clients
@@ -41,3 +41,31 @@ make images IMAGE_REGISTRY=us-central1-docker.pkg.dev/PROJECT/ignition IMAGE_TAG
 ```
 
 `make images` builds only `ignition-api` and `ignition-controller`. The complete GCP prerequisites, sandbox image build, project-specific overlay rendering, deployment, API verification, and teardown commands are in the [implementation guide](docs/guides/ignition-implementation.md).
+
+## Testing
+
+Tests are split into three layers:
+
+- Package unit tests cover domain logic and the in-memory store.
+- `internal/store` tests execute the embedded schema and store queries against real PostgreSQL 16.
+- `tests/integration` exercises API and controller workflows with the in-memory store and Kubernetes fake.
+
+Run the complete suite with `make test`. The `internal/store` package uses Testcontainers to start
+`postgres:16-alpine`, applies `internal/store/schema.sql`, runs the tests, and removes the container.
+Docker must therefore be available when the store package is tested; inability to start PostgreSQL
+is a test failure rather than a skipped test.
+
+```bash
+# Complete suite, including real PostgreSQL store tests.
+make test GO=.tools/go/bin/go
+
+# SQL and store behavior only.
+.tools/go/bin/go test ./internal/store -count=1
+
+# API/controller integration workflows only.
+.tools/go/bin/go test ./tests/integration/... -count=1
+```
+
+CI or developers may provide an existing disposable PostgreSQL database instead of Docker by setting
+`IGNITION_TEST_DATABASE_URL`. Tests create uniquely named project records, but the supplied database
+must be dedicated to testing because the schema and test rows are not production-safe inputs.

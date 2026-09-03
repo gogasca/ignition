@@ -202,6 +202,66 @@ func (c *Cluster) SetScaleDownDisabled(nodeName string, disabled bool) error {
 	return err
 }
 
+// GPUCleanupAmbiguous reports whether nodeName carries
+// ignition.io/gpu-cleanup=ambiguous. A missing node is not an error: the warm
+// pool may have already been recreated.
+func (c *Cluster) GPUCleanupAmbiguous(nodeName string) (bool, error) {
+	ctx, cancel := c.ctx()
+	defer cancel()
+	node, err := c.client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return node.Annotations[AnnotGPUCleanup] == GPUCleanupAmbiguous, nil
+}
+
+// ListPodsOnNode returns sandbox Pods scheduled on nodeName. ignition-gpu-agent
+// uses it to map its node's single GPU onto the one sandbox Pod that may run
+// there.
+func (c *Cluster) ListPodsOnNode(nodeName string) ([]Pod, error) {
+	ctx, cancel := c.ctx()
+	defer cancel()
+	list, err := c.client.CoreV1().Pods(c.ns).List(ctx, metav1.ListOptions{
+		FieldSelector: "spec.nodeName=" + nodeName,
+		LabelSelector: LabelWorkload + "=" + WorkloadSandbox,
+	})
+	if err != nil {
+		return nil, err
+	}
+	out := make([]Pod, 0, len(list.Items))
+	for i := range list.Items {
+		out = append(out, *fromCorev1(&list.Items[i]))
+	}
+	return out, nil
+}
+
+// MarkNodeGPUCleanup sets or clears ignition.io/gpu-cleanup=ambiguous on
+// nodeName after ignition-gpu-agent's reuse check.
+func (c *Cluster) MarkNodeGPUCleanup(nodeName string, ambiguous bool) error {
+	var val any = GPUCleanupAmbiguous
+	if !ambiguous {
+		val = nil
+	}
+	body, err := json.Marshal(map[string]any{
+		"metadata": map[string]any{
+			"annotations": map[string]any{AnnotGPUCleanup: val},
+		},
+	})
+	if err != nil {
+		return err
+	}
+	ctx, cancel := c.ctx()
+	defer cancel()
+	_, err = c.client.CoreV1().Nodes().Patch(ctx, nodeName, types.MergePatchType, body, metav1.PatchOptions{})
+	if apierrors.IsNotFound(err) {
+		return ErrNotFound
+	}
+	return err
+}
+
 func (c *Cluster) ListGPUPool() ([]string, error) {
 	ctx, cancel := c.ctx()
 	defer cancel()

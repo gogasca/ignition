@@ -198,3 +198,74 @@ func TestLoadDefaultRuntimeAcceleratorMustBeAllowed(t *testing.T) {
 		t.Fatalf("err = %v", err)
 	}
 }
+
+func TestLoadGoogleIssuerDefaults(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_OIDC_ISSUER", config.GoogleOIDCIssuer)
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.OIDCSubjectClaim != "email" {
+		t.Errorf("subject claim = %q, want email", cfg.OIDCSubjectClaim)
+	}
+	if len(cfg.OIDCAllowedTypes) != 1 || cfg.OIDCAllowedTypes[0] != "JWT" {
+		t.Errorf("allowed types = %v, want [JWT]", cfg.OIDCAllowedTypes)
+	}
+}
+
+func TestLoadSubjectClaimOverride(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_OIDC_ISSUER", config.GoogleOIDCIssuer)
+	t.Setenv("IGNITION_OIDC_SUBJECT_CLAIM", "sub")
+	cfg, err := config.Load()
+	if err != nil || cfg.OIDCSubjectClaim != "sub" {
+		t.Fatalf("claim = %q err = %v", cfg.OIDCSubjectClaim, err)
+	}
+}
+
+func TestLoadRejectsBadSubjectClaim(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_OIDC_SUBJECT_CLAIM", "name")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "IGNITION_OIDC_SUBJECT_CLAIM") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadIAPRequiresAudience(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_IAP_ENABLED", "true")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "IGNITION_IAP_AUDIENCE") {
+		t.Fatalf("err = %v", err)
+	}
+	t.Setenv("IGNITION_IAP_AUDIENCE", "/projects/1/global/backendServices/2")
+	cfg, err := config.Load()
+	if err != nil || !cfg.IAPEnabled || cfg.IAPIssuer == "" || cfg.IAPJWKSURL == "" {
+		t.Fatalf("cfg = %+v err = %v", cfg, err)
+	}
+}
+
+func TestLoadBootstrapPairing(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_BOOTSTRAP_ADMIN", "root@corp.example")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "BOOTSTRAP") {
+		t.Fatalf("err = %v", err)
+	}
+	t.Setenv("IGNITION_BOOTSTRAP_PROJECT", "prj_dev")
+	cfg, err := config.Load()
+	if err != nil || cfg.BootstrapAdmin != "root@corp.example" || cfg.BootstrapProject != "prj_dev" {
+		t.Fatalf("cfg = %+v err = %v", cfg, err)
+	}
+}
+
+func TestLoadAudiencesCSV(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_OIDC_AUDIENCES", "https://a.example, https://b.example")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.OIDCAudiences) != 2 || cfg.OIDCAudiences[0] != "https://a.example" || cfg.OIDCAudiences[1] != "https://b.example" {
+		t.Fatalf("audiences = %v", cfg.OIDCAudiences)
+	}
+}

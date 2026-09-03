@@ -25,11 +25,8 @@ func rank(state string) int {
 	}
 }
 
-func observe(p *k8s.Pod) string {
-	// PodReady is backed by sandbox-init /readyz, which verifies a single
-	// explicit GPU assignment. Legacy annotations remain accepted while old
-	// Pods roll out, but sandbox-init never receives Kubernetes credentials.
-	if p.Ready || (p.Annotations[k8s.AnnotInitHealthy] == "true" && p.Annotations[k8s.AnnotGPUUUID] != "") {
+func observe(p *k8s.Pod, gpu bool) string {
+	if podReady(p, gpu) {
 		return "READY"
 	}
 	if p.Running {
@@ -41,6 +38,23 @@ func observe(p *k8s.Pod) string {
 	return "CREATING"
 }
 
+// podReady reports whether a sandbox Pod may become public READY.
+//
+// CPU sandboxes: kubelet PodReady (backed by sandbox-init /readyz) is the whole
+// signal. GPU sandboxes additionally require ignition-gpu-agent's attestation —
+// a canonical GPU UUID plus init-healthy=true — because sandbox-init's local
+// probe cannot prove GPU identity or that the card carries no residual
+// processes from a prior tenant. The sandbox Pod holds no Kubernetes credential,
+// so only the agent can write these annotations.
+func podReady(p *k8s.Pod, gpu bool) bool {
+	if !gpu {
+		return p.Ready
+	}
+	return p.Ready &&
+		p.Annotations[k8s.AnnotInitHealthy] == "true" &&
+		k8s.IsCanonicalGPUUUID(p.Annotations[k8s.AnnotGPUUUID])
+}
+
 func imagePullFailed(p *k8s.Pod) bool {
 	switch p.Reason {
 	case "ErrImagePull", "ImagePullBackOff", "InvalidImageName":
@@ -50,6 +64,28 @@ func imagePullFailed(p *k8s.Pod) bool {
 	}
 }
 
+// cordonIfGPUDirty cordons the Pod's node (GKE then recreates it) when the GPU
+// cannot be proven clean for the next tenant. The signal is either a stale Pod
+// annotation or, authoritatively, the ignition.io/gpu-cleanup=ambiguous
+// annotation ignition-gpu-agent writes on the Node after a failed reuse check.
+func (c *Controller) cordonIfGPUDirty(pod *k8s.Pod) error {
+	if c.nodes == nil || pod == nil || pod.NodeName == "" {
+		return nil
+	}
+	dirty := pod.Annotations[k8s.AnnotGPUCleanup] == k8s.GPUCleanupAmbiguous
+	if !dirty {
+		ambiguous, err := c.nodes.GPUCleanupAmbiguous(pod.NodeName)
+		if err != nil {
+			return err
+		}
+		dirty = ambiguous
+	}
+	if !dirty {
+		return nil
+	}
+	return c.nodes.CordonAndDelete(pod.NodeName)
+}
+
 func (c *Controller) fail(ctx context.Context, sb store.Sandbox, reason string) error {
 	return c.store.UpdateObserved(ctx, store.ObservedUpdate{
 		ProjectID: sb.ProjectID,
@@ -57,6 +93,16 @@ func (c *Controller) fail(ctx context.Context, sb store.Sandbox, reason string) 
 		State:     "FAILED",
 		Reason:    reason,
 	})
+}
+
+// failSandbox first makes every child process terminal. If that write fails,
+// leave the sandbox nonterminal so the next reconcile pass retries the whole
+// transition instead of orphaning active processes under a terminal sandbox.
+func (c *Controller) failSandbox(ctx context.Context, sb store.Sandbox, reason string) error {
+	if err := c.failProcesses(ctx, sb); err != nil {
+		return err
+	}
+	return c.fail(ctx, sb, reason)
 }
 
 func (c *Controller) observeWrite(ctx context.Context, sb store.Sandbox, state, reason string) error {
@@ -101,6 +147,7 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 	}
 
 	now := c.opts.Now().UTC()
+	gpu := k8s.IsGPUProfile(sb.Resources.Accelerator.Type)
 	startup := time.Duration(sb.Timeouts.StartupSeconds) * time.Second
 	if startup <= 0 {
 		startup = 120 * time.Second
@@ -109,11 +156,15 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 
 	switch sb.State {
 	case "FINISHED", "FAILED":
+		// A previous controller version could make the sandbox terminal after a
+		// transient process update failure. Keep repairing those rows until all
+		// child processes are terminal.
+		if err := c.failProcesses(ctx, sb); err != nil {
+			return err
+		}
 		if !missing {
-			if pod.Annotations[k8s.AnnotGPUCleanup] == "ambiguous" && c.nodes != nil && pod.NodeName != "" {
-				if err := c.nodes.CordonAndDelete(pod.NodeName); err != nil {
-					return err
-				}
+			if err := c.cordonIfGPUDirty(pod); err != nil {
+				return err
 			}
 			return c.pods.Delete(name)
 		}
@@ -121,10 +172,8 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 
 	case "TERMINATING":
 		if !missing {
-			if pod.Annotations[k8s.AnnotGPUCleanup] == "ambiguous" && c.nodes != nil && pod.NodeName != "" {
-				if err := c.nodes.CordonAndDelete(pod.NodeName); err != nil {
-					return err
-				}
+			if err := c.cordonIfGPUDirty(pod); err != nil {
+				return err
 			}
 			return c.pods.Delete(name)
 		}
@@ -139,8 +188,7 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 	// CREATING / SCHEDULED / STARTED / READY
 	if missing {
 		if sb.State == "READY" || sb.State == "STARTED" || sb.State == "SCHEDULED" {
-			_ = c.failProcesses(ctx, sb)
-			return c.fail(ctx, sb, "WORKER_LOST")
+			return c.failSandbox(ctx, sb, "WORKER_LOST")
 		}
 		if !now.Before(deadline) {
 			return c.fail(ctx, sb, "CAPACITY_UNAVAILABLE")
@@ -149,7 +197,7 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 		if ref == "" {
 			return c.fail(ctx, sb, "IMAGE_UNAVAILABLE")
 		}
-		if _, ok := k8s.ProfileFor(sb.Resources.Accelerator.Type); !ok {
+		if _, ok := k8s.ProfileForNetwork(sb.Resources.Accelerator.Type, sb.Network.InternetAccess == store.InternetAccessEnabled); !ok {
 			return c.fail(ctx, sb, "WORKLOAD_NOT_SUPPORTED")
 		}
 		secretEnv, err := c.resolveSecrets(ctx, sb)
@@ -166,26 +214,26 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 	}
 
 	if imagePullFailed(pod) {
-		_ = c.failProcesses(ctx, sb)
-		return c.fail(ctx, sb, "IMAGE_UNAVAILABLE")
+		return c.failSandbox(ctx, sb, "IMAGE_UNAVAILABLE")
 	}
 
 	if pod.Phase == "Failed" {
-		_ = c.failProcesses(ctx, sb)
-		return c.fail(ctx, sb, "WORKER_LOST")
+		return c.failSandbox(ctx, sb, "WORKER_LOST")
 	}
 
-	if !now.Before(deadline) && observe(pod) != "READY" {
+	if !now.Before(deadline) && observe(pod, gpu) != "READY" {
 		reason := "STARTUP_TIMEOUT"
 		if !pod.Scheduled {
 			reason = "CAPACITY_UNAVAILABLE"
 		}
-		_ = c.failProcesses(ctx, sb)
+		if err := c.failProcesses(ctx, sb); err != nil {
+			return err
+		}
 		_ = c.pods.Delete(name)
 		return c.fail(ctx, sb, reason)
 	}
 
-	next := observe(pod)
+	next := observe(pod, gpu)
 	reason := next
 	if next == "READY" {
 		reason = "READY"

@@ -1,0 +1,17 @@
+# Requires GKE Managed Prometheus. Add to kustomization.yaml resources when that
+# is enabled on the cluster.
+apiVersion: monitoring.googleapis.com/v1
+kind: PodMonitoring
+metadata:
+  name: ignition-gpu-agent
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-gpu-agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ignition-gpu-agent
+  endpoints:
+    - port: metrics
+      interval: 30s

@@ -169,7 +169,7 @@ State mapping from Kubernetes observations:
 | `CREATING` | admission committed; Pod not yet scheduled |
 | `SCHEDULED` | Pod bound to a node (`PodScheduled=True`) |
 | `STARTED` | container running; readiness verification incomplete |
-| `READY` | init supervisor healthy, exactly the assigned GPU visible, exec attach accepted |
+| `READY` | kubelet `PodReady` **and** (GPU only) `ignition-gpu-agent` has stamped a canonical `ignition.io/gpu-uuid` + `ignition.io/init-healthy=true` on the Pod after verifying GPU health and no residual processes |
 | `FAILED` | terminal Pod failure, startup deadline exceeded, or image error |
 | `TERMINATING`/`FINISHED` | terminate requested / Pod deleted and cleanup verified |
 
@@ -246,12 +246,13 @@ spec:
 - **VM boundary.** A gVisor or driver compromise is contained to one GCE node hosting one customer sandbox — the configuration Google recommends for untrusted GPU workloads.
 - **No cluster credentials.** `automountServiceAccountToken: false`; the sandbox namespace's default service account has no RBAC grants.
 - **Metadata blocked.** The GCP network profile must block `169.254.169.254`, private control-plane ranges, Cloud SQL, and cross-tenant traffic regardless of internet access. `ENABLED` permits outbound public internet traffic only; it does not create inbound exposure. Any cluster-owned NetworkPolicy is defense in depth and is not generated from client input.
-- **Server-owned images and init.** This slice concatenates Artifact Registry `…/sandboxes/{imageId}` after a charset check; digest pin remains the v1 target. The entrypoint is Ignition's init supervisor, which brokers exec and signals for the gateway.
+- **Server-owned images and init.** This slice concatenates Artifact Registry `…/sandboxes/{imageId}` after a charset check; digest pin remains the v1 target. The entrypoint is Ignition's init supervisor, which brokers exec and signals for the gateway. Its GPU readiness probe stats the device nodes, runs `nvidia-smi` for a canonical UUID and ECC health, and runs a `cuInit()` helper — it never reads `NVIDIA_VISIBLE_DEVICES` or a device-node name.
+- **Trusted GPU attestation.** `ignition-gpu-agent`, a privileged DaemonSet on the `gpu-sandbox-l4` pool (one Pod per node, no `nvidia.com/gpu` request), is the authority on GPU identity and health. Because each node has exactly one GPU and one sandbox, it maps that GPU onto the sandbox Pod, verifies (NVML via `nvidia-smi`) that the GPU is healthy and carries no residual compute processes, and patches `ignition.io/gpu-uuid` + `ignition.io/init-healthy` onto the Pod. The controller requires that before `READY`.
 - **Read-only root.** The sandbox container has `readOnlyRootFilesystem: true`; `/scratch` is a writable emptyDir.
 - **Secrets scoped per sandbox.** The controller resolves Secret Manager references at Pod creation and injects them as environment values in the Pod spec (not as cluster-visible Secret objects readable by other principals); nothing grants the sandbox a Google identity. Secret injection is not implemented in this slice.
-- **Node reuse policy.** After a sandbox terminates cleanly, the node returns to the warm pool. If cleanup is ambiguous (GPU health check fails, `nvidia-smi` shows residual processes, or Pod teardown times out), the controller **GET**s the node and cordons only if `ignition.io/node-pool=gpu-sandbox-l4`; GKE recreates it fresh. Cordon errors fail the reconcile (they are not ignored).
+- **Node reuse policy.** After a sandbox Pod is gone, `ignition-gpu-agent` re-checks the node's GPU (residual compute processes, ECC, reset-required). If it cannot prove the GPU clean it annotates the **Node** `ignition.io/gpu-cleanup=ambiguous`. On the next teardown reconcile the controller reads that annotation (or a stale Pod annotation), **GET**s the node, and cordons only if `ignition.io/node-pool=gpu-sandbox-l4`; GKE recreates it fresh. Cordon errors fail the reconcile (they are not ignored). A clean node returns to the warm pool untouched.
 
-System DaemonSets (GKE logging, driver plugin) still run on sandbox nodes. The guarantee is one **customer** sandbox with one exclusive GPU per node, not literally one Pod.
+System DaemonSets (GKE logging, driver plugin) and `ignition-gpu-agent` still run on sandbox nodes. The guarantee is one **customer** sandbox with one exclusive GPU per node, not literally one Pod.
 
 ## CLI
 

@@ -1,17 +1,20 @@
 # Ignition CI/CD pipeline (Cloud Build + Cloud Deploy)
 
-Three automated flows, one GCP project, source in GitHub:
+Four automated flows, one GCP project, source in GitHub:
 
 | # | When | What | Config |
 |---|---|---|---|
+| 0 | **PR to `main`** | Per component: `go vet` + `go test ./...` + `docker build` the affected image. **No push** — validation only. A trigger fires only when the PR changes that binary's code or a package it compiles in. | `deploy/cloudbuild/pr.yaml` + `deploy/cloudbuild/prpaths` |
 | 1 | Push to `main` (PR merge) | `go vet` + `go test ./...` + Postgres store tests, then build & push `ignition-api`, `ignition-controller`, `ignition-gateway`, `ignition-prober` tagged `sha-<sha>` and `main` | `deploy/cloudbuild/build.yaml` |
 | 2 | Nightly ~02:00 | Same tests + build, tagged `sha-<sha>`, `nightly`, `nightly-YYYYMMDD` | `deploy/cloudbuild/build.yaml` |
-| 3 | Daily 12:00 | Cloud Deploy release: resolve `:nightly` → digest, roll onto the staging GKE cluster, run the read-only critical-user-journey probes as the verify gate | `deploy/cloudbuild/deploy-staging.yaml` + `deploy/clouddeploy/pipeline.yaml` + `skaffold.yaml` |
+| 3 | Daily 12:00 | `go test ./...` gate, then a Cloud Deploy release: resolve `:nightly` → digest, roll onto the staging GKE cluster, run the read-only critical-user-journey probes as the verify gate | `deploy/cloudbuild/deploy-staging.yaml` + `deploy/clouddeploy/pipeline.yaml` + `skaffold.yaml` |
 
 ```
-GitHub main ──push──▶ ignition-ci-main  ─▶ test ─▶ build ─▶ push :sha,:main
+PR opened/updated ──▶ ignition-pr-{api,controller,data-plane}  (path-filtered)
+                        ─▶ vet + test ─▶ docker build <component>   (no push)
+GitHub main ──push──▶ ignition-ci-main  ─▶ test ─▶ build ─▶ push :sha,:main   (all 4)
 Scheduler 02:00 ────▶ ignition-nightly  ─▶ test ─▶ build ─▶ push :sha,:nightly,:nightly-DATE
-Scheduler 12:00 ────▶ ignition-deploy-staging ─▶ gcloud deploy releases create
+Scheduler 12:00 ────▶ ignition-deploy-staging ─▶ test gate ─▶ gcloud deploy releases create
                                                      └─▶ Cloud Deploy ─▶ render overlays/staging
                                                           ─▶ deploy to ignition-staging ─▶ verify (CUJ probes)
 ```
@@ -42,11 +45,13 @@ Concretely, before wiring the pipeline you need:
 - Namespaces + service accounts applied (`kubectl apply -f deploy/k8s/base/namespaces.yaml`,
   `serviceaccounts.yaml`) and the GSAs `ignition-api` / `ignition-controller` with Workload Identity
   bindings and `roles/cloudsql.client`.
-- Secret `ignition-control-plane` in namespace `ignition-system` with real keys:
+- Secret `ignition-control-plane` in namespace `ignition-system` with real keys (`OIDC_ISSUER` must be
+  `https://accounts.google.com` if the Workload-Identity prober is used — see the Prober section; do
+  **not** add a `DEV_BEARER` key, `config.Validate()` rejects it in staging):
   ```bash
   kubectl -n ignition-system create secret generic ignition-control-plane \
     --from-literal=DATABASE_URL='postgres://ignition:PASS@127.0.0.1:5432/ignition?sslmode=disable' \
-    --from-literal=OIDC_ISSUER='https://<your-idp>/' \
+    --from-literal=OIDC_ISSUER='https://accounts.google.com' \
     --from-literal=STREAM_TOKEN_SECRET="$(openssl rand -base64 48)"
   ```
 - `deploy/k8s/overlays/staging/ingress.yaml`: the managed cert (`api.staging.ignition.dev`) and global
@@ -176,6 +181,23 @@ gcloud deploy apply --file=/tmp/ignition-pipeline.yaml \
 ### 6. Cloud Build triggers
 
 ```bash
+# Flow 0 — per-component PR builds. One trigger per container; each fires only
+# when the PR touches that binary's code or a package it compiles in. The
+# --included-files globs are the single source of truth in
+# deploy/cloudbuild/prpaths/paths.go and are verified by its test — regenerate
+# with:  go run ./deploy/cloudbuild/prpaths/print   (or copy from paths.go)
+for pair in "api:ignition-pr-api" "controller:ignition-pr-controller" "gateway:ignition-pr-data-plane"; do
+  comp="${pair%%:*}"; name="${pair##*:}"
+  paths="$(go run ./deploy/cloudbuild/prpaths/print "$comp")"
+  gcloud builds triggers create github \
+    --name="$name" --region="${REGION}" \
+    --repository="${REPO}" --pull-request-pattern='^main$' \
+    --build-config=deploy/cloudbuild/pr.yaml \
+    --included-files="$paths" \
+    --service-account="projects/${PROJECT}/serviceAccounts/${CB}" \
+    --substitutions="_COMPONENT=${comp}"
+done
+
 # Flow 1 — PR merge → main
 gcloud builds triggers create github \
   --name=ignition-ci-main --region="${REGION}" \
@@ -254,15 +276,14 @@ runs the read-only subset once per rollout (`skaffold.yaml`, `IGNITION_PROBE_JOU
 The continuous prober authenticates with a **Workload Identity ID token** (no secrets). For that to
 work on staging:
 
-1. **Staging API OIDC must trust Google.** In `deploy/k8s/overlays/staging/config.yaml` the
-   `ignition-api` ConfigMap needs:
-   ```yaml
-   IGNITION_OIDC_ISSUER: "https://accounts.google.com"
-   IGNITION_OIDC_AUDIENCE: "https://api.staging.ignition.dev"   # already set
-   ```
-   The prober ConfigMap's `IGNITION_PROBE_AUDIENCE` (same file) must equal that audience.
+1. **Staging API OIDC must trust Google.** `IGNITION_OIDC_ISSUER=https://accounts.google.com` and
+   `IGNITION_OIDC_SUBJECT_CLAIM=email` are set in the base `ignition-api` **ConfigMap** - no secret
+   key. The API audience is `https://api.staging.ignition.dev` (`overlays/staging/config.yaml`); the
+   prober ConfigMap's `IGNITION_PROBE_AUDIENCE` (same file) must equal it. The prober now fails to
+   start if that variable is unset.
 
-2. **Prober GSA + Workload Identity binding** (no project-level roles — it only mints its own token):
+2. **Prober GSA + Workload Identity binding** (no project-level roles — it only mints its own token).
+   Terraform does this (`google_service_account.prober` + `prober_wi`); by hand:
    ```bash
    gcloud iam service-accounts create ignition-prober
    PRB="ignition-prober@${PROJECT}.iam.gserviceaccount.com"
@@ -271,14 +292,13 @@ work on staging:
      --member="serviceAccount:${PROJECT}.svc.id.goog[ignition-system/ignition-prober]"
    ```
 
-3. **Authorize the prober in the product store.** The API maps an OIDC token's `sub` claim to a
-   principal; for a Google ID token that is the GSA's numeric unique id. Bind it as `developer` on the
-   probe project so the lifecycle journey can create + exec + terminate:
+3. **Authorize the prober in the product store.** With `IGNITION_OIDC_SUBJECT_CLAIM=email` the RBAC
+   subject is the GSA email itself. Bind it as `developer` on the probe project so the lifecycle
+   journey can create + exec + terminate (own):
    ```bash
-   PRB_SUB="$(gcloud iam service-accounts describe "${PRB}" --format='value(uniqueId)')"
-   # against the staging DB (via the cloud-sql-proxy or a bootstrap pod):
-   #   INSERT INTO role_bindings (project_id, subject, role)
-   #   VALUES ('prj_dev', '<PRB_SUB>', 'developer');
+   # against the staging DB via the cloud-sql-proxy:
+   psql "$STAGING_DSN" -v project=prj_dev -v prober_sa="$PRB" -f db/rolebindings.sql
+   #   -> INSERT INTO role_bindings VALUES ('prj_dev', 'ignition-prober@...', 'developer')
    ```
 
 4. **Seed the probe image.** `img_seed` must be pushed to the staging sandboxes repo
@@ -313,11 +333,18 @@ auto-promote staging→prod after a soak while keeping the approval gate.
 
 ### Known gaps
 
-- **DB migrations are not run by the pipeline.** `db/migrations/` currently has two colliding
-  `000002_*` versions; fix the numbering, then add a Cloud Deploy `predeploy` job that runs
-  `migrate ... up`.
+- **Database schema rollout is not separated from API startup.** `ignition-api` currently applies
+  the complete, idempotent `internal/store/schema.sql` baseline when it starts. Before schema
+  evolution is needed, add a reviewed predeploy schema job and remove DDL privileges from the API.
 - **Cloud Deploy `verify` runs only the read-only journeys** (`lite`, unauthenticated). Full lifecycle
   CUJ coverage on staging comes from the continuous `ignition-prober` Deployment and from
   `tests/integration` (`TestProbeJourneys`) in CI. To run the full set in `verify` too, give the
-  skaffold verify Job the `ignition-prober` ServiceAccount and `IGNITION_PROBE_AUTH=gcp-idtoken`.
+  skaffold verify Job the `ignition-prober` ServiceAccount, `IGNITION_PROBE_AUTH=gcp-idtoken`, and
+  `IGNITION_PROBE_AUDIENCE` equal to the API's `IGNITION_OIDC_AUDIENCE`.
 - **`tests/conformance/` is superseded** by `internal/probe` + `cmd/ignition-prober` and can be removed.
+- **The controller has no health signal.** `cmd/ignition-controller` serves no HTTP, so its Deployment
+  has no liveness/readiness probe, and `controller.Run` uses a non-cancellable `context.Background()`
+  (SIGTERM is not graceful; lease expiry after `LeaseTTL` covers failover on a hard kill). Follow-up:
+  add a `/healthz` listener + `signal.NotifyContext`, mirroring `internal/sandboxinit/init.go`.
+- **Staging warm pool.** `overlays/staging/config.yaml` now sets `IGNITION_MIN_WARM: "0"` so the
+  `gpu-sandbox-l4` pool scales to zero when idle. Raise it only while testing warm-pool behaviour.

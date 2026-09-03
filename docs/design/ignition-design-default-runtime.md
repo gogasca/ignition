@@ -51,16 +51,22 @@ default is usable with no extra configuration.
 `internal/k8s/profile.go` is the source of truth for which accelerator types are
 serviceable and how each is scheduled.
 
-| Accelerator | Node pool | Runtime | Device request | One-per-node | Node taint |
-|---|---|---|---|---|---|
-| `NONE` (CPU) | `cpu-sandbox` | gVisor | none | no | `ignition.io/sandbox=true` |
-| `NVIDIA_L4` | `gpu-sandbox-l4` | gVisor | `nvidia.com/gpu: 1` | yes (hostname anti-affinity) | `ignition.io/gpu-sandbox=true` |
+| Accelerator | Restricted node pool | Internet node pool | Runtime | Device request | One-per-node | Node taint |
+|---|---|---|---|---|---|---|
+| `NONE` (CPU) | `cpu-sandbox` | `cpu-sandbox-internet` | gVisor | none | no | `ignition.io/sandbox=true` |
+| `NVIDIA_L4` | `gpu-sandbox-l4` | `gpu-sandbox-l4-internet` | gVisor | `nvidia.com/gpu: 1` | yes (hostname anti-affinity) | `ignition.io/gpu-sandbox=true` |
 
 Both classes keep the non-negotiable isolation invariants: `runtimeClassName:
 gvisor`, `automountServiceAccountToken: false`, read-only root filesystem,
 dropped capabilities, `RuntimeDefault` seccomp, writable `/scratch` emptyDir
 only. The controller fails a sandbox `WORKLOAD_NOT_SUPPORTED` (no Pod created)
 when the accelerator type has no profile.
+
+`network.internetAccess = DISABLED` schedules onto the restricted node pool.
+`network.internetAccess = ENABLED` schedules onto the matching internet node
+pool in the same GKE cluster. Internet pools use a separate subnet, Pod range,
+node network tag, Cloud NAT scope, and firewall policy; they do not require a
+separate GKE cluster.
 
 `sandbox-init` receives `IGNITION_ACCELERATOR`. For `NONE`, `/readyz` succeeds as
 soon as the supervisor is up; for `NVIDIA_L4` it still verifies exactly one GPU

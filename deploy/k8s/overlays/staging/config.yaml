@@ -6,6 +6,9 @@ metadata:
 data:
   IGNITION_ENV: "staging"
   IGNITION_OIDC_AUDIENCE: "https://api.staging.ignition.dev"
+  # Restrict human (non-service-account) tokens to this Workspace domain and
+  # allow `domain:<this>` role bindings. Adjust to the real primary domain.
+  IGNITION_OIDC_HOSTED_DOMAINS: "ignition.dev"
   IGNITION_GATEWAY_URL: "https://gateway.staging.ignition.dev"
   IGNITION_MAX_ACTIVE_SANDBOXES: "20"
 ---
@@ -18,6 +21,10 @@ data:
   IGNITION_ENV: "staging"
   IGNITION_GCP_PROJECT: "ignition-staging"
   IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/ignition-staging/sandboxes"
+  # base sets MIN_WARM=1, which pins a balloon Pod and keeps the g2-standard-8 +
+  # L4 pool from scaling to zero. Staging does not need a standing warm pool;
+  # raise this only while exercising warm-pool behaviour.
+  IGNITION_MIN_WARM: "0"
 ---
 apiVersion: v1
 kind: ConfigMap

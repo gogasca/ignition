@@ -20,7 +20,7 @@ The first implementation slice is this create/get/list/terminate/watch surface p
 - `secretRefs` are stored on the sandbox and injected by the controller from Secret Manager at Pod create.
 - Cancel of an in-flight create fails the sandbox (`CANCELLED`) and releases quota.
 - Terminate/cancel permission deny is `404`; create/exec deny stays `403`.
-- Watch is one SSE snapshot + heartbeats (~60s), not `Last-Event-ID` push-on-change yet.
+- Watch emits an SSE snapshot whenever the resource changes, supports `Last-Event-ID`, sends heartbeats, and closes on a terminal state or after ~60s.
 
 Provisioning behavior behind the API is owned by the active runtime design:
 
@@ -173,7 +173,7 @@ GET /v1/projects/{project}/operations/{operation}:watch
 GET /v1/projects/{project}/events:watch
 ```
 
-Watch uses authenticated Server-Sent Events. This slice emits one snapshot and heartbeats (~60s). `Last-Event-ID` remains the v1 contract.
+Watch uses authenticated Server-Sent Events. It polls product state, emits content-addressed snapshots when the resource changes, honors `Last-Event-ID` to suppress an acknowledged snapshot, sends heartbeats, and closes on a terminal state or after ~60s.
 
 Public state progression:
 

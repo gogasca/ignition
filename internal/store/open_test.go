@@ -21,8 +21,8 @@ func TestOpenEmptyDSNUsesMemory(t *testing.T) {
 	}
 }
 
-func TestOpenWithoutMigrateEmptyDSNUsesMemory(t *testing.T) {
-	st, cst, closer, err := store.OpenWithoutMigrate(context.Background(), "")
+func TestOpenWithoutSchemaEmptyDSNUsesMemory(t *testing.T) {
+	st, cst, closer, err := store.OpenWithoutSchema(context.Background(), "")
 	if err != nil {
 		t.Fatal(err)
 	}

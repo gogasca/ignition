@@ -8,20 +8,22 @@ import (
 // Fake is an in-memory Pods + Nodes mock. Tests drive kubelet observations
 // via SetScheduled / SetRunning / SetReady.
 type Fake struct {
-	mu        sync.Mutex
-	pods      map[string]*Pod
-	gpuNodes  map[string]bool
-	ScaleDown map[string]bool
-	Nodes     []string // CordonAndDelete calls
-	Creates   int
-	Deletes   int
+	mu         sync.Mutex
+	pods       map[string]*Pod
+	gpuNodes   map[string]bool
+	dirtyNodes map[string]bool
+	ScaleDown  map[string]bool
+	Nodes      []string // CordonAndDelete calls
+	Creates    int
+	Deletes    int
 }
 
 func NewFake() *Fake {
 	return &Fake{
-		pods:      map[string]*Pod{},
-		gpuNodes:  map[string]bool{},
-		ScaleDown: map[string]bool{},
+		pods:       map[string]*Pod{},
+		gpuNodes:   map[string]bool{},
+		dirtyNodes: map[string]bool{},
+		ScaleDown:  map[string]bool{},
 	}
 }
 
@@ -105,6 +107,43 @@ func (f *Fake) CordonAndDelete(nodeName string) error {
 	defer f.mu.Unlock()
 	f.Nodes = append(f.Nodes, nodeName)
 	return nil
+}
+
+func (f *Fake) GPUCleanupAmbiguous(nodeName string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.dirtyNodes[nodeName], nil
+}
+
+func (f *Fake) MarkNodeGPUCleanup(nodeName string, ambiguous bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.dirtyNodes == nil {
+		f.dirtyNodes = map[string]bool{}
+	}
+	if ambiguous {
+		f.dirtyNodes[nodeName] = true
+	} else {
+		delete(f.dirtyNodes, nodeName)
+	}
+	return nil
+}
+
+// MarkNodeDirty is a test helper: flag a node so the controller cordons it on
+// the next sandbox teardown, as ignition-gpu-agent would after a failed reuse
+// check.
+func (f *Fake) MarkNodeDirty(nodeName string) { _ = f.MarkNodeGPUCleanup(nodeName, true) }
+
+func (f *Fake) ListPodsOnNode(nodeName string) ([]Pod, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []Pod
+	for _, p := range f.pods {
+		if p.NodeName == nodeName && p.Labels[LabelWorkload] == WorkloadSandbox {
+			out = append(out, *clone(p))
+		}
+	}
+	return out, nil
 }
 
 func (f *Fake) PatchAnnotations(name string, annotations map[string]string) error {
@@ -198,6 +237,12 @@ func (f *Fake) SetReady(name, gpuUUID string) {
 	p.Phase = "Running"
 	if p.Annotations == nil {
 		p.Annotations = map[string]string{}
+	}
+	// Mirror what ignition-gpu-agent writes: a canonical GPU UUID. Tests pass
+	// shorthand like "GPU-1"; normalize it so the controller's READY gate
+	// (k8s.IsCanonicalGPUUUID) is satisfied. An empty string is a CPU sandbox.
+	if gpuUUID != "" && !IsCanonicalGPUUUID(gpuUUID) {
+		gpuUUID = FakeGPUUUID
 	}
 	p.Annotations[AnnotInitHealthy] = "true"
 	p.Annotations[AnnotGPUUUID] = gpuUUID

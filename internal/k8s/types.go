@@ -5,15 +5,19 @@ import "errors"
 const (
 	Namespace = "ignition-sandboxes"
 
-	LabelWorkload  = "ignition.io/workload"
-	LabelSandboxID = "ignition.io/sandbox-id"
-	LabelProjectID = "ignition.io/project-id"
+	LabelWorkload      = "ignition.io/workload"
+	LabelSandboxID     = "ignition.io/sandbox-id"
+	LabelProjectID     = "ignition.io/project-id"
+	LabelNetworkAccess = "ignition.io/network-access"
 
-	WorkloadSandbox = "gpu-sandbox"
-	WorkloadBalloon = "gpu-balloon"
+	WorkloadSandbox       = "gpu-sandbox"
+	WorkloadBalloon       = "gpu-balloon"
+	NetworkAccessDisabled = "disabled"
+	NetworkAccessEnabled  = "enabled"
 
 	AnnotInitHealthy  = "ignition.io/init-healthy"
 	AnnotGPUUUID      = "ignition.io/gpu-uuid"
+	AnnotGPUHealth    = "ignition.io/gpu-health"
 	AnnotGPUCleanup   = "ignition.io/gpu-cleanup"
 	AnnotImageID      = "ignition.io/image-id"
 	AnnotCommand      = "ignition.io/tenant-command"
@@ -21,6 +25,11 @@ const (
 	AnnotProcObserved = "ignition.io/process-observed"
 
 	AnnotScaleDownDisabled = "cluster-autoscaler.kubernetes.io/scale-down-disabled"
+
+	// GPUCleanupAmbiguous is the ignition.io/gpu-cleanup value the gpu-agent
+	// (or a mis-sequenced Pod teardown) sets when a GPU cannot be proven clean
+	// for reuse. The controller cordons the node so GKE recreates it fresh.
+	GPUCleanupAmbiguous = "ambiguous"
 
 	PrioritySandbox = "ignition-sandbox"
 	PriorityBalloon = "ignition-balloon"
@@ -120,4 +129,8 @@ type Nodes interface {
 	CordonAndDelete(nodeName string) error
 	SetScaleDownDisabled(nodeName string, disabled bool) error
 	ListGPUPool() ([]string, error)
+	// GPUCleanupAmbiguous reports whether the node carries the
+	// ignition.io/gpu-cleanup=ambiguous annotation set by ignition-gpu-agent
+	// after a failed reuse check. A missing node reports (false, nil).
+	GPUCleanupAmbiguous(nodeName string) (bool, error)
 }

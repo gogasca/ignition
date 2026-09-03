@@ -5,7 +5,17 @@ import "context"
 // Store is the product-state layer used by ignition-api.
 // Implementations must not call the Kubernetes API.
 type Store interface {
-	Role(ctx context.Context, projectID, subject string) (role string, ok bool, err error)
+	// ResolveRole returns the effective project role for a caller. It checks
+	// the exact subject binding first, then a `domain:<domain>` binding when
+	// domain is non-empty (Workspace users only; service-account tokens carry
+	// no domain).
+	ResolveRole(ctx context.Context, projectID, subject, domain string) (role string, ok bool, err error)
+	// PutRoleBinding creates or updates a project role binding.
+	PutRoleBinding(ctx context.Context, projectID, subject, role string) error
+	// DeleteRoleBinding removes a binding, reporting whether one existed.
+	DeleteRoleBinding(ctx context.Context, projectID, subject string) (existed bool, err error)
+	// ListRoleBindings returns every binding in the project, ordered by subject.
+	ListRoleBindings(ctx context.Context, projectID string) ([]RoleBinding, error)
 	CreateSandbox(ctx context.Context, in CreateSandboxInput) (CreateSandboxResult, error)
 	GetSandbox(ctx context.Context, projectID, sandboxID string) (Sandbox, error)
 	ListSandboxes(ctx context.Context, projectID string, pageSize int, pageToken string) ([]Sandbox, string, error)

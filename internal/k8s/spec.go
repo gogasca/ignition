@@ -12,6 +12,10 @@ func int64Ptr(v int64) *int64 { return &v }
 // SandboxPod is the server-owned GKE Sandbox profile. Client fields never
 // become hooks, hostPath, capabilities, or scheduling directives.
 func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
+	networkAccess := NetworkAccessDisabled
+	if sb.Network.InternetAccess == store.InternetAccessEnabled {
+		networkAccess = NetworkAccessEnabled
+	}
 	grace := int64(sb.Timeouts.TerminationGraceSeconds)
 	if grace <= 0 {
 		grace = 20
@@ -47,7 +51,7 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 	}
 	// The caller (reconcile) fails closed when no profile exists; default to
 	// the L4 profile only so a mis-sequenced call still produces a valid Pod.
-	profile, ok := ProfileFor(accel)
+	profile, ok := ProfileForNetwork(accel, sb.Network.InternetAccess == store.InternetAccessEnabled)
 	if !ok {
 		profile = profiles[store.AcceleratorNVIDIAL4]
 	}
@@ -96,9 +100,10 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 		Name:      PodName(sb.ID),
 		Namespace: Namespace,
 		Labels: map[string]string{
-			LabelWorkload:  WorkloadSandbox,
-			LabelSandboxID: sb.ID,
-			LabelProjectID: sb.ProjectID,
+			LabelWorkload:      WorkloadSandbox,
+			LabelSandboxID:     sb.ID,
+			LabelProjectID:     sb.ProjectID,
+			LabelNetworkAccess: networkAccess,
 		},
 		Annotations: map[string]string{
 			AnnotImageID: sb.ImageID,
@@ -121,19 +126,24 @@ func BalloonPod(name string) *Pod {
 			RuntimeClassName:             RuntimeClass,
 			PriorityClassName:            PriorityBalloon,
 			AutomountServiceAccountToken: boolPtr(false),
+			EnableServiceLinks:           boolPtr(false),
 			RestartPolicy:                "Always",
 			NodeSelector:                 map[string]string{GPUNodePoolLabel: GPUNodePoolValue},
+			RunAsNonRoot:                 true,
+			SeccompRuntimeDefault:        true,
 			Tolerations: []Toleration{{
 				Key: "ignition.io/gpu-sandbox", Operator: "Equal", Value: "true", Effect: "NoSchedule",
 			}},
 			Containers: []Container{{
-				Name:        "pause",
-				Image:       "registry.k8s.io/pause:3.9",
-				Command:     []string{"/pause"},
-				CPUMilli:    100,
-				MemoryMiB:   128,
-				GPU:         "1",
-				DropAllCaps: true,
+				Name:           "pause",
+				Image:          "registry.k8s.io/pause:3.9",
+				Command:        []string{"/pause"},
+				CPUMilli:       100,
+				MemoryMiB:      128,
+				GPU:            "1",
+				AllowPrivEsc:   false,
+				DropAllCaps:    true,
+				ReadOnlyRootFS: true,
 			}},
 		},
 	}

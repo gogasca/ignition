@@ -1,0 +1,84 @@
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: ignition-gpu-agent
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-gpu-agent
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ignition-gpu-agent
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: ignition
+        app.kubernetes.io/name: ignition-gpu-agent
+        app: ignition-gpu-agent
+    spec:
+      serviceAccountName: ignition-gpu-agent
+      # One agent per GPU sandbox node; it must land on the tainted pool.
+      nodeSelector:
+        ignition.io/node-pool: gpu-sandbox-l4
+      tolerations:
+        - key: ignition.io/gpu-sandbox
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
+      # hostPID: see the node's CUDA processes for the residual-process check.
+      hostPID: true
+      priorityClassName: system-node-critical
+      terminationGracePeriodSeconds: 10
+      containers:
+        - name: agent
+          image: ignition-gpu-agent
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: IGNITION_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+            - name: IGNITION_NVIDIA_SMI
+              value: /usr/local/nvidia/bin/nvidia-smi
+            - name: LD_LIBRARY_PATH
+              value: /usr/local/nvidia/lib64
+            - name: IGNITION_GPUAGENT_INTERVAL
+              value: 5s
+          ports:
+            - name: metrics
+              containerPort: 9103
+          resources:
+            requests:
+              cpu: 25m
+              memory: 48Mi
+            limits:
+              cpu: 200m
+              memory: 128Mi
+          securityContext:
+            # Needs the host driver + /dev/nvidia* to run nvidia-smi. This is a
+            # trusted system component on a dedicated, tainted pool; it requests
+            # no nvidia.com/gpu and never holds a Google identity.
+            privileged: true
+          volumeMounts:
+            - name: nvidia
+              mountPath: /usr/local/nvidia
+              readOnly: true
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: metrics
+            periodSeconds: 20
+            failureThreshold: 6
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: metrics
+            periodSeconds: 20
+            failureThreshold: 3
+      volumes:
+        # GKE Container-Optimized OS installs the NVIDIA driver here.
+        - name: nvidia
+          hostPath:
+            path: /home/kubernetes/bin/nvidia
+            type: Directory

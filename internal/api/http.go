@@ -7,7 +7,10 @@ import (
 	"ignition.dev/ignition/internal/id"
 )
 
-func (s *Server) middleware(next http.Handler) http.Handler {
+// authMiddleware sets the request id, then authenticates every request except
+// GET /healthz. It runs outside the adminz metrics middleware so a rejected
+// request is counted once (as an auth rejection) rather than as a routed call.
+func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		rid := sanitizeRequestID(r.Header.Get("X-Request-Id"))
 		if rid == "" {
@@ -19,8 +22,19 @@ func (s *Server) middleware(next http.Handler) http.Handler {
 			next.ServeHTTP(w, r.WithContext(ctx))
 			return
 		}
-		p, err := s.authn.Authenticate(ctx, r.Header.Get("Authorization"))
+		// Cloud IAP authenticates the caller and forwards a signed assertion
+		// header, replacing any client-supplied copy. Prefer it when present;
+		// otherwise fall back to the Authorization bearer (in-cluster
+		// service-to-service traffic that bypasses the Ingress).
+		cred := r.Header.Get("Authorization")
+		if a := r.Header.Get("X-Goog-IAP-JWT-Assertion"); a != "" {
+			cred = a
+		}
+		p, err := s.authn.Authenticate(ctx, cred)
 		if err != nil {
+			if s.metrics != nil {
+				s.metrics.AuthRejected()
+			}
 			writeStatus(w, rid, http.StatusUnauthorized, "UNAUTHENTICATED", "authentication required", false, 0)
 			return
 		}

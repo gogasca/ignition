@@ -12,6 +12,9 @@ data:
   IGNITION_MIN_WARM: "1"
   IGNITION_MAX_WARM: "8"
   IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/ignition-dev/sandboxes"
+  # Unused by the controller, but config.Validate() (shared with ignition-api)
+  # requires it when IGNITION_ENV is staging/prod.
+  IGNITION_OIDC_ISSUER: "https://accounts.google.com"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -62,6 +65,15 @@ spec:
                 secretKeyRef:
                   name: ignition-control-plane
                   key: DATABASE_URL
+                  optional: true
+            # config.Validate() (shared with ignition-api) requires a
+            # non-default stream secret when IGNITION_ENV is staging/prod,
+            # even though the controller never mints stream tokens.
+            - name: IGNITION_STREAM_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ignition-control-plane
+                  key: STREAM_TOKEN_SECRET
                   optional: true
           resources:
             requests:

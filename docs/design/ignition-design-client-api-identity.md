@@ -166,7 +166,7 @@ GET    /v1/projects/{project}/events/{event}
 GET    /v1/projects/{project}/events:watch
 ```
 
-Image import, sandbox creation/termination, secret rotation/deletion, and other long work return `202` with an Operation. Watch endpoints use authenticated Server-Sent Events. The implemented slice sends one snapshot plus heartbeats and closes after ~60s; `Last-Event-ID` and push-on-change remain the v1 contract. Clients recover with `GET`. Cancellation of an in-flight `CREATE_SANDBOX` fails the sandbox (`CANCELLED`) and releases quota; otherwise the Operation records whether work was cancelled or had already reached a non-cancellable/terminal point.
+Image import, sandbox creation/termination, secret rotation/deletion, and other long work return `202` with an Operation. Watch endpoints use authenticated Server-Sent Events, emit content-addressed snapshots when product state changes, honor `Last-Event-ID`, send heartbeats, and close on terminal state or after ~60s. Cancellation of an in-flight `CREATE_SANDBOX` fails the sandbox (`CANCELLED`) and releases quota; otherwise the Operation records whether work was cancelled or had already reached a non-cancellable/terminal point.
 
 There are no Volume, sandbox volume-mount, or Session snapshot endpoints in initial production.
 

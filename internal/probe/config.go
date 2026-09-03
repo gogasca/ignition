@@ -43,9 +43,6 @@ func Load() (Config, error) {
 		return c, fmt.Errorf("IGNITION_PROBE_TARGET is required")
 	}
 	c.Target = strings.TrimRight(c.Target, "/")
-	if c.Audience == "" {
-		c.Audience = c.Target
-	}
 	switch c.Auth {
 	case "gcp-idtoken", "static", "none":
 	default:
@@ -53,6 +50,12 @@ func Load() (Config, error) {
 	}
 	if c.Auth == "static" && c.Token == "" {
 		return c, fmt.Errorf("IGNITION_PROBE_AUTH=static requires IGNITION_PROBE_TOKEN")
+	}
+	if c.Auth == "gcp-idtoken" && c.Audience == "" {
+		// The ID token's `aud` must be one the API accepts. There is no safe
+		// default: the API's IGNITION_OIDC_AUDIENCE is its public URL, not the
+		// in-cluster Target the prober dials.
+		return c, fmt.Errorf("IGNITION_PROBE_AUTH=gcp-idtoken requires IGNITION_PROBE_AUDIENCE (must equal the API's IGNITION_OIDC_AUDIENCE)")
 	}
 	if _, err := Select(c.Journeys); err != nil {
 		return c, err

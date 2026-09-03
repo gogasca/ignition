@@ -12,6 +12,8 @@ const (
 	PermOperationGet     Permission = "operation.get"
 	PermOperationCancel  Permission = "operation.cancel"
 	PermRuntimeGet       Permission = "runtime.get"
+	PermRoleBindingGet   Permission = "rolebinding.get"
+	PermRoleBindingAdmin Permission = "rolebinding.admin"
 )
 
 const (
@@ -22,16 +24,23 @@ const (
 	RoleViewer    = "viewer"
 )
 
-// Principal is the authenticated caller.
-type Principal struct {
-	Subject string
-	Client  string
+// KnownRole reports whether role is one of the five defined project roles.
+func KnownRole(role string) bool {
+	switch role {
+	case RoleOwner, RoleAdmin, RoleDeveloper, RoleOperator, RoleViewer:
+		return true
+	default:
+		return false
+	}
 }
 
 // Allowed reports whether role may perform perm.
 // own is true when the principal created the target resource (developer terminate/cancel).
 func Allowed(role string, perm Permission, own bool) bool {
 	switch perm {
+	case PermRoleBindingGet, PermRoleBindingAdmin:
+		// Project role management is limited to owners and admins.
+		return role == RoleOwner || role == RoleAdmin
 	case PermSandboxGet, PermProcessGet, PermOperationGet, PermRuntimeGet:
 		return role == RoleOwner || role == RoleAdmin || role == RoleDeveloper || role == RoleOperator || role == RoleViewer
 	case PermSandboxCreate, PermSandboxExec:

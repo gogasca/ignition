@@ -37,8 +37,8 @@ steps:
         go vet ./...
         go test ./... -count=1
 
-  # 2. Postgres-backed store integration tests. postgresOrSkip() in
-  #    internal/store/postgres_test.go runs only when IGNITION_TEST_DATABASE_URL is set.
+  # 2. Postgres-backed store tests. Cloud Build supplies an explicit database;
+  #    local runs start postgres:16-alpine through Testcontainers by default.
   - name: gcr.io/cloud-builders/docker
     id: pg-up
     entrypoint: bash
