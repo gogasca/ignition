@@ -1,6 +1,16 @@
 # Ignition Scheduler and GPU Leasing Design
 
-**Status:** Draft v0.1  
+**Status:** Not implemented — design of record for the deferred custom GCE/MIG worker runtime.
+
+> `ignition-scheduler` is not built and not on the deploy path. The shipped system
+> runs the [GKE Sandbox](ignition-design-gke-sandbox.md) architecture, where
+> `ignition-controller` plus the GKE scheduler and Cluster Autoscaler do placement
+> and capacity; there is no separate scheduler binary, GPU-lease table, or
+> `sandbox_queue`. This document is retained as the design for the custom Compute
+> Engine runtime, a possible future optimization gated on measured evidence that
+> GKE cannot meet requirements — see
+> [GKE Sandbox — Relationship to the custom runtime](ignition-design-gke-sandbox.md#relationship-to-the-custom-runtime).
+
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 
 ## Scope

@@ -1,20 +1,24 @@
 # Ignition Data Plane and Networking Design
 
-**Status:** Draft v0.2 — target architecture; not the current deploy path  
+**Status:** Not implemented — exec data plane; partially specified for the shipped GKE path, fully specified for the deferred custom runtime.
+
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 
-> **Implementation status.** This document specifies the full data plane for the
-> custom GCE worker runtime: `ignition-ingress` as a per-worker proxy,
-> `worker-control` as the sole route-state writer, a Postgres route table with a
-> transactional outbox, SPIFFE mTLS, and a Local-SSD exec spool. **None of that
-> is built.** The [GKE Sandbox MVP](ignition-design-gke-sandbox.md) collapses the
-> data plane to `ignition-gateway` validating an `ignition-api`-minted attach
-> token and proxying a WebSocket to the sandbox init supervisor over the Pod
-> network; there is no `ignition-ingress`, no route table, and no outbox. In the
-> current code `ignition-gateway` and `sandbox-init` are stubs and neither is
-> deployed — see the [Implementation guide](../guides/ignition-implementation.md).
-> The egress policy, credential-audience separation, and attach-token shape in
-> this document are runtime-agnostic and do apply to the MVP.
+> **Implementation status.** No exec byte path is built. `ignition-api` mints
+> attach-stream tokens, but `ignition-gateway` and the `sandbox-init` process
+> supervisor are stubs and neither is deployed — creating a Process returns a
+> token and runs nothing (see the
+> [Implementation guide](../guides/ignition-implementation.md)).
+>
+> Two designs coexist here. The **shipped GKE path** collapses the data plane to
+> `ignition-gateway` validating the `ignition-api`-minted attach token and
+> proxying a WebSocket to `sandbox-init` over the Pod network — no
+> `ignition-ingress`, no Postgres route table, no outbox. The rest of this
+> document specifies the **deferred custom GCE runtime**: `ignition-ingress` as a
+> per-worker proxy, `worker-control` as sole route-state writer, a generation-
+> scoped route table with a transactional outbox, SPIFFE mTLS, and a Local-SSD
+> exec spool. The egress policy, credential-audience separation, and attach-token
+> shape are runtime-agnostic and apply to both.
 
 ## Scope
 
@@ -61,7 +65,7 @@ External access JWTs, exec stream tokens, and internal route tokens use separate
 
 ## Exec transport and reconnect
 
-Exec attachment uses authenticated WebSocket in initial production. End-to-end gRPC/HTTP/2 is deferred. Process lifetime is independent of gateway or client connection lifetime.
+Exec attachment uses an authenticated WebSocket. End-to-end gRPC/HTTP/2 is out of scope. Process lifetime is independent of gateway or client connection lifetime.
 
 `ignition-ingress`, not the gateway, owns a per-process bounded spool on worker Local SSD. The spool remains active across gateway disconnects/restarts and retains stdout/stderr through the reconnect window. It is scoped to `(sandbox_id, generation, process_id, stream_epoch)`, quota-accounted, encrypted by the node storage boundary, and deleted after expiry. Worker or Local-SSD loss may destroy it and is reported as a gap, never as complete replay.
 
@@ -99,7 +103,7 @@ On attach/reconnect the client presents a newly minted exec stream token and its
 
 The worker reports a sandbox `READY` only after runtime start, GPU/device visibility, ingress local registration, and the Postgres route/outbox transaction commits. Gateway independently validates generation and route state. Initial production has no user application readiness probe; it does not infer that a user application is healthy.
 
-In the MVP there is no ingress registration or route/outbox commit. `ignition-controller` marks a sandbox `READY` when the Pod is scheduled and running **and**:
+In the shipped GKE path there is no ingress registration or route/outbox commit. `ignition-controller` marks a sandbox `READY` when the Pod is scheduled and running **and**:
 
 - **CPU sandboxes** (`accelerator: NONE`): kubelet `PodReady` is the whole signal — `sandbox-init` `/readyz` returns 200 once the supervisor is up.
 - **GPU sandboxes**: additionally, `ignition-gpu-agent` (a trusted DaemonSet on the GPU pool) has stamped a **canonical** GPU UUID (`ignition.io/gpu-uuid`, `GPU-…` form) and `ignition.io/init-healthy=true` onto the Pod. The sandbox Pod holds no Kubernetes credential, so it cannot write these itself. `sandbox-init` `/readyz` still runs its own local check — device nodes present, `nvidia-smi` clean, `cuInit()` succeeds — but that check makes no identity claim.

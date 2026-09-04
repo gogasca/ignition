@@ -1,23 +1,25 @@
 # Ignition Control Plane Design
 
-**Status:** Draft v0.1  
+**Status:** Partially built. The shipped control plane is `ignition-api` + `ignition-controller` on Cloud SQL. Worker streams, the scheduler queue, the transactional outbox, and the quota ledger are the deferred custom runtime and **not built**.
+
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 
 ## Scope
 
 Defines durable resource state, service boundaries, worker communication, operations, events, database ownership, availability, and recovery.
 
-The GKE MVP first slice persists `projects`, `role_bindings`, `images`, `sandboxes`, `processes`, `operations`, `idempotency_keys`, `project_quota`, and `controller_leases` (see [API and Controller](ignition-design-api-controller.md) §7). Custom-runtime services (`ignition-worker-control`, and so on) remain specified below for the gated path (`quota_ledger`, outbox, scheduler queue).
+The shipped schema is `projects`, `role_bindings`, `images`, `sandboxes`, `processes`, `operations`, `idempotency_keys`, `project_quota`, and `controller_leases` (see [API and Controller](ignition-design-api-controller.md) §7). The custom-runtime services (`ignition-worker-control`, scheduler, outbox) and their tables (`quota_ledger`, `outbox_events`, `sandbox_queue`, `gpu_leases`, …) described below are specified but not implemented.
 
 ## Services
 
-- `ignition-api`: validates and authorizes public resource requests.
-- `ignition-worker-control`: terminates worker mTLS streams and delivers desired state.
-- `ignition-artifacts`: owns image, golden-snapshot, and read-only dataset-mount metadata. Persistent writable Volume resources are post-v1.
-- `ignition-builder`: executes image conversion and golden-snapshot workflows.
-- `ignition-scheduler`, `ignition-fleet`, and `ignition-gateway` have separate designs.
+- `ignition-api` (**built**): validates and authorizes public resource requests; sole writer of desired state.
+- `ignition-controller` (**built**): reconciles desired sandbox state into GKE Pods; sole holder of Pod RBAC.
+- `ignition-worker-control` (deferred): terminates worker mTLS streams and delivers desired state.
+- `ignition-artifacts` (deferred): owns image, golden-snapshot, and read-only dataset-mount metadata. Persistent writable Volume resources are out of scope.
+- `ignition-builder` (deferred): executes image conversion and golden-snapshot workflows.
+- `ignition-scheduler`, `ignition-fleet` (deferred), and `ignition-gateway` (specified, not built) have separate designs.
 
-Services run independently on a regional, CPU-only GKE cluster with nodes in at least three zones. Required services use topology spread constraints, PodDisruptionBudgets, and enough reserved spare capacity to survive one zone loss. Each service has a distinct identity, database role, resource budget, deployment, and autoscaling policy.
+Services run independently on a regional, CPU-only GKE cluster. Required services use topology spread constraints, PodDisruptionBudgets, and reserved spare capacity to survive one zone loss. Each service has a distinct identity, database role, resource budget, deployment, and autoscaling policy.
 
 ## State model
 
@@ -144,7 +146,7 @@ Each consumer stores the event ID in its own dedup table in the same database tr
 
 ## Disaster recovery
 
-- Initial production is single-region.
+- Deployment is single-region.
 - Cloud SQL zonal failover launch target: RPO 0 and RTO 5 minutes.
 - Cross-region backup/PITR recovery launch target: RPO 15 minutes and RTO 4 hours.
 - Object-versioning or retention policy for manifests.
@@ -166,7 +168,7 @@ Measure request latency, operation duration, worker streams, reconnects, heartbe
 
 Trace public request → durable operation → scheduler → worker command → observed state.
 
-The API availability launch target is 99.9%, measured at the public service boundary. This and the recovery objectives above are initial-production launch targets, not historical guarantees.
+The API availability target is 99.9%, measured at the public service boundary. This and the recovery objectives above are targets for a production launch, not measured guarantees.
 
 ## Acceptance tests
 

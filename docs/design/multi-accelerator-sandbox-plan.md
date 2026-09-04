@@ -6,7 +6,7 @@ described; the project-level `SandboxTemplate` resource in the later sections wa
 **not** built — a system-managed default runtime replaced it, and CreateSandbox
 keeps optional inline `resources`/`placement`/`timeouts`/`network` fields.
 **Date:** 2026-08-31
-**Parent:** [GKE Sandbox MVP](ignition-design-gke-sandbox.md)
+**Parent:** [GKE Sandbox](ignition-design-gke-sandbox.md)
 **Public API contract:** [Create Sandbox API](ignition-sandbox-create-api.md)
 **Software design:** [API and Controller proposal](ignition-design-api-controller.md)
 
@@ -126,7 +126,12 @@ fail-closed pattern already used for `BARE_METAL`.
 
 ## Phased plan
 
-Each phase leaves `main` shippable.
+> Historical. Phases 0–3 and 5 shipped (CPU + `NVIDIA_L4` under one `accelerator`
+> contract; `IGNITION_ALLOWED_ACCELERATORS` now defaults to `NONE,NVIDIA_L4`).
+> Phase 4 (the exec data plane) is not done. The `SandboxTemplate` idea was
+> dropped for the system-managed [Default Runtime](ignition-design-default-runtime.md).
+
+Each phase left `main` shippable.
 
 ### Phase 0 — Contract and validation
 

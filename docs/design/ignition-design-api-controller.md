@@ -1,15 +1,14 @@
 # Ignition API and Controller Technical Design Proposal
 
-**Status:** Draft v0.2 — aligned with the current Go binaries  
-**Date:** 2026-08-28  
-**Parent:** [GKE Sandbox MVP](ignition-design-gke-sandbox.md), [Technical design](ignition-technical-design.md)  
+**Status:** Current — describes the deployed `ignition-api` and `ignition-controller` binaries.  
+**Parent:** [GKE Sandbox](ignition-design-gke-sandbox.md), [Technical design](ignition-technical-design.md)  
 **Public contract:** [Create Sandbox API](ignition-sandbox-create-api.md), [Client API and Identity](ignition-design-client-api-identity.md)  
 **Schema:** [`api/proto/ignition/v1/`](../../api/proto/ignition/v1/)  
 **Build and deploy:** [Implementation guide](../guides/ignition-implementation.md)
 
 ## 1. Purpose
 
-This proposal is the software design for the two control-plane binaries that run the GKE MVP:
+This is the software design for the two control-plane binaries that run on GKE:
 
 - **`ignition-api`** — public HTTP/JSON API. Authenticates, authorizes, admits work, and is the only writer of *desired* product state.
 - **`ignition-controller`** — internal reconciler. Reads desired state from Cloud SQL, is the only process with Kubernetes Pod RBAC, and writes *observed* public sandbox states.
@@ -26,14 +25,14 @@ Together they implement sandbox lifecycle, process metadata, and operations on G
 - `OperationService`: get, list, watch, cancel.
 - Cloud SQL admission, idempotency, quota reservation, and project-scoped RBAC.
 - Controller Pod create/delete, state mapping, warm balloon Pods, node quarantine on ambiguous GPU cleanup.
-- Go 1.23 services; protobuf as the schema; public transport HTTP/JSON (SSE for watch).
+- Go 1.26 services; protobuf as the schema; public transport HTTP/JSON (SSE for watch).
 
 **Out of scope**
 
 - Custom `ignition-scheduler` / `ignition-fleet` / `ignitiond` / `ignition-hostd`.
-- Project, image import, secret, and event public APIs (seed rows until those protos exist).
+- Project, image import, secret, and event public APIs (the API runs on seed `projects`/`images` rows; these surfaces are not exposed).
 - Writable Volume or Session snapshot resources.
-- Multi-region active-active databases. Initial production is one region (`us-central1`) behind an optional global hostname.
+- Multi-region active-active databases. Deployment is one region (`us-central1`) behind an optional global hostname.
 
 ## 3. Why two binaries
 
@@ -80,18 +79,17 @@ gRPC may exist internally later. It is not the public v1 edge.
 
 ### 5.2 Authentication and authorization
 
-Validate RFC 9068 access JWTs with **RS256 and JWKS** (never the attach stream HMAC):
+`internal/auth` verifies, with JWKS (never the attach-stream HMAC) and ≤ 60s skew on `exp`/`iat` (`nbf` when present):
 
-- exact issuer and audience (`https://api.ignition.dev` or the configured API audience);
-- `typ=at+jwt`;
-- pinned algorithm RS256; JWKS cache with refresh-on-unknown-kid (explicit `IGNITION_OIDC_JWKS_URL` or OIDC discovery);
-- `exp` / `iat` with ≤ 60s skew (`nbf` enforced when present).
+- **Cloud IAP assertions** (`X-Goog-IAP-JWT-Assertion`, ES256, issuer `https://cloud.google.com/iap`, `aud` = `IGNITION_IAP_AUDIENCE`) — preferred when the header is present;
+- **Google ID tokens** (`Authorization: Bearer`, issuer `https://accounts.google.com`, `typ=JWT`, RS256, `aud` ∈ `IGNITION_OIDC_AUDIENCE` + `IGNITION_OIDC_AUDIENCES`, `email_verified`, and `hd` ∈ `IGNITION_OIDC_HOSTED_DOMAINS` for non-service-account subjects);
+- **first-party RFC 9068 `at+jwt`** when `IGNITION_OIDC_ALLOWED_TYPES` includes `at+jwt`.
 
-Then load `role_bindings` for `(project_id, principal)`. SQL is project-scoped **before** loading the object row. Cross-project or unknown IDs return indistinguishable `404 NOT_FOUND`. In-project missing permission returns `403 PERMISSION_DENIED` for **create/exec**. Terminate and operation-cancel deny on a known in-project object also return `404` so callers cannot distinguish “exists but forbidden” from “unknown”.
+`IGNITION_OIDC_SUBJECT_CLAIM=email` makes the verified email the RBAC subject; a `*.gserviceaccount.com` email is a service account (hosted-domain check skipped, no role cap). Then load `role_bindings` for `(project_id, subject)` — exact subject first, then a `domain:<hd>` binding for a Workspace user. SQL is project-scoped **before** loading the object row. Cross-project or unknown IDs return indistinguishable `404 NOT_FOUND`. In-project missing permission returns `403 PERMISSION_DENIED` for **create/exec**; terminate and operation-cancel deny returns `404`.
 
-Staging/prod (`IGNITION_ENV`) refuse to start with `IGNITION_DEV_BEARER`, a missing issuer, or the default stream secret.
+Staging/prod (`IGNITION_ENV`) refuse to start with `IGNITION_DEV_BEARER`, a missing issuer, or the default stream secret. The `dev` overlay has no Ingress and uses `IGNITION_DEV_BEARER` (subject `dev`).
 
-Until Project APIs exist, operators seed one project and bind the operator OIDC subject as `owner` or `developer`.
+Because the Project API is not exposed yet, operators seed one `projects` row and bind the first `owner` via `IGNITION_BOOTSTRAP_PROJECT` + `IGNITION_BOOTSTRAP_ADMIN` or `db/rolebindings.sql`; `roleBindings` CRUD (`GET/PUT/DELETE /v1/projects/{project}/roleBindings/{subject}`, owner/admin only, last-owner guard) manages the rest.
 
 Required permissions:
 
@@ -104,6 +102,9 @@ Required permissions:
 | Get/ListProcess | `process.get` |
 | Get/List/WatchOperation | `operation.get` |
 | CancelOperation | `operation.cancel` |
+| GetRuntimeDefault | `runtime.get` |
+| List/GetRoleBinding | `rolebinding.get` (owner/admin) |
+| Put/DeleteRoleBinding | `rolebinding.admin` (owner/admin) |
 
 ### 5.3 Create sandbox (admission)
 
@@ -173,7 +174,7 @@ for each sandbox in SQL:
   GPU cleanup ambiguous       → GET node; cordon only if labeled gpu-sandbox-l4
 ```
 
-The Pod spec is entirely server-owned. No client field maps to hooks, devices, hostPath, capabilities, or scheduling. Normative YAML: [GKE Sandbox MVP — Sandbox Pod profile](ignition-design-gke-sandbox.md#sandbox-pod-profile-normative).
+The Pod spec is entirely server-owned. No client field maps to hooks, devices, hostPath, capabilities, or scheduling. Normative YAML: [GKE Sandbox — Sandbox Pod profile](ignition-design-gke-sandbox.md#sandbox-pod-profile-normative).
 
 State mapping:
 
@@ -212,23 +213,23 @@ Resolve Secret Manager refs at Pod create using the controller’s Google identi
 
 The controller does not proxy stdio. It publishes desired process argv/signal/cancel as the `ignition.io/process-desired` annotation and advances `processes.state` from `ignition.io/process-observed` (written by the init supervisor). Failed create of the in-sandbox process sets `FAILED` with a typed reason. Signal and cancel remain SQL desired-state until init reports `EXITED`/`FAILED`.
 
-## 7. Data model (first slice)
+## 7. Data model
 
 ```text
 projects
 role_bindings
-images                 -- seed until Image APIs exist
+images                 -- seed rows; Image APIs not exposed
 sandboxes
 processes
 operations
 idempotency_keys       -- principal, project, method, route, body_hash, response
-project_quota          -- active sandbox count (not an append-only ledger in this slice)
+project_quota          -- active sandbox count (not an append-only ledger)
 controller_leases
 ```
 
-Every customer-owned row has non-null `project_id`. Indexes: `(project_id, id)`, `(project_id, state)`, `(sandbox_id)` on processes.
+This is a complete baseline schema (`internal/store/schema.sql`, embedded), not a migration chain. Every customer-owned row has non-null `project_id`. Indexes: `(project_id, id)`, `(project_id, state)`, `(sandbox_id)` on processes.
 
-Database: Cloud SQL for PostgreSQL, regional HA, private IP, Auth Proxy sidecar, Workload Identity. First slice uses a password DSN in `DATABASE_URL`; IAM DB users remain the staging/prod hardening path.
+Database: Cloud SQL for PostgreSQL (regional HA on dev, zonal on staging), private IP, Auth Proxy sidecar, Workload Identity. A password DSN in `DATABASE_URL` is used; IAM DB users remain the staging/prod hardening path.
 
 `ignition-api` owns DDL (`store.Open`). `ignition-controller` is DML only (`store.OpenWithoutSchema`).
 
@@ -262,15 +263,18 @@ Metrics (region, SKU, project labels where safe):
 
 Traces: `request_id` from API through SQL operation id to Pod name. Logs exclude command argv payloads, env values, stdin/stdout, and secret material.
 
-## 11. Implementation sequence
+## 11. Delivery status
 
-1. Migrations + `internal/store` + idempotency tests (no Kubernetes).
-2. Auth middleware + create/get returning `202` against SQL only.
-3. Controller create/delete on a CPU gVisor pool (GPU quota optional).
-4. L4 sandbox pool + one-sandbox-per-node tests.
-5. Watch/SSE + `ignitionctl --wait`.
-6. Process rows + attach token minting; gateway byte path.
-7. Balloons + measure p95 API-to-`READY` ≤ 9s on warm nodes.
+| Step | State |
+|---|---|
+| `internal/store` + schema + idempotency tests | done |
+| Auth middleware + create/get returning `202` | done (Google OIDC / IAP, not the earlier Auth0 plan) |
+| Controller create/delete on the CPU gVisor pool | done — CPU lifecycle verified end to end |
+| L4 sandbox pool + one-sandbox-per-node + `ignition-gpu-agent` attestation | code done; a real L4 sandbox reaching `READY` is not yet exercised (dev L4 quota) |
+| Watch/SSE | done |
+| `ignitionctl --wait` | not started (`ignitionctl` is a stub) |
+| Process rows + attach-token minting | done (rows + token); gateway byte path not built |
+| Balloons + p95 API-to-`READY` measurement | balloons implemented; dev runs with `IGNITION_MIN_WARM=0`, not measured |
 
 ## 12. Acceptance
 
@@ -287,7 +291,7 @@ Traces: `request_id` from API through SQL operation id to Pod name. Logs exclude
 
 | Decision | Choice |
 |---|---|
-| Language | Go 1.23 |
+| Language | Go 1.26 |
 | Public API | HTTP/JSON + SSE; proto schema |
 | Desired state | Cloud SQL; API writes, controller reads |
 | Kubernetes | Controller only; deterministic Pod names |

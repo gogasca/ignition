@@ -1,8 +1,8 @@
 # Ignition Default Runtime Design
 
-**Status:** Implemented (initial slice)
-**Date:** 2026-08-31
-**Parent:** [GKE Sandbox MVP](ignition-design-gke-sandbox.md)
+**Status:** Current — implemented in `ignition-api` and `ignition-controller`.
+
+**Parent:** [GKE Sandbox](ignition-design-gke-sandbox.md)
 **Public API contract:** [Create Sandbox API](ignition-sandbox-create-api.md)
 
 ## Purpose
@@ -72,12 +72,12 @@ separate GKE cluster.
 soon as the supervisor is up; for `NVIDIA_L4` it still verifies exactly one GPU
 identity. Kubelet's resulting `PodReady` advances the public state to `READY`.
 
-## Known follow-ups
+## Boundaries
 
 - The `cpu-sandbox` GKE node pool is operator-provisioned (see the
-  implementation guide); no warm pool / balloon Pods for CPU yet.
-- `/ignition/init` is still assumed to be present in the tenant image. Injecting
-  it with an initContainer + shared read-only volume is a separate change and
-  applies equally to both accelerator classes.
-- Multi-accelerator work beyond CPU + L4 (TPU, more GPU SKUs) is out of scope;
-  the profile registry is the extension point.
+  implementation guide); there are no warm pool / balloon Pods for the CPU
+  profile — `IGNITION_MIN_WARM` applies to the GPU pool only.
+- `/ignition/init` must be present in the tenant image; the Pod runs it as the
+  entrypoint and does not inject it.
+- Only the CPU (`NONE`) and `NVIDIA_L4` profiles exist. TPU and other GPU SKUs
+  are out of scope; `internal/k8s/profile.go` is the extension point.

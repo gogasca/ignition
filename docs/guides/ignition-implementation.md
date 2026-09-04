@@ -1,8 +1,8 @@
 # Ignition implementation guide
 
 **Status:** Matches the current binaries (`cmd/ignition-api`, `cmd/ignition-controller`)  
-**Audience:** engineers building and operating the first slice  
-**Architecture:** [GKE Sandbox MVP](../design/ignition-design-gke-sandbox.md)  
+**Audience:** engineers building and operating the control plane  
+**Architecture:** [GKE Sandbox](../design/ignition-design-gke-sandbox.md)  
 **API/controller design:** [API and Controller proposal](../design/ignition-design-api-controller.md)  
 **Contract:** [Create Sandbox API](../design/ignition-sandbox-create-api.md), [`api/proto/ignition/v1/`](../../api/proto/ignition/v1/)
 
@@ -10,12 +10,12 @@ This is the **only** build-and-deploy runbook: one regional GKE **dev** environm
 
 `gcloud` here is the copy/paste bootstrap. The equivalent Terraform configuration is in `deploy/terraform`; choose one infrastructure owner per environment and do not create the same resources with both.
 
-## What you ship
+## What this deploys
 
-| Ship | Do not ship yet |
+| In scope | Not built |
 |---|---|
-| `SandboxService` (lifecycle + process) and `OperationService` | Custom GCE MIG workers |
-| OIDC, Cloud SQL, `ignition-controller` | Digest-pinned images |
+| `SandboxService` (lifecycle + process metadata) and `OperationService` | Custom GCE MIG workers |
+| Google OIDC / Cloud IAP auth, SQL project RBAC, Cloud SQL, `ignition-controller` | Digest-pinned images |
 | HTTP/JSON public edge (SSE for watch); `sandbox-init` health/GPU readiness | `ignition-gateway` Dockerfile / Ingress; process exec transport |
 | `secretRefs` (Secret Manager → Pod env), binary outbound internet preference | GCP network-profile provisioning for both internet modes |
 
@@ -198,7 +198,7 @@ Controller RBAC: Pods in `ignition-sandboxes`; ClusterRole get/list/patch Nodes.
 
 ### `ignitionctl`
 
-The binary exists (`cmd/ignitionctl`) but every subcommand returns `not implemented`. Do not use it for this slice; use the `curl` examples below.
+The binary exists (`cmd/ignitionctl`) but every subcommand returns `not implemented`. Use the `curl` examples below.
 
 ---
 
@@ -1068,9 +1068,9 @@ done
 [[ "${SANDBOX_STATE}" == "FINISHED" ]]
 ```
 
-This is the current acceptance boundary. The controller creates and schedules the GPU Pod. `sandbox-init` `/readyz` passes once its local probe (device nodes + `nvidia-smi` + `cuInit()`) succeeds, and `ignition-gpu-agent` independently stamps the canonical `ignition.io/gpu-uuid` + `ignition.io/init-healthy`; the controller advances the sandbox to `READY` only when both hold. If the cold node does not arrive within 600 seconds, inspect the retained events. `FailedScaleUp` with quota exceeded means either the regional L4 or global all-regions GPU quota is insufficient; `CAPACITY_UNAVAILABLE` is the expected public infrastructure failure. Terminating the test sandbox removes the Pod and makes the GPU node eligible for autoscaler scale-down.
+This is the acceptance boundary today. The controller creates and schedules the GPU Pod. `sandbox-init` `/readyz` passes once its local probe (device nodes + `nvidia-smi` + `cuInit()`) succeeds, and `ignition-gpu-agent` independently stamps the canonical `ignition.io/gpu-uuid` + `ignition.io/init-healthy`; the controller advances the sandbox to `READY` only when both hold. If the cold node does not arrive within 600 seconds, inspect the retained events. `FailedScaleUp` with quota exceeded means either the regional L4 or global all-regions GPU quota is insufficient; `CAPACITY_UNAVAILABLE` is the expected public infrastructure failure. Terminating the test sandbox removes the Pod and makes the GPU node eligible for autoscaler scale-down.
 
-Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes token; the GPU attestation annotations come only from `ignition-gpu-agent`, and kubelet PodReady only from probing `sandbox-init`. Process execution and attach verification remain the next slice and additionally require `ignition-gateway`, which is not shipped.
+Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes token; the GPU attestation annotations come only from `ignition-gpu-agent`, and kubelet PodReady only from probing `sandbox-init`. Process execution and attach verification are not built — they require `ignition-gateway` and `sandbox-init` process supervision, neither of which is shipped.
 
 ## What not to do
 
@@ -1086,9 +1086,9 @@ Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes
 - Do not treat node provision time as in-SLO; keep a warm buffer (`min_warm` 1–2) before measuring the 9s path.
 - Do not manage a GCP resource with both `gcloud` and Terraform.
 
-## Next slices (out of scope here)
+## Not covered here
 
-Project, image, and event APIs; digest-pinned images; `ignition-gateway` image; custom Compute Engine workers if GKE cannot meet the SLO. Designs: [Client API](../design/ignition-design-client-api-identity.md), [Data plane](../design/ignition-design-data-plane-networking.md).
+Not built: Project/Image/Secret/Event APIs, digest-pinned images, the `ignition-gateway` image and process exec transport, `ignitionctl`, and the custom Compute Engine worker runtime. Designs: [Client API](../design/ignition-design-client-api-identity.md), [Data plane](../design/ignition-design-data-plane-networking.md).
 
 | Item | Value |
 |---|---|

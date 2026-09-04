@@ -1,6 +1,16 @@
 # Ignition Checkpoint and Restore Design
 
-**Status:** Draft v0.1  
+**Status:** Not implemented — design of record for the deferred custom GCE/MIG worker runtime.
+
+> No checkpoint/restore path is built. The shipped system has no golden startup
+> snapshots, no `ignition-builder`/`snapshotd`, and no `cuda-checkpoint`
+> integration; sandboxes always cold-start from their OCI image on GKE Sandbox
+> nodes, and Spot/host loss fails the sandbox rather than restoring it. This
+> document is retained as the design for the custom Compute Engine runtime, whose
+> gate includes committed golden CPU+GPU memory snapshots that GKE Sandbox does
+> not expose — see
+> [GKE Sandbox — Relationship to the custom runtime](ignition-design-gke-sandbox.md#relationship-to-the-custom-runtime).
+
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 
 ## Scope

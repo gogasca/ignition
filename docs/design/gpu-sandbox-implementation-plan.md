@@ -1,12 +1,18 @@
 # Ignition GPU Sandbox Implementation Plan
 
-**Status:** Draft v0.4 — reconciled initial-production plan  
-**Date:** 2026-08-26  
+**Status:** Not implemented — milestone plan for the deferred custom GCE/MIG worker runtime.
+
+> None of the milestones below have been executed. The shipped system is the
+> [GKE Sandbox](ignition-design-gke-sandbox.md) architecture, built and deployed
+> per the [Implementation guide](../guides/ignition-implementation.md); its own
+> delivery status is tracked there. This plan is retained as the roadmap for the
+> custom Compute Engine runtime, a possible future optimization gated on measured
+> evidence that GKE cannot meet requirements.
+
 **Target:** hostile multi-tenant, allowlisted single-GPU CUDA inference on GCP  
 **Detailed design:** [Ignition Technical Design](ignition-technical-design.md)  
-**Recommended MVP:** [GKE Sandbox MVP](ignition-design-gke-sandbox.md)  
-**Build and deploy the API:** [Implementation guide](../guides/ignition-implementation.md)  
-**Supersession:** this production plan supersedes the earlier monolithic/POC roadmap.
+**Shipped architecture:** [GKE Sandbox](ignition-design-gke-sandbox.md)  
+**Build and deploy the API:** [Implementation guide](../guides/ignition-implementation.md)
 
 ## 1. Executive decision
 
@@ -60,7 +66,7 @@ The canonical customer hierarchy is `organization → project`. Organization is 
 
 ### 3.1 GKE services
 
-1. `ignition-api` — Auth0-compatible OIDC/OAuth validation, project authorization, admission, idempotency, operations, and events.
+1. `ignition-api` — Google OIDC / Cloud IAP token validation, SQL-backed project authorization, admission, idempotency, operations, and events.
 2. `ignition-scheduler` — persistent weighted project fairness, placement, GPU leases, fencing, and desired assignment.
 3. `ignition-worker-control` — SPIFFE mTLS worker streams, owner epochs, commands, acknowledgements, and observations.
 4. `ignition-gateway` — exec data plane.
@@ -88,9 +94,9 @@ Detailed schemas and acceptance tests remain authoritative in the [technical des
 
 - All customer-owned records use non-null `project_id`; tokens and routes use `projectId`.
 - Initial public resources are Project, Image, Secret, Sandbox, Process, Operation, and Event.
-- Human login uses Authorization Code with PKCE or Device Grant.
-- Service accounts use OAuth Client Credentials with `private_key_jwt`.
-- API keys are one-time bootstrap/exchange credentials, not API credentials.
+- Human identity is a Google Workspace account, verified through Cloud IAP in front of the Ingress or as a Google ID token in-cluster.
+- Service accounts present Google ID tokens (`aud` = the Ignition API audience); no privilege cap.
+- First-party RFC 9068 `at+jwt` access tokens are also accepted when configured.
 - Idempotency is scoped to principal, organization, project where present, method, and canonical route.
 - Public schemas contain no writable Volume or public Snapshot resource.
 
@@ -281,7 +287,7 @@ These are initial-production launch targets, not historical guarantees:
 
 ## 8. Remaining decisions
 
-Resolved: Auth0-compatible OIDC, service-account OAuth, organization/project hierarchy, production service split, runtime ownership, writable-Volume exclusion, public-Session exclusion, runtime-recovery exclusion, and Spot-preview independence.
+Resolved: Google OIDC / Cloud IAP identity, service-account ID tokens, organization/project hierarchy, production service split, runtime ownership, writable-Volume exclusion, public-Session exclusion, runtime-recovery exclusion, and Spot-preview independence.
 
 Still to decide through versioned policy or measurement:
 

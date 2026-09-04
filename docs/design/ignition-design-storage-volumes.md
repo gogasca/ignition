@@ -1,19 +1,20 @@
 # Ignition Storage Design
 
-**Status:** Draft v0.2  
+**Status:** Partially built — per-sandbox ephemeral scratch is the only storage class in use. Read-only dataset/artifact mounts and content caches are specified but not built; Volumes and Session snapshots are out of scope.
+
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 
 ## Scope and explicit exclusions
 
-Initial production storage is limited to immutable images, per-sandbox ephemeral scratch, authorized read-only dataset/artifact mounts, and content caches.
+Sandbox storage is a writable `/scratch` emptyDir plus the immutable OCI image. Authorized read-only dataset/artifact mounts and content caches are designed below but not implemented.
 
-Initial production does **not** offer:
+Ignition does **not** offer:
 
 - a persistent writable `Volume` resource or writable persistent mount;
 - a public SESSION memory-snapshot/checkpoint resource or API;
 - restore, clone, migrate, durability, writer fencing, detach/flush, or crash-consistency promises for either feature.
 
-Persistent writable volumes and public SESSION memory snapshots are post-v1 design work. They require an explicitly selected backend and defined regional placement, durability, consistency, fencing, backup/restore, encryption, quota, billing, and lifecycle semantics before any public resource, endpoint, SDK handle, or permission is introduced. Internal runtime checkpointing, if used for platform recovery, is not tenant-visible and creates no public persistence guarantee.
+Persistent writable volumes and public SESSION memory snapshots are out of scope. They would require an explicitly selected backend and defined regional placement, durability, consistency, fencing, backup/restore, encryption, quota, billing, and lifecycle semantics before any public resource, endpoint, SDK handle, or permission is introduced.
 
 ## Initial storage classes
 
@@ -74,7 +75,7 @@ Measure image import bytes/status/latency, immutable-object verification failure
 
 ## Acceptance
 
-- Public OpenAPI, SDK, CLI, permissions, and resource schemas contain no Volume or SESSION snapshot resource/endpoint/handle in initial production.
+- Public OpenAPI, SDK, CLI, permissions, and resource schemas contain no Volume or SESSION snapshot resource/endpoint/handle.
 - Documentation and failure-injection tests demonstrate that worker loss destroys scratch and reschedules with empty scratch.
 - Dataset/artifact mounts remain read-only under direct writes, remount attempts, and sandbox privilege escalation.
 - No temporary import becomes visible as a ready catalog reference.
