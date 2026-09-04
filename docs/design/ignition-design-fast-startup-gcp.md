@@ -146,6 +146,30 @@ the composition record. The generic path ignores the record.
    - **S1 application** — everything else. Target ≤ 2 GB; admission surfaces
      what pushed it above 4 GB.
 
+### Corpus index: `nydus-image` as the analyzer
+
+The corpus index does not need a new chunker. `ignition-strata` runs
+`nydus-image create` (Nydus RAFS v6) over each admitted image's layers at
+admission, purely as an offline analyzer: it yields content-addressed chunk
+digests, per-file chunk lists, and cross-image chunk-level dedup statistics
+without deploying `nydusd`, a snapshotter, or any node-side component. The
+classifier consumes those statistics to choose S0 sets (chunk sets shared by
+many images) and to detect S2 candidates that already exist in another image.
+
+Two consequences:
+
+- the sharing measurements in the rollout come from a mature, already-qualified
+  tool rather than a bespoke chunker;
+- the same run can emit a RAFS v6 representation for free, so if the custom GCE
+  gate ever trips, Nydus — the first candidate in
+  [Image Data Layer — Backend qualification order](ignition-design-image-datalayer.md#backend-qualification-order)
+  — has its inputs already in the catalog.
+
+Nydus is **not** used at runtime on the shipped GKE path: GKE owns containerd on
+managed nodes, GKE Sandbox requires `cos_containerd`, and gVisor is not among
+Nydus's supported runtimes. Image streaming and secondary boot disks remain the
+S0/S1 delivery path on GKE.
+
 ### Re-layering (S0 + S1)
 
 The delivery representation is a new OCI manifest over the *same* flattened
@@ -413,8 +437,10 @@ To be measured before commitment, in this order:
 1. **Spike (2–3 weeks, one L4 pool):** Pod Snapshot build/restore of a
    representative vLLM image with weights on a ROX pd-ssd; measure the restore
    timeline, fault stalls, and snapshot size; settle feasibility items 1–3.
-2. **Strata v0:** classification and S2 disk publishing only; images still
-   pulled whole; measure sharing and attach behaviour on real customer images.
+2. **Strata v0:** `nydus-image` analysis over the admitted corpus, the corpus
+   index, classification, and S2 disk publishing only; images still pulled
+   whole; measure chunk-level sharing and attach behaviour on real customer
+   images.
 3. **Re-layering** as an alternative representation under the differential
    verifier; cold-start comparison against the source representation.
 4. **Content-derived cache epochs** on a new pool generation; roll-over
@@ -434,4 +460,5 @@ To be measured before commitment, in this order:
 - [Compute Engine — share disks between instances](https://docs.cloud.google.com/compute/docs/disks/sharing-disks-between-vms)
 - [Hyperdisk ML](https://docs.cloud.google.com/compute/docs/disks/hd-types/hyperdisk-ml)
 - [GKE Sandbox](https://docs.cloud.google.com/kubernetes-engine/docs/concepts/sandbox-pods)
+- [Nydus](https://github.com/dragonflyoss/nydus) — `nydus-image` used as an offline chunk/dedup analyzer only
 - [gVisor issue #12600](https://github.com/google/gvisor/issues/12600)
