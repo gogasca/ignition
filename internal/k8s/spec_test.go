@@ -137,6 +137,36 @@ func TestSandboxPodNetworkProfile(t *testing.T) {
 	}
 }
 
+func TestSandboxPodNativeEntrypoint(t *testing.T) {
+	sb := store.Sandbox{
+		ID:               "sbx_native0000000000",
+		ProjectID:        "prj_dev",
+		ImageID:          "img_seed",
+		NativeEntrypoint: true,
+		Resources:        store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+		Timeouts:         store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
+	}
+	c := k8s.SandboxPod(sb, "docker.io/library/nginx@sha256:abc").Spec.Containers[0]
+	if len(c.Command) != 0 {
+		t.Fatalf("native entrypoint must not override Command, got %v", c.Command)
+	}
+	if c.Port != 0 || c.LivenessPath != "" || c.ReadinessPath != "" {
+		t.Fatalf("native entrypoint must not probe a supervisor: port %d liveness %q readiness %q", c.Port, c.LivenessPath, c.ReadinessPath)
+	}
+	p := k8s.SandboxPod(sb, "docker.io/library/nginx@sha256:abc")
+	if p.Annotations[k8s.AnnotNativeEntrypoint] != "true" {
+		t.Fatalf("native entrypoint annotation = %q", p.Annotations[k8s.AnnotNativeEntrypoint])
+	}
+}
+
+func TestSandboxPodManagedEntrypointAnnotation(t *testing.T) {
+	sb := store.Sandbox{ID: "sbx_managed000000000", ProjectID: "prj_dev", ImageID: "img_seed"}
+	p := k8s.SandboxPod(sb, "img@sha256:abc")
+	if p.Annotations[k8s.AnnotNativeEntrypoint] != "false" {
+		t.Fatalf("managed entrypoint annotation = %q", p.Annotations[k8s.AnnotNativeEntrypoint])
+	}
+}
+
 func TestFakeCreateIdempotent(t *testing.T) {
 	f := k8s.NewFake()
 	p := &k8s.Pod{Name: "sbx-a", Namespace: k8s.Namespace}

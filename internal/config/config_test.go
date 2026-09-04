@@ -3,6 +3,7 @@ package config_test
 import (
 	"strings"
 	"testing"
+	"time"
 
 	"ignition.dev/ignition/internal/config"
 )
@@ -107,6 +108,63 @@ func TestLoadMaxWarmZeroDisablesPool(t *testing.T) {
 	}
 	if cfg.MinWarm != 0 || cfg.MaxWarm != 0 {
 		t.Fatalf("warm bounds = %d/%d, want 0/0", cfg.MinWarm, cfg.MaxWarm)
+	}
+}
+
+func TestLoadCPUWarmDisabledByDefault(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MinWarmCPU != 0 || cfg.MaxWarmCPU != 0 {
+		t.Fatalf("CPU warm bounds = %d/%d, want 0/0 (opt-in only)", cfg.MinWarmCPU, cfg.MaxWarmCPU)
+	}
+	if cfg.WarmWindow != 15*time.Minute || cfg.NodeProvisionTime != 4*time.Minute {
+		t.Fatalf("warm timing = %s/%s, want 15m/4m", cfg.WarmWindow, cfg.NodeProvisionTime)
+	}
+}
+
+func TestLoadWarmTiming(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_WARM_WINDOW_SECONDS", "300")
+	t.Setenv("IGNITION_NODE_PROVISION_SECONDS", "90")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.WarmWindow != 5*time.Minute || cfg.NodeProvisionTime != 90*time.Second {
+		t.Fatalf("warm timing = %s/%s", cfg.WarmWindow, cfg.NodeProvisionTime)
+	}
+}
+
+func TestLoadRejectsNonPositiveWarmTiming(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_WARM_WINDOW_SECONDS", "0")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "IGNITION_WARM_WINDOW_SECONDS") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
+func TestLoadCPUWarmCeilingDefaultsFloorToOne(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_MAX_WARM_CPU", "4")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MinWarmCPU != 1 || cfg.MaxWarmCPU != 4 {
+		t.Fatalf("CPU warm bounds = %d/%d, want 1/4", cfg.MinWarmCPU, cfg.MaxWarmCPU)
+	}
+}
+
+func TestLoadRejectsExplicitMinAboveMaxCPU(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_MIN_WARM_CPU", "5")
+	t.Setenv("IGNITION_MAX_WARM_CPU", "1")
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "IGNITION_MIN_WARM_CPU") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

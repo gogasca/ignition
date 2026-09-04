@@ -258,6 +258,14 @@ func (p *Postgres) SeedImage(projectID, imageID string) {
 		ON CONFLICT (project_id, image_id) DO UPDATE SET state = 'READY'`, projectID, imageID)
 }
 
+func (p *Postgres) SeedSecret(projectID, secretID string) {
+	ctx := context.Background()
+	_, _ = p.pool.Exec(ctx, `INSERT INTO projects (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, projectID)
+	_, _ = p.pool.Exec(ctx, `
+		INSERT INTO secrets (project_id, secret_id) VALUES ($1, $2)
+		ON CONFLICT (project_id, secret_id) DO NOTHING`, projectID, secretID)
+}
+
 func (p *Postgres) SetSandboxState(projectID, sandboxID, state string) {
 	ctx := context.Background()
 	if state == "READY" {

@@ -133,6 +133,56 @@ func TestCreateSandboxAccepted(t *testing.T) {
 	}
 }
 
+// TestCreateSandboxRejectsUnregisteredSecret guards against a project naming
+// a secretId that was never registered to it. Before this check, any
+// principal with sandbox.create could name any secretId syntactically valid
+// under ValidImageID and the controller would resolve it from Secret Manager
+// with its own identity, regardless of which project asked.
+func TestCreateSandboxRejectsUnregisteredSecret(t *testing.T) {
+	h := newHarness(t)
+	h.mem.SeedSecret("prj_other", "sec_token") // registered to a different project
+	body := `{
+		"imageId": "img_seed",
+		"resources": {"cpuMilli": 1000, "memoryMiB": 2048, "accelerator": {"count": 1, "type": "NVIDIA_L4"}},
+		"secretRefs": [{"secretId": "sec_token", "environmentName": "TOKEN"}]
+	}`
+	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "sec-1", body)
+	out := decode(t, resp)
+	if resp.StatusCode != http.StatusNotFound || out["code"] != "NOT_FOUND" {
+		t.Fatalf("status=%d code=%v, want 404 NOT_FOUND", resp.StatusCode, out["code"])
+	}
+}
+
+func TestCreateSandboxAcceptsRegisteredSecret(t *testing.T) {
+	h := newHarness(t)
+	h.mem.SeedSecret("prj_dev", "sec_token")
+	body := `{
+		"imageId": "img_seed",
+		"resources": {"cpuMilli": 1000, "memoryMiB": 2048, "accelerator": {"count": 1, "type": "NVIDIA_L4"}},
+		"secretRefs": [{"secretId": "sec_token", "version": "3", "environmentName": "TOKEN"}]
+	}`
+	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "sec-2", body)
+	out := decode(t, resp)
+	if resp.StatusCode != http.StatusAccepted {
+		t.Fatalf("status=%d body=%v", resp.StatusCode, out)
+	}
+}
+
+func TestCreateSandboxRejectsInvalidSecretVersion(t *testing.T) {
+	h := newHarness(t)
+	h.mem.SeedSecret("prj_dev", "sec_token")
+	body := `{
+		"imageId": "img_seed",
+		"resources": {"cpuMilli": 1000, "memoryMiB": 2048, "accelerator": {"count": 1, "type": "NVIDIA_L4"}},
+		"secretRefs": [{"secretId": "sec_token", "version": "01", "environmentName": "TOKEN"}]
+	}`
+	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "sec-3", body)
+	out := decode(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || out["code"] != "INVALID_ARGUMENT" {
+		t.Fatalf("status=%d code=%v", resp.StatusCode, out["code"])
+	}
+}
+
 func TestCreateSandboxIgnoresUnknownFields(t *testing.T) {
 	h := newHarness(t)
 	// A newer client field the server does not know must not fail the request.

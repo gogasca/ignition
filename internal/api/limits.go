@@ -19,7 +19,24 @@ const (
 	maxSecretRefs     = 16
 	maxIdempotencyKey = 128
 	maxRequestIDLen   = 128
+	maxSourceRefLen   = 512
 )
+
+// checkSourceRef bounds the length of an image reference before it reaches
+// the resolver. It intentionally does not otherwise restrict which registry
+// or reference a project may name — the image data layer design's registry
+// identity/signature/provenance/policy checks are not implemented (see
+// docs/design/ignition-design-image-datalayer.md); admission here is purely
+// digest-pinning, not a security gate.
+func checkSourceRef(ref string) error {
+	if ref == "" {
+		return fmt.Errorf("sourceRef is required")
+	}
+	if len(ref) > maxSourceRefLen {
+		return fmt.Errorf("sourceRef is too long")
+	}
+	return nil
+}
 
 var allowedSignals = map[string]struct{}{
 	"SIGTERM": {},
@@ -74,6 +91,9 @@ func checkSecretRefs(refs []store.SecretRef) error {
 	for _, ref := range refs {
 		if ref.SecretID == "" || !store.ValidImageID(ref.SecretID) {
 			return fmt.Errorf("secretRefs.secretId is invalid")
+		}
+		if !store.ValidSecretVersion(ref.Version) {
+			return fmt.Errorf("secretRefs.version is invalid")
 		}
 		if ref.EnvironmentName == "" || !envNameRe.MatchString(ref.EnvironmentName) {
 			return fmt.Errorf("secretRefs.environmentName is invalid")

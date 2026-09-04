@@ -178,7 +178,10 @@ Tables (`internal/store/schema.sql`, embedded by the API): `projects`, `role_bin
 | `IGNITION_DEFAULT_RUNTIME` | API | JSON `RuntimeSpec` merged over the built-in CPU default; validated at startup |
 | `IGNITION_MAX_ACTIVE_SANDBOXES` | API | per-project quota |
 | `IGNITION_K8S_NAMESPACE` | controller | default `ignition-sandboxes` |
-| `IGNITION_MIN_WARM` / `IGNITION_MAX_WARM` | controller | balloon Pods |
+| `IGNITION_MIN_WARM` / `IGNITION_MAX_WARM` | controller | NVIDIA L4 warm-node balloon floor / ceiling |
+| `IGNITION_MIN_WARM_CPU` / `IGNITION_MAX_WARM_CPU` | controller | CPU warm-node balloon floor / ceiling; defaults to `0` / `0` (disabled) |
+| `IGNITION_WARM_WINDOW_SECONDS` | controller | rolling create-rate window; default `900` |
+| `IGNITION_NODE_PROVISION_SECONDS` | controller | node replenishment horizon; default `240` |
 | `IGNITION_SANDBOX_IMAGE_PREFIX` | controller | Artifact Registry prefix, e.g. `us-central1-docker.pkg.dev/${PROJECT}/sandboxes` |
 | `IGNITION_GCP_PROJECT` | controller | used to compose the image prefix and Secret Manager project |
 

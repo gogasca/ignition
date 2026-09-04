@@ -23,6 +23,10 @@ const (
 	AnnotCommand      = "ignition.io/tenant-command"
 	AnnotProcDesired  = "ignition.io/process-desired"
 	AnnotProcObserved = "ignition.io/process-observed"
+	// AnnotNativeEntrypoint records whether the sandbox runs the admitted
+	// image's own OCI Entrypoint/Cmd (unmanaged) instead of Ignition's
+	// sandbox-init supervisor. Observability only; nothing reads it back.
+	AnnotNativeEntrypoint = "ignition.io/native-entrypoint"
 
 	AnnotScaleDownDisabled = "cluster-autoscaler.kubernetes.io/scale-down-disabled"
 
@@ -30,6 +34,18 @@ const (
 	// (or a mis-sequenced Pod teardown) sets when a GPU cannot be proven clean
 	// for reuse. The controller cordons the node so GKE recreates it fresh.
 	GPUCleanupAmbiguous = "ambiguous"
+
+	// GPUReusePendingTaintKey blocks new scheduling on a GPU sandbox node
+	// between "the previous sandbox Pod is gone" and "ignition-gpu-agent has
+	// verified the GPU carries no residual compute processes". The controller
+	// applies it when it deletes a GPU sandbox Pod; ignition-gpu-agent applies
+	// it independently at the start of every reuse check (covering teardowns
+	// the controller never observed, e.g. WORKER_LOST) and clears it only
+	// after a clean verdict. A dirty verdict leaves it set — the existing
+	// cordon-and-recreate path replaces the node, which comes back untainted.
+	// Sandbox and balloon Pods do not tolerate this taint, so kube-scheduler
+	// alone enforces the gate; nothing here reads it back.
+	GPUReusePendingTaintKey = "ignition.io/gpu-reuse-pending"
 
 	PrioritySandbox = "ignition-sandbox"
 	PriorityBalloon = "ignition-balloon"
@@ -133,4 +149,9 @@ type Nodes interface {
 	// ignition.io/gpu-cleanup=ambiguous annotation set by ignition-gpu-agent
 	// after a failed reuse check. A missing node reports (false, nil).
 	GPUCleanupAmbiguous(nodeName string) (bool, error)
+	// SetGPUReusePending sets or clears the GPUReusePendingTaintKey taint on
+	// nodeName, blocking (or unblocking) new sandbox/balloon scheduling there
+	// until ignition-gpu-agent confirms the GPU is clean for reuse. A missing
+	// node is not an error.
+	SetGPUReusePending(nodeName string, pending bool) error
 }

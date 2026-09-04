@@ -2,9 +2,13 @@ package controller_test
 
 import (
 	"context"
+	"fmt"
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
+	"ignition.dev/ignition/internal/adminz"
 	"ignition.dev/ignition/internal/controller"
 	"ignition.dev/ignition/internal/k8s"
 	"ignition.dev/ignition/internal/store"
@@ -407,6 +411,70 @@ func TestCleanNodeNotCordonedOnTeardown(t *testing.T) {
 	}
 }
 
+// TestGPUTeardownTaintsNodeReusePending guards F3: the controller must block
+// new scheduling on a GPU sandbox's node the moment it deletes that sandbox's
+// Pod, not wait for ignition-gpu-agent's next tick, since the container ran
+// with the GPU bound before any attestation happened.
+func TestGPUTeardownTaintsNodeReusePending(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	res := admit(t, m, store.TimeoutSpec{})
+	ctx := context.Background()
+	_ = c.Reconcile(ctx)
+	name := k8s.PodName(res.Sandbox.ID)
+	fake.SetScheduled(name, "gke-node-9")
+	fake.SetReady(name, k8s.FakeGPUUUID)
+	_ = c.Reconcile(ctx)
+
+	if fake.GPUReusePending("gke-node-9") {
+		t.Fatal("node tainted before teardown was requested")
+	}
+	if _, err := m.TerminateSandbox(ctx, "prj_dev", res.Sandbox.ID, "alice", "t", "h", "tr"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if !fake.GPUReusePending("gke-node-9") {
+		t.Fatal("node was not tainted reuse-pending on GPU sandbox teardown")
+	}
+}
+
+// TestCPUTeardownDoesNotTaintNode guards against over-applying F3's fix: CPU
+// sandboxes have no GPU to protect and must not pay the reuse-pending gate.
+func TestCPUTeardownDoesNotTaintNode(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	m.SeedImage("prj_dev", "img_seed")
+	ctx := context.Background()
+	res, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
+		ProjectID: "prj_dev", Principal: "alice", IdemKey: "cpu", IdemHash: "cpu",
+		ImageID:   "img_seed",
+		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	_ = c.Reconcile(ctx)
+	name := k8s.PodName(res.Sandbox.ID)
+	fake.SetScheduled(name, "cpu-node-1")
+	fake.SetKubeReady(name)
+	_ = c.Reconcile(ctx)
+	if _, err := m.TerminateSandbox(ctx, "prj_dev", res.Sandbox.ID, "alice", "t", "h", "tr"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if fake.GPUReusePending("cpu-node-1") {
+		t.Fatal("CPU sandbox teardown tainted the node")
+	}
+}
+
 func TestLeasePreventsStandbyMutations(t *testing.T) {
 	m := store.NewMemory()
 	fake := k8s.NewFake()
@@ -426,6 +494,55 @@ func TestLeasePreventsStandbyMutations(t *testing.T) {
 	}
 	if fake.Creates != 1 {
 		t.Fatalf("standby mutated cluster: %d", fake.Creates)
+	}
+}
+
+// leaseFlipStore wraps *store.Memory and makes every HoldLease call after the
+// first fail, simulating another replica taking the lease mid-pass.
+type leaseFlipStore struct {
+	*store.Memory
+	calls int
+}
+
+func (s *leaseFlipStore) HoldLease(ctx context.Context, holder string, now time.Time, ttl time.Duration) (bool, error) {
+	s.calls++
+	if s.calls > 1 {
+		return false, nil
+	}
+	return s.Memory.HoldLease(ctx, holder, now, ttl)
+}
+
+// TestReconcileStopsMutatingOnMidPassLeaseLoss guards the fix in
+// reconcileOnce: a long pass (bounded ListSandboxesAll can still return many
+// active rows) must re-check lease ownership every leaseRenewBatch sandboxes,
+// not just once at the start, so a standby that has since taken the lease
+// cannot race the previous holder's Pod mutations for the rest of the pass.
+func TestReconcileStopsMutatingOnMidPassLeaseLoss(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	wrapped := &leaseFlipStore{Memory: m}
+	c := controller.New(wrapped, fake, fake, controller.Options{HolderID: "a", LeaseTTL: 10 * time.Second})
+
+	m.SeedImage("prj_dev", "img_seed")
+	const total = 55
+	for i := 0; i < total; i++ {
+		key := fmt.Sprintf("k%d", i)
+		if _, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
+			ProjectID: "prj_dev", Principal: "alice", IdemKey: key, IdemHash: key,
+			ImageID:   "img_seed",
+			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+			MaxActive: total,
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if fake.Creates != 50 {
+		t.Fatalf("Creates = %d, want exactly leaseRenewBatch (50) before the mid-pass lease check stopped the pass", fake.Creates)
 	}
 }
 
@@ -520,6 +637,164 @@ func TestBalloonsMatchMinWarm(t *testing.T) {
 	}
 }
 
+func TestBalloonsTrackRecentCreateRate(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	res := admit(t, m, store.TimeoutSpec{})
+	now := res.Sandbox.CreateTime.Add(time.Second)
+	c := controller.New(m, fake, fake, controller.Options{
+		MaxWarm:           8,
+		WarmWindow:        time.Minute,
+		NodeProvisionTime: time.Minute,
+		Now:               func() time.Time { return now },
+	})
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := fake.List()
+	balloons := 0
+	for _, p := range list {
+		if p.Labels[k8s.LabelWorkload] == k8s.WorkloadBalloon && p.Annotations[k8s.AnnotGPUType] == store.AcceleratorNVIDIAL4 {
+			balloons++
+		}
+	}
+	// One create/minute * one minute replenishment * 1.3 safety, rounded up.
+	if balloons != 2 {
+		t.Fatalf("GPU balloons = %d, want 2", balloons)
+	}
+}
+
+// GPU and CPU warm buffers scale independently: each class's MinWarm is met
+// without the two classes' balloons being confused for one another, and a
+// CPU balloon requests no GPU and lands on the CPU sandbox pool.
+func TestBalloonsGPUAndCPUIndependent(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{
+		MinWarm: 2, MaxWarm: 8,
+		MinWarmCPU: 1, MaxWarmCPU: 8,
+	})
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := fake.List()
+	gpuBalloons, cpuBalloons := 0, 0
+	for _, p := range list {
+		if p.Labels[k8s.LabelWorkload] != k8s.WorkloadBalloon {
+			continue
+		}
+		switch p.Annotations[k8s.AnnotGPUType] {
+		case store.AcceleratorNVIDIAL4:
+			gpuBalloons++
+			if p.Spec.Containers[0].GPU != "1" {
+				t.Fatal("GPU balloon must request a GPU")
+			}
+			if p.Spec.NodeSelector[k8s.NodePoolLabel] != k8s.GPUNodePoolValue {
+				t.Fatalf("GPU balloon node pool = %v", p.Spec.NodeSelector)
+			}
+		case store.AcceleratorNone:
+			cpuBalloons++
+			if p.Spec.Containers[0].GPU != "" {
+				t.Fatalf("CPU balloon must not request a GPU, got %q", p.Spec.Containers[0].GPU)
+			}
+			if p.Spec.NodeSelector[k8s.NodePoolLabel] != k8s.CPUNodePoolValue {
+				t.Fatalf("CPU balloon node pool = %v", p.Spec.NodeSelector)
+			}
+		default:
+			t.Fatalf("balloon with unexpected class annotation %q", p.Annotations[k8s.AnnotGPUType])
+		}
+	}
+	if gpuBalloons != 2 {
+		t.Fatalf("GPU balloons = %d, want 2", gpuBalloons)
+	}
+	if cpuBalloons != 1 {
+		t.Fatalf("CPU balloons = %d, want 1", cpuBalloons)
+	}
+}
+
+// With CPU warm capacity disabled (the default), only the GPU buffer forms —
+// closing this gap is opt-in, not automatic, so existing deployments' node
+// spend does not change on upgrade.
+func TestBalloonsCPUDisabledByDefault(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{MinWarm: 1, MaxWarm: 8})
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := fake.List()
+	for _, p := range list {
+		if p.Labels[k8s.LabelWorkload] == k8s.WorkloadBalloon && p.Annotations[k8s.AnnotGPUType] == store.AcceleratorNone {
+			t.Fatal("CPU balloon created with CPU warm capacity disabled")
+		}
+	}
+}
+
+// The controller records a startup-stage latency sample the moment a
+// sandbox first reaches each state, and only then — never on a repeated
+// observation of an already-reached state (which reconcileSandbox's rank
+// guard prevents from calling observeWrite at all).
+func TestReconcileRecordsStageLatency(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	reg := prometheus.NewRegistry()
+	metrics := adminz.NewReconcileMetrics(reg, adminz.NewRecorder(10))
+	c := controller.New(m, fake, fake, controller.Options{Metrics: metrics})
+	res := admit(t, m, store.TimeoutSpec{})
+	ctx := context.Background()
+
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	name := k8s.PodName(res.Sandbox.ID)
+
+	// Walk each transition separately (as TestReconcileStateMachine does):
+	// observe() reports only the pod's current snapshot, so setting all three
+	// booleans at once would skip straight to READY and record no SCHEDULED
+	// or STARTED sample at all.
+	fake.SetScheduled(name, "gke-node-1")
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fake.SetRunning(name)
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fake.SetReady(name, "GPU-1")
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Reconcile again: the sandbox is already READY, so this must not add a
+	// second READY sample.
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]uint64{}
+	for _, f := range families {
+		if f.GetName() != "ignition_sandbox_stage_latency_seconds" {
+			continue
+		}
+		for _, metric := range f.GetMetric() {
+			for _, lbl := range metric.GetLabel() {
+				if lbl.GetName() == "state" {
+					counts[lbl.GetValue()] = metric.GetHistogram().GetSampleCount()
+				}
+			}
+		}
+	}
+	if counts["READY"] != 1 {
+		t.Fatalf("READY samples = %d, want exactly 1 (no re-observation)", counts["READY"])
+	}
+	if counts["SCHEDULED"] != 1 || counts["STARTED"] != 1 {
+		t.Fatalf("stage samples = %+v, want one SCHEDULED and one STARTED", counts)
+	}
+}
+
 func TestCPUSupervisorBackedKubeReadyIsPublicReady(t *testing.T) {
 	m := store.NewMemory()
 	fake := k8s.NewFake()
@@ -544,6 +819,45 @@ func TestCPUSupervisorBackedKubeReadyIsPublicReady(t *testing.T) {
 	}
 	if mustGet(t, m, res.Sandbox.ID).State != "READY" {
 		t.Fatalf("CPU sandbox: supervisor-backed PodReady must be READY, got %s", mustGet(t, m, res.Sandbox.ID).State)
+	}
+}
+
+// A CPU sandbox with no sandbox-init in its image (NativeEntrypoint) must
+// still reach public READY on kubelet PodReady alone — the only signal
+// available when there is no /readyz to gate on — and its Pod must run the
+// image's own entrypoint, not /ignition/init.
+func TestCPUNativeEntrypointKubeReadyIsPublicReady(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	m.SeedImage("prj_dev", "img_seed")
+	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
+		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
+		ImageID:          "img_seed",
+		NativeEntrypoint: true,
+		Resources:        store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+		Timeouts:         store.TimeoutSpec{StartupSeconds: 120},
+		MaxActive:        10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	_ = c.Reconcile(ctx)
+	name := k8s.PodName(res.Sandbox.ID)
+	pod, err := fake.Get(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(pod.Spec.Containers[0].Command) != 0 {
+		t.Fatalf("native entrypoint sandbox must not run /ignition/init, got %v", pod.Spec.Containers[0].Command)
+	}
+	fake.SetKubeReady(name)
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if mustGet(t, m, res.Sandbox.ID).State != "READY" {
+		t.Fatalf("native entrypoint CPU sandbox: PodReady must be READY, got %s", mustGet(t, m, res.Sandbox.ID).State)
 	}
 }
 
@@ -624,6 +938,44 @@ func TestResolveImageUsesConfiguredPrefix(t *testing.T) {
 	want := "us-central1-docker.pkg.dev/my-gcp/sandboxes/img_seed"
 	if p.Spec.Containers[0].Image != want {
 		t.Fatalf("image = %q", p.Spec.Containers[0].Image)
+	}
+}
+
+// A catalog image with a pinned RegistryRef (created via the image
+// admission API, not SeedImage) schedules the Pod on that digest-pinned
+// reference, never the mutable-tag prefix path.
+func TestResolveImagePrefersCatalogDigest(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{
+		ImagePrefix: "us-central1-docker.pkg.dev/my-gcp/sandboxes",
+	})
+	if _, err := m.CreateImage(context.Background(), store.CreateImageInput{
+		ProjectID: "prj_dev", ImageID: "img_pinned",
+		SourceRef: "docker.io/library/nginx:1.27", Digest: "sha256:abc",
+		RegistryRef: "docker.io/library/nginx@sha256:abc",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
+		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
+		ImageID:   "img_pinned",
+		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	p, err := fake.Get(k8s.PodName(res.Sandbox.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Spec.Containers[0].Image != "docker.io/library/nginx@sha256:abc" {
+		t.Fatalf("image = %q, want the pinned digest reference", p.Spec.Containers[0].Image)
 	}
 }
 

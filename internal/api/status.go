@@ -49,6 +49,14 @@ func writeStoreError(w http.ResponseWriter, requestID string, err error) {
 		writeStatus(w, requestID, http.StatusConflict, "IDEMPOTENCY_IN_PROGRESS", "duplicate request in progress", true, 1)
 	case errors.Is(err, store.ErrImageNotReady):
 		writeStatus(w, requestID, http.StatusBadRequest, "IMAGE_NOT_READY", "image is not admitted", false, 0)
+	case errors.Is(err, store.ErrImageAlreadyExists):
+		writeStatus(w, requestID, http.StatusConflict, "IMAGE_ALREADY_EXISTS", "imageId already registered in this project", false, 0)
+	case errors.Is(err, store.ErrSecretNotFound):
+		// Deliberately the same NOT_FOUND shape as a cross-project object ID
+		// (see the identity design's indistinguishable-404 rule): a secretId
+		// that exists in a different project must not be distinguishable from
+		// one that does not exist at all.
+		writeStatus(w, requestID, http.StatusNotFound, "NOT_FOUND", "not found", false, 0)
 	case errors.Is(err, store.ErrQuotaExceeded):
 		writeStatus(w, requestID, http.StatusTooManyRequests, "QUOTA_EXCEEDED", "project sandbox quota exceeded", true, 30)
 	case errors.Is(err, store.ErrFailedPrecondition):

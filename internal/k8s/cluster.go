@@ -7,6 +7,7 @@ import (
 	"os"
 	"time"
 
+	corev1 "k8s.io/api/core/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/types"
@@ -147,6 +148,43 @@ func (c *Cluster) CordonAndDelete(nodeName string) error {
 	_, err = c.client.CoreV1().Nodes().Patch(ctx, nodeName, types.MergePatchType, patch, metav1.PatchOptions{})
 	if apierrors.IsNotFound(err) {
 		return ErrNotFound
+	}
+	return err
+}
+
+// SetGPUReusePending sets or clears the GPUReusePendingTaintKey taint. spec.taints
+// is a list, so this is a read-modify-write Update (a JSON merge patch would
+// replace the whole array and silently drop the infra-set gpu-sandbox taint);
+// Update rejects on a concurrent resourceVersion conflict rather than
+// clobbering it, and the caller treats that as a benign, retried-next-pass
+// failure. A missing node is not an error: it may already have been replaced
+// by the cordon-and-recreate path.
+func (c *Cluster) SetGPUReusePending(nodeName string, pending bool) error {
+	ctx, cancel := c.ctx()
+	defer cancel()
+	node, err := c.client.CoreV1().Nodes().Get(ctx, nodeName, metav1.GetOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
+	}
+	if err != nil {
+		return err
+	}
+	if node.Labels[GPUNodePoolLabel] != GPUNodePoolValue {
+		return ErrCordonRefused
+	}
+	taints := make([]corev1.Taint, 0, len(node.Spec.Taints)+1)
+	for _, t := range node.Spec.Taints {
+		if t.Key != GPUReusePendingTaintKey {
+			taints = append(taints, t)
+		}
+	}
+	if pending {
+		taints = append(taints, corev1.Taint{Key: GPUReusePendingTaintKey, Value: "true", Effect: corev1.TaintEffectNoSchedule})
+	}
+	node.Spec.Taints = taints
+	_, err = c.client.CoreV1().Nodes().Update(ctx, node, metav1.UpdateOptions{})
+	if apierrors.IsNotFound(err) {
+		return nil
 	}
 	return err
 }

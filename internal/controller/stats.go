@@ -19,6 +19,7 @@ type ControllerStats struct {
 	SandboxesByState  map[string]int
 	Balloons          int
 	MinWarm           int
+	MinWarmCPU        int
 }
 
 type statsHolder struct {
@@ -67,6 +68,7 @@ func (c *Controller) Stats() ControllerStats {
 	s := c.stats.snapshot()
 	s.HolderID = c.opts.HolderID
 	s.MinWarm = c.opts.MinWarm
+	s.MinWarmCPU = c.opts.MinWarmCPU
 	return s
 }
 
@@ -85,7 +87,7 @@ func (c *Controller) StatusSections() []adminz.Section {
 		{"last duration", s.LastDuration.Round(time.Microsecond).String()},
 		{"consecutive errors", itoa(s.ConsecutiveErrors)},
 		{"last error", orDash(s.LastError)},
-		{"warm pool", itoa(s.Balloons) + " / min " + itoa(s.MinWarm)},
+		{"warm pool", itoa(s.Balloons) + " total / min GPU " + itoa(s.MinWarm) + " / min CPU " + itoa(s.MinWarmCPU)},
 	}
 	sections := []adminz.Section{{Title: "reconcile", Rows: rows}}
 	if len(s.SandboxesByState) > 0 {

@@ -9,6 +9,13 @@ import (
 func boolPtr(v bool) *bool    { return &v }
 func int64Ptr(v int64) *int64 { return &v }
 
+func boolStr(v bool) string {
+	if v {
+		return "true"
+	}
+	return "false"
+}
+
 // SandboxPod is the server-owned GKE Sandbox profile. Client fields never
 // become hooks, hostPath, capabilities, or scheduling directives.
 func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
@@ -72,24 +79,8 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 		AntiAffinityHostname:         profile.AntiAffinity,
 		RunAsNonRoot:                 true,
 		SeccompRuntimeDefault:        true,
-		Containers: []Container{{
-			Name:            "sandbox",
-			Image:           imageRef,
-			Command:         []string{"/ignition/init"},
-			Env:             env,
-			WorkingDir:      sb.WorkingDir,
-			CPUMilli:        cpu,
-			MemoryMiB:       mem,
-			GPU:             profile.GPUQuantity,
-			AllowPrivEsc:    false,
-			DropAllCaps:     true,
-			ReadOnlyRootFS:  true,
-			VolumeMountPath: "/scratch",
-			Port:            8081,
-			LivenessPath:    "/healthz",
-			ReadinessPath:   "/readyz",
-		}},
-		Volumes: []Volume{{Name: "scratch", EmptyDir: true, SizeLimit: "20Gi"}},
+		Containers:                   []Container{sandboxContainer(sb, imageRef, profile, cpu, mem, env)},
+		Volumes:                      []Volume{{Name: "scratch", EmptyDir: true, SizeLimit: "20Gi"}},
 	}
 	if profile.TaintKey != "" {
 		spec.Tolerations = []Toleration{{
@@ -106,47 +97,87 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 			LabelNetworkAccess: networkAccess,
 		},
 		Annotations: map[string]string{
-			AnnotImageID: sb.ImageID,
-			AnnotCommand: string(cmdJSON),
-			AnnotGPUType: accel,
+			AnnotImageID:          sb.ImageID,
+			AnnotCommand:          string(cmdJSON),
+			AnnotGPUType:          accel,
+			AnnotNativeEntrypoint: boolStr(sb.NativeEntrypoint),
 		},
 		Phase: "Pending",
 		Spec:  spec,
 	}
 }
 
-// BalloonPod holds one GPU so Cluster Autoscaler keeps a warm node.
-func BalloonPod(name string) *Pod {
-	return &Pod{
-		Name:      name,
-		Namespace: Namespace,
-		Labels:    map[string]string{LabelWorkload: WorkloadBalloon},
-		Phase:     "Pending",
+// sandboxContainer builds the sandbox's single container. Managed mode (the
+// default) runs Ignition's sandbox-init supervisor as PID 1 and gates public
+// readiness on its /readyz probe. NativeEntrypoint mode runs the admitted
+// image's own OCI Entrypoint/Cmd unchanged — required for any image that does
+// not embed sandbox-init — and drops the HTTP probes, since a generic image
+// serves neither /healthz nor /readyz: kubelet then reports the container
+// Ready as soon as it is Running, and command/exec/idle-tracking are
+// unavailable for the sandbox (no supervisor to relay them to).
+func sandboxContainer(sb store.Sandbox, imageRef string, profile Profile, cpu, mem int, env map[string]string) Container {
+	c := Container{
+		Name:            "sandbox",
+		Image:           imageRef,
+		Env:             env,
+		WorkingDir:      sb.WorkingDir,
+		CPUMilli:        cpu,
+		MemoryMiB:       mem,
+		GPU:             profile.GPUQuantity,
+		AllowPrivEsc:    false,
+		DropAllCaps:     true,
+		ReadOnlyRootFS:  true,
+		VolumeMountPath: "/scratch",
+	}
+	if sb.NativeEntrypoint {
+		return c
+	}
+	c.Command = []string{"/ignition/init"}
+	c.Port = 8081
+	c.LivenessPath = "/healthz"
+	c.ReadinessPath = "/readyz"
+	return c
+}
+
+// BalloonPod holds a node of the given profile's class so Cluster Autoscaler
+// keeps it warm. AnnotGPUType records the class (any accelerator type, not
+// just GPU — the annotation predates CPU balloon support) so the controller
+// can bucket balloons, busy sandboxes, and queued creates per class.
+func BalloonPod(name string, profile Profile) *Pod {
+	p := &Pod{
+		Name:        name,
+		Namespace:   Namespace,
+		Labels:      map[string]string{LabelWorkload: WorkloadBalloon},
+		Annotations: map[string]string{AnnotGPUType: profile.Accelerator},
+		Phase:       "Pending",
 		Spec: PodSpec{
 			RuntimeClassName:             RuntimeClass,
 			PriorityClassName:            PriorityBalloon,
 			AutomountServiceAccountToken: boolPtr(false),
 			EnableServiceLinks:           boolPtr(false),
 			RestartPolicy:                "Always",
-			NodeSelector:                 map[string]string{GPUNodePoolLabel: GPUNodePoolValue},
+			NodeSelector:                 map[string]string{NodePoolLabel: profile.NodePoolValue},
 			RunAsNonRoot:                 true,
 			SeccompRuntimeDefault:        true,
-			Tolerations: []Toleration{{
-				Key: "ignition.io/gpu-sandbox", Operator: "Equal", Value: "true", Effect: "NoSchedule",
-			}},
 			Containers: []Container{{
 				Name:           "pause",
 				Image:          "registry.k8s.io/pause:3.9",
 				Command:        []string{"/pause"},
 				CPUMilli:       100,
 				MemoryMiB:      128,
-				GPU:            "1",
+				GPU:            profile.GPUQuantity,
 				AllowPrivEsc:   false,
 				DropAllCaps:    true,
 				ReadOnlyRootFS: true,
 			}},
 		},
 	}
+	if profile.TaintKey != "" {
+		p.Spec.Tolerations = []Toleration{{
+			Key: profile.TaintKey, Operator: "Equal", Value: "true", Effect: "NoSchedule",
+		}}
+	}
+	return p
 }
 
 // ApplySecretEnv injects resolved Secret Manager values as container env.

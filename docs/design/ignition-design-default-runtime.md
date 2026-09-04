@@ -75,8 +75,10 @@ identity. Kubelet's resulting `PodReady` advances the public state to `READY`.
 ## Boundaries
 
 - The `cpu-sandbox` GKE node pool is operator-provisioned (see the
-  implementation guide); there are no warm pool / balloon Pods for the CPU
-  profile — `IGNITION_MIN_WARM` applies to the GPU pool only.
+  implementation guide). CPU warm-node capacity is opt-in through
+  `IGNITION_MIN_WARM_CPU` / `IGNITION_MAX_WARM_CPU`; both default to zero so an
+  upgrade does not silently add node cost. `IGNITION_MIN_WARM` /
+  `IGNITION_MAX_WARM` remain the NVIDIA L4 buffer.
 - `/ignition/init` must be present in the tenant image; the Pod runs it as the
   entrypoint and does not inject it.
 - Only the CPU (`NONE`) and `NVIDIA_L4` profiles exist. TPU and other GPU SKUs

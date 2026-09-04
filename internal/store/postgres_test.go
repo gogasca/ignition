@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5/pgxpool"
 	tcpostgres "github.com/testcontainers/testcontainers-go/modules/postgres"
 
 	"ignition.dev/ignition/internal/auth"
@@ -69,6 +70,104 @@ func postgresForTest(t *testing.T) *store.Postgres {
 	return p
 }
 
+func TestPostgresCreateImageRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	img, err := p.CreateImage(ctx, store.CreateImageInput{
+		ProjectID: project, ImageID: "img_nginx",
+		SourceRef: "docker.io/library/nginx:1.27", Digest: "sha256:abc",
+		RegistryRef:       "docker.io/library/nginx@sha256:abc",
+		Entrypoint:        []string{"/docker-entrypoint.sh"},
+		Cmd:               []string{"nginx", "-g", "daemon off;"},
+		StreamingEligible: true,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img.State != "READY" || img.RegistryRef != "docker.io/library/nginx@sha256:abc" {
+		t.Fatalf("image = %+v", img)
+	}
+	if !img.StreamingEligible {
+		t.Fatal("streamingEligible not persisted")
+	}
+	if img.CreateTime.IsZero() {
+		t.Fatal("createTime not set")
+	}
+	got, err := p.GetImage(ctx, project, "img_nginx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Digest != "sha256:abc" || len(got.Cmd) != 3 || got.Cmd[0] != "nginx" {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestPostgresCreateImagePersistsIneligibleReason(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	_, err := p.CreateImage(ctx, store.CreateImageInput{
+		ProjectID: project, ImageID: "img_legacy", SourceRef: "legacy:v1",
+		Digest: "sha256:x", RegistryRef: "legacy@sha256:x",
+		StreamingEligible: false, IneligibleReason: "schema version 1 manifest is not eligible for GKE image streaming",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.GetImage(ctx, project, "img_legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StreamingEligible || got.IneligibleReason == "" {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestPostgresCreateImageRejectsDuplicateImageID(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	in := store.CreateImageInput{ProjectID: project, ImageID: "img_dup", SourceRef: "nginx:1.27", Digest: "sha256:a", RegistryRef: "nginx@sha256:a"}
+	if _, err := p.CreateImage(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	in.SourceRef, in.Digest, in.RegistryRef = "nginx:1.28", "sha256:b", "nginx@sha256:b"
+	if _, err := p.CreateImage(ctx, in); !errors.Is(err, store.ErrImageAlreadyExists) {
+		t.Fatalf("err = %v, want ErrImageAlreadyExists", err)
+	}
+	got, err := p.GetImage(ctx, project, "img_dup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Digest != "sha256:a" {
+		t.Fatalf("digest = %q, want unchanged sha256:a", got.Digest)
+	}
+}
+
+func TestPostgresGetImageNotFound(t *testing.T) {
+	p := postgresForTest(t)
+	if _, err := p.GetImage(context.Background(), "prj_pg_missing", "missing"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPostgresSeedImageIsCatalogCompatible(t *testing.T) {
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	p.SeedImage(project, "img_seed")
+	got, err := p.GetImage(context.Background(), project, "img_seed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "READY" {
+		t.Fatalf("state = %q", got.State)
+	}
+	if got.RegistryRef != "" {
+		t.Fatalf("seeded image must have no pinned RegistryRef, got %q", got.RegistryRef)
+	}
+}
+
 func TestPostgresCreateSandboxIdempotency(t *testing.T) {
 	ctx := context.Background()
 	p := postgresForTest(t)
@@ -101,6 +200,108 @@ func TestPostgresCreateSandboxIdempotency(t *testing.T) {
 	got, err := p.GetSandbox(ctx, project, a.Sandbox.ID)
 	if err != nil || got.ID != a.Sandbox.ID {
 		t.Fatalf("get = %+v err=%v", got, err)
+	}
+}
+
+func TestPostgresCreateSandboxRejectsUnregisteredSecret(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	other := "prj_pg_other_" + t.Name()
+	p.SeedImage(project, "img")
+	// Registered to a different project: must not be usable from project.
+	p.SeedSecret(other, "sec_token")
+	in := store.CreateSandboxInput{
+		ProjectID:  project,
+		Principal:  "alice",
+		IdemKey:    "k1",
+		IdemHash:   "hash-a",
+		ImageID:    "img",
+		Resources:  spec(),
+		SecretRefs: []store.SecretRef{{SecretID: "sec_token", EnvironmentName: "TOKEN"}},
+		MaxActive:  10,
+	}
+	if _, err := p.CreateSandbox(ctx, in); !errors.Is(err, store.ErrSecretNotFound) {
+		t.Fatalf("err = %v, want ErrSecretNotFound", err)
+	}
+	if got := p.QuotaActive(project); got != 0 {
+		t.Fatalf("quota bumped despite rejected secret: active=%d", got)
+	}
+}
+
+func TestPostgresCreateSandboxAcceptsRegisteredSecret(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	p.SeedImage(project, "img")
+	p.SeedSecret(project, "sec_token")
+	in := store.CreateSandboxInput{
+		ProjectID:  project,
+		Principal:  "alice",
+		IdemKey:    "k1",
+		IdemHash:   "hash-a",
+		ImageID:    "img",
+		Resources:  spec(),
+		SecretRefs: []store.SecretRef{{SecretID: "sec_token", EnvironmentName: "TOKEN"}},
+		MaxActive:  10,
+	}
+	res, err := p.CreateSandbox(ctx, in)
+	if err != nil {
+		t.Fatalf("CreateSandbox: %v", err)
+	}
+	if len(res.Sandbox.SecretRefs) != 1 || res.Sandbox.SecretRefs[0].SecretID != "sec_token" {
+		t.Fatalf("secretRefs = %+v", res.Sandbox.SecretRefs)
+	}
+}
+
+// TestPostgresListSandboxesAllBoundsTerminalHistory is the real-Postgres
+// counterpart of TestListSandboxesAllBoundsTerminalHistory: it backdates
+// finish_time directly (CreateSandbox/UpdateObserved always stamp the real
+// wall clock) to prove ListSandboxesAll's WHERE clause, not just the Go
+// filter logic, excludes old terminal rows.
+func TestPostgresListSandboxesAllBoundsTerminalHistory(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	pool, err := pgxpool.New(ctx, postgresTestDSN)
+	if err != nil {
+		t.Fatalf("pgxpool.New: %v", err)
+	}
+	t.Cleanup(pool.Close)
+
+	project := "prj_pg_" + t.Name()
+	p.SeedImage(project, "img")
+	old, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
+		ProjectID: project, Principal: "alice", IdemKey: "old", IdemHash: "old",
+		ImageID: "img", Resources: spec(), MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
+		ProjectID: project, Principal: "alice", IdemKey: "active", IdemHash: "active",
+		ImageID: "img", Resources: spec(), MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	cutoff := time.Now().UTC().Add(-store.ReconcileWindow - time.Minute)
+	if _, err := pool.Exec(ctx, `UPDATE sandboxes SET state='FAILED', finish_time=$1 WHERE id=$2`, cutoff, old.Sandbox.ID); err != nil {
+		t.Fatalf("backdate finish_time: %v", err)
+	}
+
+	out, err := p.ListSandboxesAll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, sb := range out {
+		got[sb.ID] = true
+	}
+	if got[old.Sandbox.ID] {
+		t.Fatalf("old terminal sandbox %s was not excluded: %v", old.Sandbox.ID, got)
+	}
+	if !got[active.Sandbox.ID] {
+		t.Fatalf("active sandbox %s was excluded: %v", active.Sandbox.ID, got)
 	}
 }
 

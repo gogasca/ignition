@@ -120,13 +120,14 @@ func (s *statusRecorder) Flush() {
 
 // ReconcileMetrics instruments the controller reconcile loop.
 type ReconcileMetrics struct {
-	rec       *Recorder
-	total     *prometheus.CounterVec
-	duration  prometheus.Histogram
-	lastTS    prometheus.Gauge
-	consecErr prometheus.Gauge
-	sandboxes *prometheus.GaugeVec
-	leaseHeld prometheus.Gauge
+	rec          *Recorder
+	total        *prometheus.CounterVec
+	duration     prometheus.Histogram
+	lastTS       prometheus.Gauge
+	consecErr    prometheus.Gauge
+	sandboxes    *prometheus.GaugeVec
+	leaseHeld    prometheus.Gauge
+	stageLatency *prometheus.HistogramVec
 }
 
 // NewReconcileMetrics registers controller collectors into reg.
@@ -158,9 +159,33 @@ func NewReconcileMetrics(reg prometheus.Registerer, rec *Recorder) *ReconcileMet
 			Name: "ignition_controller_lease_held",
 			Help: "1 when this replica holds the reconcile lease.",
 		}),
+		// stageLatency is CreateTime -> first observation of each stage, one
+		// sample per sandbox per stage (observeWrite only fires on a genuine
+		// rank advance, never a re-observation of an already-reached state).
+		// This is what turns the warm-path startup budget tables in the
+		// design docs (e.g. docs/design/ignition-design-gke-sandbox.md
+		// #startup-budget-on-a-warm-node) into something measured rather
+		// than aspirational — see images-startup.md's "keep the platform
+		// stages visible individually" observability requirement.
+		stageLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
+			Name:    "ignition_sandbox_stage_latency_seconds",
+			Help:    "Seconds from Sandbox CreateTime to first observation of each state, by state.",
+			Buckets: []float64{0.5, 1, 2, 3, 4, 5, 7, 9, 12, 15, 20, 30, 60, 120, 240},
+		}, []string{"state"}),
 	}
-	reg.MustRegister(m.total, m.duration, m.lastTS, m.consecErr, m.sandboxes, m.leaseHeld)
+	reg.MustRegister(m.total, m.duration, m.lastTS, m.consecErr, m.sandboxes, m.leaseHeld, m.stageLatency)
 	return m
+}
+
+// ObserveStage records CreateTime -> now as the latency for a sandbox's
+// first observation of state. Callers must only call this on a genuine
+// state advance (see Controller.observeWrite), never on a repeated
+// observation of an already-reached state.
+func (m *ReconcileMetrics) ObserveStage(state string, latency time.Duration) {
+	if latency < 0 {
+		return
+	}
+	m.stageLatency.WithLabelValues(state).Observe(latency.Seconds())
 }
 
 // ObservePass records the outcome of one reconcile pass.

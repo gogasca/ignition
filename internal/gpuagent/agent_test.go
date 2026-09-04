@@ -124,6 +124,43 @@ func TestVerifyReuseCleanClearsAnnotation(t *testing.T) {
 	}
 }
 
+// TestVerifyReuseCleanClearsReusePendingTaint guards F3: a clean reuse check
+// must clear the scheduling-blocking taint, or a torn-down GPU node would
+// never come back into the warm pool.
+func TestVerifyReuseCleanClearsReusePendingTaint(t *testing.T) {
+	f := newNode(t, "n1", false)
+	a := New("n1", f, f, &fakeInspector{gpus: []GPU{{UUID: goodUUID, ECCUncorrected: -1}}})
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.GPUReusePending("n1") {
+		t.Fatal("clean GPU left the node reuse-pending taint set")
+	}
+}
+
+// TestVerifyReuseResidualLeavesReusePendingTaint guards the other half of F3:
+// a dirty verdict must leave the node blocked from new scheduling (the
+// cordon-and-recreate path then replaces it) rather than clear the taint and
+// let a new tenant land on an unproven GPU.
+func TestVerifyReuseResidualLeavesReusePendingTaint(t *testing.T) {
+	f := newNode(t, "n1", true)
+	a := New("n1", f, f, &fakeInspector{gpus: []GPU{{UUID: goodUUID, ECCUncorrected: -1}}})
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	f.Drop("sbx-1")
+	a.Inspector = &fakeInspector{
+		gpus:  []GPU{{UUID: goodUUID, ECCUncorrected: -1}},
+		procs: []ComputeProc{{PID: 9}},
+	}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if !f.GPUReusePending("n1") {
+		t.Fatal("residual-process verdict cleared the reuse-pending taint")
+	}
+}
+
 func TestVerifyReuseResidualMarksNode(t *testing.T) {
 	f := newNode(t, "n1", true)
 	a := New("n1", f, f, &fakeInspector{gpus: []GPU{{UUID: goodUUID, ECCUncorrected: -1}}})

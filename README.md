@@ -14,7 +14,7 @@ api/openapi/          HTTP/JSON stub (kept in sync with protos)
 internal/store/schema.sql  complete Cloud SQL schema (embedded by the API)
 deploy/               GKE manifests and Terraform
 images/sandbox-init/  container image for the in-sandbox supervisor
-sdks/                 Python and TypeScript clients
+sdks/                 Python and TypeScript public-API clients and batch runners
 docs/design/          architecture documents
 docs/guides/          build and deploy runbook
 ```

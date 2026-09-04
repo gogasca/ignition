@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"ignition.dev/ignition/internal/store"
 )
@@ -134,6 +135,39 @@ func TestUpdateObservedIgnoresTerminal(t *testing.T) {
 	}
 	if sb.State != "FAILED" {
 		t.Fatalf("terminal sandbox mutated to %s", sb.State)
+	}
+}
+
+// TestListSandboxesAllBoundsTerminalHistory guards the reconcile-cost fix: a
+// terminal sandbox must drop out of ListSandboxesAll once it is older than
+// ReconcileWindow, or a controller reconcile pass grows with total lifetime
+// sandbox count instead of active-sandbox count.
+func TestListSandboxesAllBoundsTerminalHistory(t *testing.T) {
+	ctx := context.Background()
+	m := store.NewMemory()
+	now := time.Now().UTC()
+	old := now.Add(-store.ReconcileWindow - time.Minute)
+	recent := now.Add(-time.Minute)
+	m.SeedSandbox(store.Sandbox{ID: "sbx_old_failed", ProjectID: "prj", State: "FAILED", FinishTime: &old, CreateTime: old})
+	m.SeedSandbox(store.Sandbox{ID: "sbx_recent_finished", ProjectID: "prj", State: "FINISHED", FinishTime: &recent, CreateTime: recent})
+	m.SeedSandbox(store.Sandbox{ID: "sbx_active", ProjectID: "prj", State: "READY", CreateTime: old})
+
+	out, err := m.ListSandboxesAll(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]bool{}
+	for _, sb := range out {
+		got[sb.ID] = true
+	}
+	if got["sbx_old_failed"] {
+		t.Fatalf("old terminal sandbox was not excluded: %v", got)
+	}
+	if !got["sbx_recent_finished"] {
+		t.Fatalf("recently terminal sandbox was excluded: %v", got)
+	}
+	if !got["sbx_active"] {
+		t.Fatalf("active sandbox (old create_time, non-terminal) was excluded: %v", got)
 	}
 }
 

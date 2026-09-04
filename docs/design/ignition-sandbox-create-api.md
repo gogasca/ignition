@@ -113,8 +113,12 @@ Required OAuth permission: `sandbox.create`.
 
 - `name`: optional display name, unique only when project policy requires it.
 - `imageId`: required. Must match `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`; the controller resolves it under the Artifact Registry sandbox prefix. Digest pinning is future work.
-- `command`: optional argv array. It is never evaluated by a shell. When omitted, Ignition starts its sandbox init supervisor and waits for later `exec` requests.
+- `command`: optional argv array. It is never evaluated by a shell. When omitted, Ignition starts its sandbox init supervisor and waits for later `exec` requests. Ignored when `nativeEntrypoint` is `true` (see below); the platform does not reject the combination today, so a caller who sets both is not warned that `command` has no effect.
 - `workingDirectory`: optional absolute path inside the image.
+- `nativeEntrypoint`: optional, default `false`. When `true`, the sandbox runs the admitted image's own OCI `Entrypoint`/`Cmd` unchanged as PID 1 instead of Ignition's `sandbox-init` supervisor. Use this only for an image that does not embed `sandbox-init`. Effects, all currently permanent for the sandbox's lifetime:
+  - **Weaker readiness.** There is no `/readyz` to gate on, so public `READY` falls back to kubelet's default — the Pod is reported `Ready` as soon as every container is `Running`, with no verification that the process inside has finished starting or is functioning. This is materially weaker than the managed-mode `READY` guarantee; do not assume parity.
+  - **No exec, idle tracking, or lifecycle hooks.** There is no supervisor to relay them to.
+  - **The same security context applies.** `runAsNonRoot: true` and `readOnlyRootFilesystem: true` are not relaxed for this mode. An image that runs as root by default, or that writes outside `/scratch`, will fail to start rather than run with a different isolation posture — this is a functional limitation of the current implementation, not a workaround available to callers.
 - `secretRefs`: stored on create; the controller resolves Secret Manager at Pod create and injects env. Values never enter SQL.
 - `cpuMilli`: optional, positive, max 8000.
 - `memoryMiB`: optional, positive, max 32768.
@@ -185,7 +189,7 @@ READY → TERMINATING → FINISHED
 - `CREATING`: admission is durable; the Pod is not yet scheduled.
 - `SCHEDULED`: the sandbox Pod is bound to a node (`PodScheduled=True`).
 - `STARTED`: the container is running; readiness verification is incomplete.
-- `READY`: kubelet `PodReady`, and for `NVIDIA_L4` an `ignition-gpu-agent`-stamped canonical GPU UUID + `init-healthy` annotation.
+- `READY`: kubelet `PodReady`, and for `NVIDIA_L4` an `ignition-gpu-agent`-stamped canonical GPU UUID + `init-healthy` annotation. For a `nativeEntrypoint` sandbox there is no `/readyz` behind `PodReady`, so on `NONE` this reduces to "the container is `Running`" with no functional verification; the `NVIDIA_L4` GPU attestation gate is unaffected, since `ignition-gpu-agent` never depends on `sandbox-init`.
 - `FAILED`: terminal creation failure; includes a stable reason.
 
 ## Processing flow

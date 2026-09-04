@@ -12,6 +12,8 @@ const (
 	PermOperationGet     Permission = "operation.get"
 	PermOperationCancel  Permission = "operation.cancel"
 	PermRuntimeGet       Permission = "runtime.get"
+	PermImageCreate      Permission = "image.create"
+	PermImageGet         Permission = "image.get"
 	PermRoleBindingGet   Permission = "rolebinding.get"
 	PermRoleBindingAdmin Permission = "rolebinding.admin"
 )
@@ -41,9 +43,9 @@ func Allowed(role string, perm Permission, own bool) bool {
 	case PermRoleBindingGet, PermRoleBindingAdmin:
 		// Project role management is limited to owners and admins.
 		return role == RoleOwner || role == RoleAdmin
-	case PermSandboxGet, PermProcessGet, PermOperationGet, PermRuntimeGet:
+	case PermSandboxGet, PermProcessGet, PermOperationGet, PermRuntimeGet, PermImageGet:
 		return role == RoleOwner || role == RoleAdmin || role == RoleDeveloper || role == RoleOperator || role == RoleViewer
-	case PermSandboxCreate, PermSandboxExec:
+	case PermSandboxCreate, PermSandboxExec, PermImageCreate:
 		return role == RoleOwner || role == RoleAdmin || role == RoleDeveloper || role == RoleOperator
 	case PermSandboxTerminate, PermOperationCancel:
 		if role == RoleOwner || role == RoleAdmin || role == RoleOperator {
