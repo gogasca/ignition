@@ -110,6 +110,39 @@ func TestLoadMaxWarmZeroDisablesPool(t *testing.T) {
 	}
 }
 
+func TestLoadCPUWarmDisabledByDefault(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MinWarmCPU != 0 || cfg.MaxWarmCPU != 0 {
+		t.Fatalf("CPU warm bounds = %d/%d, want 0/0 (opt-in only)", cfg.MinWarmCPU, cfg.MaxWarmCPU)
+	}
+}
+
+func TestLoadCPUWarmCeilingDefaultsFloorToOne(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_MAX_WARM_CPU", "4")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.MinWarmCPU != 1 || cfg.MaxWarmCPU != 4 {
+		t.Fatalf("CPU warm bounds = %d/%d, want 1/4", cfg.MinWarmCPU, cfg.MaxWarmCPU)
+	}
+}
+
+func TestLoadRejectsExplicitMinAboveMaxCPU(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_MIN_WARM_CPU", "5")
+	t.Setenv("IGNITION_MAX_WARM_CPU", "1")
+	_, err := config.Load()
+	if err == nil || !strings.Contains(err.Error(), "IGNITION_MIN_WARM_CPU") {
+		t.Fatalf("err = %v", err)
+	}
+}
+
 func TestLoadRejectsExplicitMinAboveMax(t *testing.T) {
 	t.Setenv("IGNITION_ENV", "dev")
 	t.Setenv("IGNITION_MIN_WARM", "5")

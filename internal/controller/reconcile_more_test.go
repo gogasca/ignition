@@ -98,8 +98,9 @@ func TestWorkerLostFailsProcesses(t *testing.T) {
 func TestBalloonsScaleDown(t *testing.T) {
 	m := store.NewMemory()
 	fake := k8s.NewFake()
-	for _, name := range []string{"balloon-0", "balloon-1", "balloon-2"} {
-		if err := fake.Create(k8s.BalloonPod(name)); err != nil {
+	gpu, _ := k8s.ProfileFor(store.AcceleratorNVIDIAL4)
+	for _, name := range []string{"balloon-nvidia-l4-0", "balloon-nvidia-l4-1", "balloon-nvidia-l4-2"} {
+		if err := fake.Create(k8s.BalloonPod(name, gpu)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -122,8 +123,9 @@ func TestBalloonsScaleDown(t *testing.T) {
 func TestBalloonsScaleDownWaitsForCooldown(t *testing.T) {
 	m := store.NewMemory()
 	fake := k8s.NewFake()
-	for _, name := range []string{"balloon-0", "balloon-1", "balloon-2"} {
-		if err := fake.Create(k8s.BalloonPod(name)); err != nil {
+	gpu, _ := k8s.ProfileFor(store.AcceleratorNVIDIAL4)
+	for _, name := range []string{"balloon-nvidia-l4-0", "balloon-nvidia-l4-1", "balloon-nvidia-l4-2"} {
+		if err := fake.Create(k8s.BalloonPod(name, gpu)); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -202,6 +204,7 @@ func TestSecretEnvInjectedAtPodCreate(t *testing.T) {
 		Secrets: secrets.Map{"sec_token": "s3cret"},
 	})
 	m.SeedImage("prj_dev", "img_seed")
+	m.SeedSecret("prj_dev", "sec_token")
 	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
 		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
 		ImageID:    "img_seed",
@@ -231,6 +234,10 @@ func TestMissingSecretFailsWithoutPod(t *testing.T) {
 	fake := k8s.NewFake()
 	c := controller.New(m, fake, fake, controller.Options{Secrets: secrets.Map{}})
 	m.SeedImage("prj_dev", "img_seed")
+	// Registered to the project (admission passes) but absent from the
+	// resolver, exercising the controller-level SECRET_UNAVAILABLE path
+	// distinct from the project-registration check in store.CreateSandbox.
+	m.SeedSecret("prj_dev", "missing")
 	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
 		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
 		ImageID:    "img_seed",

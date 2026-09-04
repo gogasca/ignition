@@ -15,8 +15,9 @@ import (
 type Memory struct {
 	mu sync.Mutex
 
-	roles       map[string]string // project\x1fsubject -> role
-	images      map[string]string // project\x1fimage -> READY
+	roles       map[string]string   // project\x1fsubject -> role
+	images      map[string]string   // project\x1fimage -> READY
+	secrets     map[string]struct{} // project\x1fsecret -> registered
 	sandboxes   map[string]Sandbox
 	operations  map[string]Operation
 	processes   map[string]Process
@@ -38,6 +39,7 @@ func NewMemory() *Memory {
 	return &Memory{
 		roles:       map[string]string{},
 		images:      map[string]string{},
+		secrets:     map[string]struct{}{},
 		sandboxes:   map[string]Sandbox{},
 		operations:  map[string]Operation{},
 		processes:   map[string]Process{},
@@ -62,6 +64,12 @@ func (m *Memory) SeedImage(projectID, imageID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.images[imgKey(projectID, imageID)] = "READY"
+}
+
+func (m *Memory) SeedSecret(projectID, secretID string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.secrets[imgKey(projectID, secretID)] = struct{}{}
 }
 
 func (m *Memory) SeedSandbox(sb Sandbox) {
@@ -187,6 +195,12 @@ func (m *Memory) CreateSandbox(_ context.Context, in CreateSandboxInput) (Create
 		delete(m.idem, slot)
 		return CreateSandboxResult{}, ErrImageNotReady
 	}
+	for _, ref := range in.SecretRefs {
+		if _, ok := m.secrets[imgKey(in.ProjectID, ref.SecretID)]; !ok {
+			delete(m.idem, slot)
+			return CreateSandboxResult{}, ErrSecretNotFound
+		}
+	}
 	max := in.MaxActive
 	if max <= 0 {
 		max = 100
@@ -200,24 +214,25 @@ func (m *Memory) CreateSandbox(_ context.Context, in CreateSandboxInput) (Create
 	sbID := id.New("sbx")
 	opID := id.New("op")
 	sb := Sandbox{
-		ID:          sbID,
-		ProjectID:   in.ProjectID,
-		Name:        in.Name,
-		State:       "CREATING",
-		StateReason: "ADMITTED",
-		ImageID:     in.ImageID,
-		OperationID: opID,
-		Generation:  1,
-		CreateTime:  now,
-		CreatedBy:   in.Principal,
-		Command:     in.Command,
-		WorkingDir:  in.WorkingDir,
-		Resources:   in.Resources,
-		Placement:   in.Placement,
-		Timeouts:    in.Timeouts,
-		Network:     in.Network,
-		Labels:      in.Labels,
-		SecretRefs:  in.SecretRefs,
+		ID:               sbID,
+		ProjectID:        in.ProjectID,
+		Name:             in.Name,
+		State:            "CREATING",
+		StateReason:      "ADMITTED",
+		ImageID:          in.ImageID,
+		OperationID:      opID,
+		Generation:       1,
+		CreateTime:       now,
+		CreatedBy:        in.Principal,
+		Command:          in.Command,
+		WorkingDir:       in.WorkingDir,
+		NativeEntrypoint: in.NativeEntrypoint,
+		Resources:        in.Resources,
+		Placement:        in.Placement,
+		Timeouts:         in.Timeouts,
+		Network:          in.Network,
+		Labels:           in.Labels,
+		SecretRefs:       in.SecretRefs,
 	}
 	if sb.SecretRefs == nil {
 		sb.SecretRefs = []SecretRef{}
@@ -533,11 +548,21 @@ func page[T any](all []T, pageSize int, pageToken string, idFn func(T) string) (
 	return out, next, nil
 }
 
+// ListSandboxesAll returns every non-terminal sandbox plus any terminal
+// sandbox that finished within ReconcileWindow, mirroring the bounded
+// Postgres query (see postgres_controller.go) so both Store implementations
+// give the controller the same reconcile cost profile.
 func (m *Memory) ListSandboxesAll(_ context.Context) ([]Sandbox, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	cutoff := time.Now().UTC().Add(-ReconcileWindow)
 	out := make([]Sandbox, 0, len(m.sandboxes))
 	for _, sb := range m.sandboxes {
+		if sb.State == "FINISHED" || sb.State == "FAILED" {
+			if sb.FinishTime == nil || sb.FinishTime.Before(cutoff) {
+				continue
+			}
+		}
 		out = append(out, sb)
 	}
 	sort.Slice(out, func(i, j int) bool { return out[i].CreateTime.Before(out[j].CreateTime) })

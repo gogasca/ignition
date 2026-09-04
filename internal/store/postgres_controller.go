@@ -8,8 +8,24 @@ import (
 	"github.com/jackc/pgx/v5"
 )
 
+// ReconcileWindow bounds how long a terminal (FINISHED/FAILED) sandbox stays
+// in ListSandboxesAll's result after it finishes. The reconciler only needs a
+// terminal row briefly, to finish deleting a Pod or failing processes after a
+// crash between marking terminal and cleaning up (see reconcileSandbox's
+// "FINISHED"/"FAILED" case). Without a bound, ListSandboxesAll -- and the Pod
+// GET the controller issues per row -- costs O(every sandbox ever created)
+// instead of O(sandboxes that still need attention), which starves the
+// reconcile pass past its own lease TTL once history reaches a few hundred
+// rows.
+const ReconcileWindow = 15 * time.Minute
+
 func (p *Postgres) ListSandboxesAll(ctx context.Context) ([]Sandbox, error) {
-	rows, err := p.pool.Query(ctx, `SELECT `+sandboxCols+` FROM sandboxes ORDER BY create_time ASC`)
+	rows, err := p.pool.Query(ctx, `
+		SELECT `+sandboxCols+` FROM sandboxes
+		WHERE state NOT IN ('FINISHED', 'FAILED')
+		   OR finish_time > $1
+		ORDER BY create_time ASC`,
+		time.Now().UTC().Add(-ReconcileWindow))
 	if err != nil {
 		return nil, err
 	}

@@ -47,6 +47,44 @@ workloads and must pass their independent feasibility gate.
 6. **Do not promise impossible bounds.** Arbitrary application initialization is
    not controlled by the platform.
 
+## Layer boundary: generic path vs. opt-in accelerators
+
+No single mechanism bounds startup time for an arbitrary image. The fast path
+for *any* admitted container is a stack of layers that require no per-image
+cooperation and apply to every image. Optional accelerators sit above that
+stack and apply only to images that opt in and pass qualification. A design or
+metric must not average opt-in accelerator performance into the generic-path
+objective, and the generic path must never regress in the name of an opt-in
+accelerator.
+
+| Layer | Mechanism | Requires image cooperation | Applies to |
+|---|---|---|---|
+| Scheduling latency | Warm buffer / balloon Pods | No | GPU pool today ([GKE Sandbox — Warm capacity mechanism](ignition-design-gke-sandbox.md#warm-capacity-mechanism)); an equivalent CPU-pool buffer is candidate future work if generic CPU sandboxes need the same guarantee — `IGNITION_MIN_WARM` is GPU-only today ([Default runtime](ignition-design-default-runtime.md#boundaries)) |
+| Rootfs (default) | GKE image streaming, lazy | No | Every stream-eligible admitted image |
+| Rootfs (fallback) | Eager pull, cost-selected | No | Any image, chosen by measured cost — see [Adaptive strategy selection](#adaptive-strategy-selection) |
+| Rootfs (shared) | Secondary boot-disk cache epoch | No | Popular or content-sharing image sets, not unique/high-churn images |
+| Startup hint | Access-profile prefetch | No — advisory only, never required for correctness | Sampled images with stable access patterns |
+| Process/GPU state | Golden Pod snapshot | **Yes** — lifecycle contract, no request-derived state at capture, cross-node qualification | Explicitly opt-in, qualified images only — never the generic path |
+
+The first four rows are the complete answer to "make any container start fast":
+warm capacity removes node-provisioning latency, lazy streaming removes the
+image-size dependency from `rootfs_ready`, the eager fallback keeps images that
+read most of themselves from paying streaming's small-file penalty, and the
+cache epoch accelerates whatever is actually popular without asking any image
+to change. None of the four requires an image to declare anything, run a
+readiness hook, or avoid request-derived state.
+
+Application initialization — framework import, `cuInit()`, weight loading — is
+explicitly out of bounds for the generic path per principle 6 above; access
+profiles narrow it, they do not bound it. Golden Pod snapshots
+([Optional golden startup snapshots](#optional-golden-startup-snapshots)) and
+the class-specific stratified accelerator in
+[Fast Startup on GCP](ignition-design-fast-startup-gcp.md) go further, but only
+for images that opt into the lifecycle contract and pass qualification; they
+are accelerators layered on this stack, not a replacement for it, and a
+snapshot-qualified image that falls back to cold start must still land on the
+same generic path above, not fail.
+
 ## Components
 
 - `ignition-artifacts`: authoritative image, representation, profile, and
@@ -119,16 +157,22 @@ images are supported.
 
 ### Runtime compatibility dependency
 
-The current GKE sandbox design hard-codes `command: ["/ignition/init"]`. That is
-incompatible with arbitrary third-party images and changes PID 1 semantics even
-when a binary is injected. Before generic image admission is enabled, the GKE
-launcher must run the admitted OCI `Entrypoint` and `Cmd` unchanged unless the
-request explicitly overrides them.
+**Status: partially implemented.** `CreateSandbox.nativeEntrypoint` (opt-in,
+default `false`) makes the GKE launcher run the container's own OCI
+`Entrypoint`/`Cmd` unchanged — no `Command` override, so PID 1 is exactly what
+the image declares — and drops sandbox-init's `/healthz`/`/readyz` probes, so
+public readiness falls back to kubelet's default (`Running` ⇒ `Ready`, since
+there is no supervisor to probe). This closes the PID 1 blocker for a client
+that already knows its image has no `sandbox-init`.
 
-Exec, idle tracking, and advanced lifecycle hooks must use a runtime mechanism
-that does not rewrite the generic image, or an explicitly opt-in managed
-lifecycle mode with separately documented wrapper semantics. The image-delivery
-project does not depend on that mode.
+What remains before generic *admission* (a client handing over an arbitrary
+registry reference with no prior knowledge) can default to this path: nothing
+today inspects the admitted image to learn whether it embeds `sandbox-init`, so
+the client must set the flag itself; there is still no catalog, so `imageId`
+is not yet a pinned digest (see [Image Data Layer](ignition-design-image-datalayer.md));
+and exec, idle tracking, and lifecycle hooks are simply unavailable on a
+`nativeEntrypoint` sandbox rather than degrading through an alternate
+mechanism — that gap is unchanged from before.
 
 ## Generic delivery strategies
 

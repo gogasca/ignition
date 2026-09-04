@@ -20,3 +20,18 @@ func TestValidImageID(t *testing.T) {
 		}
 	}
 }
+
+func TestValidSecretVersion(t *testing.T) {
+	ok := []string{"", "latest", "1", "42"}
+	for _, v := range ok {
+		if !store.ValidSecretVersion(v) {
+			t.Fatalf("%q rejected", v)
+		}
+	}
+	bad := []string{"0", "01", "-1", "latest ", "1;drop", "latest/../x"}
+	for _, v := range bad {
+		if store.ValidSecretVersion(v) {
+			t.Fatalf("%q accepted", v)
+		}
+	}
+}

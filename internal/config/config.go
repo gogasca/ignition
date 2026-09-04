@@ -56,6 +56,8 @@ type Config struct {
 	K8sNamespace        string
 	MinWarm             int
 	MaxWarm             int
+	MinWarmCPU          int
+	MaxWarmCPU          int
 	GCPProject          string
 	SandboxImagePrefix  string
 	// DefaultRuntime fills any RuntimeSpec field a CreateSandbox request
@@ -76,6 +78,12 @@ func Load() (Config, error) {
 	// Default the warm floor relative to the ceiling so IGNITION_MAX_WARM=0
 	// (warm pool disabled) does not collide with the default floor of 1.
 	minWarm := atoiEnv("IGNITION_MIN_WARM", min(1, maxWarm))
+	// CPU warm capacity defaults to disabled (0/0): the CPU sandbox pool has
+	// historically scaled to zero, and turning on a buffer has a real node
+	// cost, so it stays opt-in rather than changing existing deployments'
+	// spend on upgrade. An operator sets both to enable it.
+	maxWarmCPU := atoiEnv("IGNITION_MAX_WARM_CPU", 0)
+	minWarmCPU := atoiEnv("IGNITION_MIN_WARM_CPU", min(1, maxWarmCPU))
 	secret := strings.TrimSpace(os.Getenv("IGNITION_STREAM_TOKEN_SECRET"))
 	if secret == "" && !RequiresDatabase(env) {
 		secret = defaultStreamSecret
@@ -121,6 +129,8 @@ func Load() (Config, error) {
 		K8sNamespace:       getenv("IGNITION_K8S_NAMESPACE", "ignition-sandboxes"),
 		MinWarm:            minWarm,
 		MaxWarm:            maxWarm,
+		MinWarmCPU:         minWarmCPU,
+		MaxWarmCPU:         maxWarmCPU,
 		GCPProject:         strings.TrimSpace(os.Getenv("IGNITION_GCP_PROJECT")),
 		SandboxImagePrefix: strings.TrimSpace(os.Getenv("IGNITION_SANDBOX_IMAGE_PREFIX")),
 	}
@@ -157,6 +167,9 @@ func parseDefaultRuntime(raw string) (store.RuntimeSpec, error) {
 func (c Config) Validate() error {
 	if c.MinWarm < 0 || c.MaxWarm < 0 || c.MinWarm > c.MaxWarm {
 		return fmt.Errorf("IGNITION_MIN_WARM (%d) and IGNITION_MAX_WARM (%d) must satisfy 0 <= min <= max", c.MinWarm, c.MaxWarm)
+	}
+	if c.MinWarmCPU < 0 || c.MaxWarmCPU < 0 || c.MinWarmCPU > c.MaxWarmCPU {
+		return fmt.Errorf("IGNITION_MIN_WARM_CPU (%d) and IGNITION_MAX_WARM_CPU (%d) must satisfy 0 <= min <= max", c.MinWarmCPU, c.MaxWarmCPU)
 	}
 	rt := c.EffectiveDefaultRuntime()
 	if err := store.ValidateRuntimeSpec(rt); err != nil {

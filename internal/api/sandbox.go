@@ -18,6 +18,7 @@ type createSandboxBody struct {
 	ImageID          string               `json:"imageId"`
 	Command          []string             `json:"command"`
 	WorkingDirectory string               `json:"workingDirectory"`
+	NativeEntrypoint bool                 `json:"nativeEntrypoint"`
 	Resources        *store.ResourceSpec  `json:"resources"`
 	Placement        *store.PlacementSpec `json:"placement"`
 	Timeouts         *store.TimeoutSpec   `json:"timeouts"`
@@ -48,22 +49,23 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 	}
 	hash := canonicalHash(r.Method, r.URL.Path, raw)
 	res, err := s.store.CreateSandbox(r.Context(), store.CreateSandboxInput{
-		ProjectID:  project,
-		Principal:  s.principal(r.Context()).Subject,
-		IdemKey:    key,
-		IdemHash:   hash,
-		Name:       in.Name,
-		ImageID:    in.ImageID,
-		Command:    in.Command,
-		WorkingDir: in.WorkingDir,
-		Resources:  in.Resources,
-		Placement:  in.Placement,
-		Timeouts:   in.Timeouts,
-		Network:    in.Network,
-		Labels:     in.Labels,
-		SecretRefs: in.SecretRefs,
-		TraceID:    rid,
-		MaxActive:  s.cfg.MaxActiveSandboxes,
+		ProjectID:        project,
+		Principal:        s.principal(r.Context()).Subject,
+		IdemKey:          key,
+		IdemHash:         hash,
+		Name:             in.Name,
+		ImageID:          in.ImageID,
+		Command:          in.Command,
+		WorkingDir:       in.WorkingDir,
+		NativeEntrypoint: in.NativeEntrypoint,
+		Resources:        in.Resources,
+		Placement:        in.Placement,
+		Timeouts:         in.Timeouts,
+		Network:          in.Network,
+		Labels:           in.Labels,
+		SecretRefs:       in.SecretRefs,
+		TraceID:          rid,
+		MaxActive:        s.cfg.MaxActiveSandboxes,
 	})
 	if err != nil {
 		writeStoreError(w, rid, err)
@@ -136,16 +138,17 @@ func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 	}
 
 	return store.CreateSandboxInput{
-		Name:       body.Name,
-		ImageID:    body.ImageID,
-		Command:    body.Command,
-		WorkingDir: body.WorkingDirectory,
-		Resources:  rt.Resources,
-		Placement:  rt.Placement,
-		Timeouts:   rt.Timeouts,
-		Network:    rt.Network,
-		Labels:     body.Labels,
-		SecretRefs: body.SecretRefs,
+		Name:             body.Name,
+		ImageID:          body.ImageID,
+		Command:          body.Command,
+		WorkingDir:       body.WorkingDirectory,
+		NativeEntrypoint: body.NativeEntrypoint,
+		Resources:        rt.Resources,
+		Placement:        rt.Placement,
+		Timeouts:         rt.Timeouts,
+		Network:          rt.Network,
+		Labels:           body.Labels,
+		SecretRefs:       body.SecretRefs,
 	}, nil
 }
 

@@ -33,6 +33,12 @@ message Sandbox {
   NetworkSpec network = 14;
   map<string, string> labels = 15;
   Status error = 16;
+  // NativeEntrypoint: the sandbox runs the admitted image's own OCI
+  // Entrypoint/Cmd unchanged instead of Ignition's sandbox-init supervisor.
+  // Set on CreateSandbox for any image that does not embed sandbox-init;
+  // readiness then relies on the container's Running state (no /readyz to
+  // gate on), and command/exec/idle-tracking are unavailable.
+  bool native_entrypoint = 17;
 }
 
 enum SandboxState {
@@ -129,6 +135,8 @@ message CreateSandboxRequest {
   TimeoutSpec timeouts = 9;
   NetworkSpec network = 10;
   map<string, string> labels = 11;
+  // See Sandbox.native_entrypoint.
+  bool native_entrypoint = 12;
 }
 
 message GetDefaultRuntimeRequest {

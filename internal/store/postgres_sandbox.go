@@ -13,7 +13,7 @@ import (
 )
 
 const sandboxCols = `id, project_id, name, state, state_reason, image_id, operation_id, generation,
-	create_time, ready_time, finish_time, created_by, command, working_dir,
+	create_time, ready_time, finish_time, created_by, command, working_dir, native_entrypoint,
 	resources, placement, timeouts, network, labels, secret_refs`
 
 func scanSandbox(scan func(dest ...any) error) (Sandbox, error) {
@@ -21,7 +21,7 @@ func scanSandbox(scan func(dest ...any) error) (Sandbox, error) {
 	var command, resources, placement, timeouts, network, labels, secretRefs []byte
 	err := scan(
 		&sb.ID, &sb.ProjectID, &sb.Name, &sb.State, &sb.StateReason, &sb.ImageID, &sb.OperationID, &sb.Generation,
-		&sb.CreateTime, &sb.ReadyTime, &sb.FinishTime, &sb.CreatedBy, &command, &sb.WorkingDir,
+		&sb.CreateTime, &sb.ReadyTime, &sb.FinishTime, &sb.CreatedBy, &command, &sb.WorkingDir, &sb.NativeEntrypoint,
 		&resources, &placement, &timeouts, &network, &labels, &secretRefs,
 	)
 	if err != nil {
@@ -35,6 +35,43 @@ func scanSandbox(scan func(dest ...any) error) (Sandbox, error) {
 	unmarshalJSON(labels, &sb.Labels)
 	unmarshalJSON(secretRefs, &sb.SecretRefs)
 	return sb, nil
+}
+
+// checkSecretRefsTx verifies every referenced secretId is registered to
+// projectID before admission. Without this, checkSecretRefs (internal/api)
+// only validates shape, and the controller resolves any syntactically valid
+// secretId against Secret Manager with its own identity regardless of which
+// project asked — this closes that cross-project secret read.
+func checkSecretRefsTx(ctx context.Context, tx pgx.Tx, projectID string, refs []SecretRef) error {
+	if len(refs) == 0 {
+		return nil
+	}
+	ids := make([]string, len(refs))
+	for i, r := range refs {
+		ids[i] = r.SecretID
+	}
+	rows, err := tx.Query(ctx, `SELECT secret_id FROM secrets WHERE project_id=$1 AND secret_id = ANY($2)`, projectID, ids)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	found := map[string]struct{}{}
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return err
+		}
+		found[id] = struct{}{}
+	}
+	if err := rows.Err(); err != nil {
+		return err
+	}
+	for _, r := range refs {
+		if _, ok := found[r.SecretID]; !ok {
+			return ErrSecretNotFound
+		}
+	}
+	return nil
 }
 
 func (p *Postgres) getSandboxTx(ctx context.Context, tx pgx.Tx, projectID, sandboxID string) (Sandbox, error) {
@@ -76,6 +113,10 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 			return ErrImageNotReady
 		}
 
+		if err := checkSecretRefsTx(ctx, tx, in.ProjectID, in.SecretRefs); err != nil {
+			return err
+		}
+
 		max := in.MaxActive
 		if max <= 0 {
 			max = 100
@@ -92,24 +133,25 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 		sbID := id.New("sbx")
 		opID := id.New("op")
 		sb := Sandbox{
-			ID:          sbID,
-			ProjectID:   in.ProjectID,
-			Name:        in.Name,
-			State:       "CREATING",
-			StateReason: "ADMITTED",
-			ImageID:     in.ImageID,
-			OperationID: opID,
-			Generation:  1,
-			CreateTime:  now,
-			CreatedBy:   in.Principal,
-			Command:     in.Command,
-			WorkingDir:  in.WorkingDir,
-			Resources:   in.Resources,
-			Placement:   in.Placement,
-			Timeouts:    in.Timeouts,
-			Network:     in.Network,
-			Labels:      in.Labels,
-			SecretRefs:  in.SecretRefs,
+			ID:               sbID,
+			ProjectID:        in.ProjectID,
+			Name:             in.Name,
+			State:            "CREATING",
+			StateReason:      "ADMITTED",
+			ImageID:          in.ImageID,
+			OperationID:      opID,
+			Generation:       1,
+			CreateTime:       now,
+			CreatedBy:        in.Principal,
+			Command:          in.Command,
+			WorkingDir:       in.WorkingDir,
+			NativeEntrypoint: in.NativeEntrypoint,
+			Resources:        in.Resources,
+			Placement:        in.Placement,
+			Timeouts:         in.Timeouts,
+			Network:          in.Network,
+			Labels:           in.Labels,
+			SecretRefs:       in.SecretRefs,
 		}
 		if sb.SecretRefs == nil {
 			sb.SecretRefs = []SecretRef{}
@@ -127,13 +169,13 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 		_, err = tx.Exec(ctx, `
 			INSERT INTO sandboxes (
 				id, project_id, name, state, state_reason, image_id, operation_id, generation,
-				create_time, created_by, command, working_dir,
+				create_time, created_by, command, working_dir, native_entrypoint,
 				resources, placement, timeouts, network, labels, secret_refs
 			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18
+				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
 			)`,
 			sb.ID, sb.ProjectID, sb.Name, sb.State, sb.StateReason, sb.ImageID, sb.OperationID, sb.Generation,
-			sb.CreateTime, sb.CreatedBy, jsonSlice(sb.Command), sb.WorkingDir,
+			sb.CreateTime, sb.CreatedBy, jsonSlice(sb.Command), sb.WorkingDir, sb.NativeEntrypoint,
 			jsonVal(sb.Resources), jsonVal(sb.Placement), jsonVal(sb.Timeouts), jsonVal(sb.Network), jsonMap(sb.Labels),
 			jsonVal(sb.SecretRefs),
 		)

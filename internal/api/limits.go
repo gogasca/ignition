@@ -75,6 +75,9 @@ func checkSecretRefs(refs []store.SecretRef) error {
 		if ref.SecretID == "" || !store.ValidImageID(ref.SecretID) {
 			return fmt.Errorf("secretRefs.secretId is invalid")
 		}
+		if !store.ValidSecretVersion(ref.Version) {
+			return fmt.Errorf("secretRefs.version is invalid")
+		}
 		if ref.EnvironmentName == "" || !envNameRe.MatchString(ref.EnvironmentName) {
 			return fmt.Errorf("secretRefs.environmentName is invalid")
 		}

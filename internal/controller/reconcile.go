@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"log"
 	"time"
 
 	"ignition.dev/ignition/internal/k8s"
@@ -86,6 +87,24 @@ func (c *Controller) cordonIfGPUDirty(pod *k8s.Pod) error {
 	return c.nodes.CordonAndDelete(pod.NodeName)
 }
 
+// taintReusePending closes the GPU-reuse scheduling window the instant the
+// controller deletes a GPU sandbox Pod: the container starts with the GPU
+// bound as soon as it is scheduled, before ignition-gpu-agent's health and
+// residual-process check has run, so a freed node must not be immediately
+// schedulable for a new tenant. Best-effort and non-fatal to the reconcile
+// pass — gpuagent.Agent.verifyReuse applies the same taint independently on
+// every reuse check (including teardowns this controller never observed,
+// such as WORKER_LOST) and is the primary gate; this call only shrinks the
+// window between Pod deletion and the agent's next tick.
+func (c *Controller) taintReusePending(pod *k8s.Pod, gpu bool) {
+	if !gpu || c.nodes == nil || pod == nil || pod.NodeName == "" {
+		return
+	}
+	if err := c.nodes.SetGPUReusePending(pod.NodeName, true); err != nil {
+		log.Printf("controller: node %s: set reuse-pending taint: %v", pod.NodeName, err)
+	}
+}
+
 func (c *Controller) fail(ctx context.Context, sb store.Sandbox, reason string) error {
 	return c.store.UpdateObserved(ctx, store.ObservedUpdate{
 		ProjectID: sb.ProjectID,
@@ -166,6 +185,7 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 			if err := c.cordonIfGPUDirty(pod); err != nil {
 				return err
 			}
+			c.taintReusePending(pod, gpu)
 			return c.pods.Delete(name)
 		}
 		return nil
@@ -175,6 +195,7 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 			if err := c.cordonIfGPUDirty(pod); err != nil {
 				return err
 			}
+			c.taintReusePending(pod, gpu)
 			return c.pods.Delete(name)
 		}
 		return c.store.UpdateObserved(ctx, store.ObservedUpdate{
@@ -229,6 +250,7 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 		if err := c.failProcesses(ctx, sb); err != nil {
 			return err
 		}
+		c.taintReusePending(pod, gpu)
 		_ = c.pods.Delete(name)
 		return c.fail(ctx, sb, reason)
 	}

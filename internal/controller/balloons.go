@@ -12,72 +12,125 @@ import (
 	"ignition.dev/ignition/internal/store"
 )
 
+// warmClass is one accelerator class's independent warm-buffer target. GPU
+// nodes are scarce and quota-limited; CPU nodes are not. An operator may want
+// warm CPU capacity without paying for warm GPU capacity, or vice versa, so
+// each class scales, cools down, and reports size on its own.
+type warmClass struct {
+	profile k8s.Profile
+	minWarm int
+	maxWarm int
+}
+
+func (c *Controller) warmClasses() []warmClass {
+	gpu, _ := k8s.ProfileFor(store.AcceleratorNVIDIAL4)
+	cpu, _ := k8s.ProfileFor(store.AcceleratorNone)
+	return []warmClass{
+		{profile: gpu, minWarm: c.opts.MinWarm, maxWarm: c.opts.MaxWarm},
+		{profile: cpu, minWarm: c.opts.MinWarmCPU, maxWarm: c.opts.MaxWarmCPU},
+	}
+}
+
+// balloonPrefix names a class's balloon Pods so scale-down never deletes or
+// double-counts another class's balloons sharing the reconcile pass.
+func balloonPrefix(accel string) string {
+	slug := strings.ToLower(strings.ReplaceAll(accel, "_", "-"))
+	return "balloon-" + slug + "-"
+}
+
 func (c *Controller) reconcileBalloons(ctx context.Context, sbs []store.Sandbox) error {
 	_ = ctx
-	if c.opts.MinWarm <= 0 && c.opts.MaxWarm <= 0 {
+	classes := c.warmClasses()
+	enabled := false
+	for _, cl := range classes {
+		if cl.minWarm > 0 || cl.maxWarm > 0 {
+			enabled = true
+		}
+	}
+	if !enabled {
 		return nil
 	}
 	pods, err := c.pods.List()
 	if err != nil {
 		return err
 	}
-	var balloons []k8s.Pod
-	busy, queued := 0, 0
+	balloonsByClass := map[string][]k8s.Pod{}
+	busyByClass := map[string]int{}
 	for _, p := range pods {
 		switch p.Labels[k8s.LabelWorkload] {
 		case k8s.WorkloadBalloon:
-			balloons = append(balloons, p)
+			accel := p.Annotations[k8s.AnnotGPUType]
+			balloonsByClass[accel] = append(balloonsByClass[accel], p)
 		case k8s.WorkloadSandbox:
 			if p.Scheduled {
-				busy++
+				accel := p.Annotations[k8s.AnnotGPUType]
+				busyByClass[accel]++
 			}
 		}
 	}
+	queuedByClass := map[string]int{}
 	for _, sb := range sbs {
-		if sb.State == "CREATING" {
-			queued++
+		if sb.State != "CREATING" {
+			continue
 		}
+		accel := sb.Resources.Accelerator.Type
+		if accel == "" {
+			accel = store.AcceleratorNVIDIAL4
+		}
+		queuedByClass[accel]++
 	}
-	c.stats.setBalloons(len(balloons))
-	want := capacity.DesiredWarm(capacity.Inputs{
-		Busy:    busy,
-		Queued:  queued,
-		Warm:    len(balloons),
-		MinWarm: c.opts.MinWarm,
-		MaxWarm: c.opts.MaxWarm,
-		Safety:  1.3,
-	})
-	sort.Slice(balloons, func(i, j int) bool { return balloons[i].Name < balloons[j].Name })
-	if len(balloons) > want {
-		now := c.opts.Now()
-		if c.balloonExcessSince.IsZero() {
-			c.balloonExcessSince = now
-		}
-		if c.opts.BalloonCooldown > 0 && now.Sub(c.balloonExcessSince) < c.opts.BalloonCooldown {
-			return nil
-		}
-	} else {
-		c.balloonExcessSince = time.Time{}
+	if c.balloonExcessSince == nil {
+		c.balloonExcessSince = map[string]time.Time{}
 	}
-	for len(balloons) < want {
-		name := fmt.Sprintf("balloon-%d", len(balloons))
-		if err := c.pods.Create(k8s.BalloonPod(name)); err != nil {
-			return err
+
+	now := c.opts.Now()
+	total := 0
+	for _, cl := range classes {
+		accel := cl.profile.Accelerator
+		balloons := balloonsByClass[accel]
+		sort.Slice(balloons, func(i, j int) bool { return balloons[i].Name < balloons[j].Name })
+		want := capacity.DesiredWarm(capacity.Inputs{
+			Busy:    busyByClass[accel],
+			Queued:  queuedByClass[accel],
+			Warm:    len(balloons),
+			MinWarm: cl.minWarm,
+			MaxWarm: cl.maxWarm,
+			Safety:  1.3,
+		})
+		if len(balloons) > want {
+			if c.balloonExcessSince[accel].IsZero() {
+				c.balloonExcessSince[accel] = now
+			}
+			if c.opts.BalloonCooldown > 0 && now.Sub(c.balloonExcessSince[accel]) < c.opts.BalloonCooldown {
+				total += len(balloons)
+				continue
+			}
+		} else {
+			c.balloonExcessSince[accel] = time.Time{}
 		}
-		balloons = append(balloons, k8s.Pod{Name: name})
-	}
-	for len(balloons) > want {
-		last := balloons[len(balloons)-1]
-		if !strings.HasPrefix(last.Name, "balloon-") {
-			break
+		prefix := balloonPrefix(accel)
+		for len(balloons) < want {
+			name := fmt.Sprintf("%s%d", prefix, len(balloons))
+			if err := c.pods.Create(k8s.BalloonPod(name, cl.profile)); err != nil {
+				return err
+			}
+			balloons = append(balloons, k8s.Pod{Name: name})
 		}
-		if err := c.pods.Delete(last.Name); err != nil {
-			return err
+		for len(balloons) > want {
+			last := balloons[len(balloons)-1]
+			if !strings.HasPrefix(last.Name, prefix) {
+				break
+			}
+			if err := c.pods.Delete(last.Name); err != nil {
+				return err
+			}
+			balloons = balloons[:len(balloons)-1]
 		}
-		balloons = balloons[:len(balloons)-1]
+		if len(balloons) <= want {
+			c.balloonExcessSince[accel] = time.Time{}
+		}
+		total += len(balloons)
 	}
-	if len(balloons) <= want {
-		c.balloonExcessSince = time.Time{}
-	}
+	c.stats.setBalloons(total)
 	return nil
 }

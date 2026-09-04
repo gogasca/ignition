@@ -21,12 +21,28 @@ import (
 
 const defaultBalloonCooldown = 15 * time.Minute
 
+// leaseRenewBatch bounds how many sandboxes reconcileOnce mutates between
+// lease re-checks. ListSandboxesAll is now bounded by store.ReconcileWindow,
+// but a pass can still legitimately run long under high active-sandbox
+// counts; re-validating lease ownership mid-pass, rather than only once at
+// the start, keeps a standby replica that has since taken over the lease
+// from mutating Pods concurrently with the previous holder.
+const leaseRenewBatch = 50
+
 // Options configure a Controller.
 type Options struct {
-	HolderID        string
-	LeaseTTL        time.Duration
-	MinWarm         int
-	MaxWarm         int
+	HolderID string
+	LeaseTTL time.Duration
+	// MinWarm/MaxWarm bound the GPU (NVIDIA_L4) warm balloon buffer.
+	MinWarm int
+	MaxWarm int
+	// MinWarmCPU/MaxWarmCPU bound the CPU (NONE) warm balloon buffer. Both
+	// default to 0 (disabled): the CPU sandbox pool has historically scaled
+	// to zero with no warm capacity, and enabling a buffer has a real node
+	// cost, so it stays opt-in rather than silently changing existing
+	// deployments' spend.
+	MinWarmCPU      int
+	MaxWarmCPU      int
 	Now             func() time.Time
 	ResolveImage    func(imageID string) string
 	ImagePrefix     string
@@ -41,11 +57,13 @@ type Options struct {
 
 // Controller is the only process allowed to mutate sandbox Pods.
 type Controller struct {
-	store              store.ControllerStore
-	pods               k8s.Pods
-	nodes              k8s.Nodes
-	opts               Options
-	balloonExcessSince time.Time
+	store store.ControllerStore
+	pods  k8s.Pods
+	nodes k8s.Nodes
+	opts  Options
+	// balloonExcessSince is keyed by accelerator type: each warm class scales
+	// and cools down independently.
+	balloonExcessSince map[string]time.Time
 	stats              statsHolder
 }
 
@@ -104,7 +122,19 @@ func (c *Controller) reconcileOnce(ctx context.Context) (error, bool, map[string
 		byState[sb.State]++
 	}
 	var reconcileErrs []error
-	for _, sb := range sbs {
+	for i, sb := range sbs {
+		if i > 0 && i%leaseRenewBatch == 0 && c.opts.HolderID != "" {
+			ok, err := c.store.HoldLease(ctx, c.opts.HolderID, c.opts.Now().UTC(), c.opts.LeaseTTL)
+			if err != nil {
+				return err, false, byState
+			}
+			if !ok {
+				// Lease moved to another holder mid-pass: stop mutating
+				// Pods now rather than race the new holder on the rest of
+				// this batch. The next tick picks up where this left off.
+				return nil, false, byState
+			}
+		}
 		if err := c.reconcileSandbox(ctx, sb); err != nil {
 			log.Printf("controller: sandbox %s: %v", sb.ID, err)
 			reconcileErrs = append(reconcileErrs, fmt.Errorf("sandbox %s: %w", sb.ID, err))
@@ -181,6 +211,8 @@ func Run(cfg config.Config) error {
 		HolderID:        holder,
 		MinWarm:         cfg.MinWarm,
 		MaxWarm:         cfg.MaxWarm,
+		MinWarmCPU:      cfg.MinWarmCPU,
+		MaxWarmCPU:      cfg.MaxWarmCPU,
 		ImagePrefix:     cfg.SandboxImagePrefix,
 		GCPProject:      cfg.GCPProject,
 		Region:          cfg.EnabledRegion,

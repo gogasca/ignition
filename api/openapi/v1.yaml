@@ -289,6 +289,14 @@ components:
           type: array
           items: { type: string }
         workingDirectory: { type: string }
+        nativeEntrypoint:
+          type: boolean
+          description: >-
+            Run the admitted image's own OCI Entrypoint/Cmd unchanged instead
+            of Ignition's sandbox-init supervisor. Set this for any image that
+            does not embed sandbox-init. Readiness then relies on the
+            container reaching Running (no /readyz to gate on), and
+            command/exec/idle-tracking are unavailable for the sandbox.
         resources: { $ref: "#/components/schemas/ResourceSpec" }
         placement: { $ref: "#/components/schemas/PlacementSpec" }
         timeouts: { $ref: "#/components/schemas/TimeoutSpec" }
@@ -384,6 +392,7 @@ components:
         timeouts: { $ref: "#/components/schemas/TimeoutSpec" }
         network: { $ref: "#/components/schemas/NetworkSpec" }
         labels: { type: object, additionalProperties: { type: string } }
+        nativeEntrypoint: { type: boolean }
     Operation:
       type: object
       required: [id, projectId, kind, state, resourceId, createTime]

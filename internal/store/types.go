@@ -3,26 +3,33 @@ package store
 import "time"
 
 type Sandbox struct {
-	ID          string            `json:"id"`
-	ProjectID   string            `json:"projectId"`
-	Name        string            `json:"name,omitempty"`
-	State       string            `json:"state"`
-	StateReason string            `json:"stateReason,omitempty"`
-	ImageID     string            `json:"imageId"`
-	OperationID string            `json:"operationId,omitempty"`
-	Generation  int64             `json:"-"`
-	CreateTime  time.Time         `json:"createTime"`
-	ReadyTime   *time.Time        `json:"readyTime,omitempty"`
-	FinishTime  *time.Time        `json:"finishTime,omitempty"`
-	CreatedBy   string            `json:"-"`
-	Command     []string          `json:"-"`
-	WorkingDir  string            `json:"-"`
-	Resources   ResourceSpec      `json:"resources"`
-	Placement   PlacementSpec     `json:"placement"`
-	Timeouts    TimeoutSpec       `json:"timeouts"`
-	Network     NetworkSpec       `json:"network"`
-	Labels      map[string]string `json:"labels,omitempty"`
-	SecretRefs  []SecretRef       `json:"-"`
+	ID          string     `json:"id"`
+	ProjectID   string     `json:"projectId"`
+	Name        string     `json:"name,omitempty"`
+	State       string     `json:"state"`
+	StateReason string     `json:"stateReason,omitempty"`
+	ImageID     string     `json:"imageId"`
+	OperationID string     `json:"operationId,omitempty"`
+	Generation  int64      `json:"-"`
+	CreateTime  time.Time  `json:"createTime"`
+	ReadyTime   *time.Time `json:"readyTime,omitempty"`
+	FinishTime  *time.Time `json:"finishTime,omitempty"`
+	CreatedBy   string     `json:"-"`
+	Command     []string   `json:"-"`
+	WorkingDir  string     `json:"-"`
+	// NativeEntrypoint runs the admitted image's own OCI Entrypoint/Cmd as
+	// PID 1 instead of Ignition's managed init supervisor. Set this for an
+	// arbitrary/generic image that does not embed sandbox-init: readiness
+	// then relies on kubelet's default (container Running, since there is no
+	// /readyz to probe), and command/exec/idle-tracking are unavailable for
+	// the sandbox.
+	NativeEntrypoint bool              `json:"nativeEntrypoint,omitempty"`
+	Resources        ResourceSpec      `json:"resources"`
+	Placement        PlacementSpec     `json:"placement"`
+	Timeouts         TimeoutSpec       `json:"timeouts"`
+	Network          NetworkSpec       `json:"network"`
+	Labels           map[string]string `json:"labels,omitempty"`
+	SecretRefs       []SecretRef       `json:"-"`
 }
 
 type SecretRef struct {
@@ -101,22 +108,23 @@ type Process struct {
 }
 
 type CreateSandboxInput struct {
-	ProjectID  string
-	Principal  string
-	IdemKey    string
-	IdemHash   string
-	Name       string
-	ImageID    string
-	Command    []string
-	WorkingDir string
-	Resources  ResourceSpec
-	Placement  PlacementSpec
-	Timeouts   TimeoutSpec
-	Network    NetworkSpec
-	Labels     map[string]string
-	SecretRefs []SecretRef
-	TraceID    string
-	MaxActive  int
+	ProjectID        string
+	Principal        string
+	IdemKey          string
+	IdemHash         string
+	Name             string
+	ImageID          string
+	Command          []string
+	WorkingDir       string
+	NativeEntrypoint bool
+	Resources        ResourceSpec
+	Placement        PlacementSpec
+	Timeouts         TimeoutSpec
+	Network          NetworkSpec
+	Labels           map[string]string
+	SecretRefs       []SecretRef
+	TraceID          string
+	MaxActive        int
 }
 
 type CreateProcessInput struct {

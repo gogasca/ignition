@@ -32,6 +32,10 @@ type PodClient interface {
 // NodeMarker sets or clears the reuse-cleanup annotation on the agent's node.
 type NodeMarker interface {
 	MarkNodeGPUCleanup(nodeName string, ambiguous bool) error
+	// SetGPUReusePending sets or clears the node taint that blocks new
+	// sandbox/balloon scheduling until this GPU is proven clean. See
+	// k8s.GPUReusePendingTaintKey.
+	SetGPUReusePending(nodeName string, pending bool) error
 }
 
 // Metrics receives agent outcomes. cmd/ wires a Prometheus implementation;
@@ -178,6 +182,15 @@ func (a *Agent) attest(ctx context.Context, pod *k8s.Pod) error {
 }
 
 func (a *Agent) verifyReuse(ctx context.Context) error {
+	// Close the scheduling window as soon as this pass notices the sandbox is
+	// gone, independent of whether the controller already tainted the node on
+	// its own delete path (reconcile.go) — this also covers teardowns the
+	// controller never observed, such as WORKER_LOST. Best-effort: a failure
+	// here still falls through to the inspect + MarkNodeGPUCleanup cordon
+	// path below, which is the safety net if the taint call itself fails.
+	if err := a.Nodes.SetGPUReusePending(a.NodeName, true); err != nil {
+		log.Printf("gpu-agent: node %s: set reuse-pending taint: %v", a.NodeName, err)
+	}
 	g, procs, err := a.inspect(ctx)
 	if err != nil {
 		return err
@@ -190,6 +203,12 @@ func (a *Agent) verifyReuse(ctx context.Context) error {
 			reason = "residual-processes"
 		}
 		a.markDirty(reason)
+	} else if err := a.Nodes.SetGPUReusePending(a.NodeName, false); err != nil {
+		// Best-effort like the set(true) call above: log and leave the taint
+		// in place rather than report a healthy GPU as dirty over a transient
+		// API error. A node stuck taint-blocked by a persistent failure here
+		// needs operator attention regardless of what MarkNodeGPUCleanup does.
+		log.Printf("gpu-agent: node %s: clear reuse-pending taint: %v", a.NodeName, err)
 	}
 	return a.Nodes.MarkNodeGPUCleanup(a.NodeName, dirty)
 }

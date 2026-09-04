@@ -8,22 +8,24 @@ import (
 // Fake is an in-memory Pods + Nodes mock. Tests drive kubelet observations
 // via SetScheduled / SetRunning / SetReady.
 type Fake struct {
-	mu         sync.Mutex
-	pods       map[string]*Pod
-	gpuNodes   map[string]bool
-	dirtyNodes map[string]bool
-	ScaleDown  map[string]bool
-	Nodes      []string // CordonAndDelete calls
-	Creates    int
-	Deletes    int
+	mu           sync.Mutex
+	pods         map[string]*Pod
+	gpuNodes     map[string]bool
+	dirtyNodes   map[string]bool
+	reusePending map[string]bool
+	ScaleDown    map[string]bool
+	Nodes        []string // CordonAndDelete calls
+	Creates      int
+	Deletes      int
 }
 
 func NewFake() *Fake {
 	return &Fake{
-		pods:       map[string]*Pod{},
-		gpuNodes:   map[string]bool{},
-		dirtyNodes: map[string]bool{},
-		ScaleDown:  map[string]bool{},
+		pods:         map[string]*Pod{},
+		gpuNodes:     map[string]bool{},
+		dirtyNodes:   map[string]bool{},
+		reusePending: map[string]bool{},
+		ScaleDown:    map[string]bool{},
 	}
 }
 
@@ -133,6 +135,27 @@ func (f *Fake) MarkNodeGPUCleanup(nodeName string, ambiguous bool) error {
 // the next sandbox teardown, as ignition-gpu-agent would after a failed reuse
 // check.
 func (f *Fake) MarkNodeDirty(nodeName string) { _ = f.MarkNodeGPUCleanup(nodeName, true) }
+
+func (f *Fake) SetGPUReusePending(nodeName string, pending bool) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.reusePending == nil {
+		f.reusePending = map[string]bool{}
+	}
+	if pending {
+		f.reusePending[nodeName] = true
+	} else {
+		delete(f.reusePending, nodeName)
+	}
+	return nil
+}
+
+// GPUReusePending is a test accessor for the taint SetGPUReusePending sets.
+func (f *Fake) GPUReusePending(nodeName string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.reusePending[nodeName]
+}
 
 func (f *Fake) ListPodsOnNode(nodeName string) ([]Pod, error) {
 	f.mu.Lock()
