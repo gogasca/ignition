@@ -1,16 +1,15 @@
 # Ignition Create Sandbox API Specification
 
-**Status:** Draft v0.2 — implemented slice notes added 2026-08-28  
-**Parent designs:** [Client API and Identity](ignition-design-client-api-identity.md), [Control Plane](ignition-design-control-plane.md), [Scheduler](ignition-design-scheduler-leasing.md)  
-**Machine-readable schema:** [`api/proto/ignition/v1/sandbox.proto`](../../api/proto/ignition/v1/sandbox.proto) and [`sandbox_service.proto`](../../api/proto/ignition/v1/sandbox_service.proto). How to implement and deploy: [Implementation guide](../guides/ignition-implementation.md).
+**Status:** Current — this is the deployed create/get/list/terminate/watch contract.
+
+**Parent designs:** [Client API and Identity](ignition-design-client-api-identity.md), [Control Plane](ignition-design-control-plane.md), [GKE Sandbox](ignition-design-gke-sandbox.md)  
+**Machine-readable schema:** [`api/proto/ignition/v1/sandbox.proto`](../../api/proto/ignition/v1/sandbox.proto) and [`sandbox_service.proto`](../../api/proto/ignition/v1/sandbox_service.proto). How to build and deploy: [Implementation guide](../guides/ignition-implementation.md).
 
 ## Purpose
 
-Defines the public API for asynchronously creating one sandbox on pre-warmed GPU capacity. This request/response schema, the state machine, idempotency rules, and error model are the canonical public contract and are runtime-agnostic.
+Defines the public API for asynchronously creating one sandbox. This request/response schema, the state machine, idempotency rules, and error model are the canonical public contract and are runtime-agnostic.
 
-The first implementation slice is this create/get/list/terminate/watch surface plus process exec and operations.
-
-**What the Go API implements today** (see [Implementation guide](../guides/ignition-implementation.md)):
+**What `ignition-api` implements** (see [Implementation guide](../guides/ignition-implementation.md)):
 
 - `resources`, `placement`, `timeouts`, and `network` are **optional**. Any field left unset is filled from the system [default runtime](ignition-design-default-runtime.md) (`GET /v1/projects/{project}/runtimes/default`); the built-in default is a CPU-only sandbox. The resolved `RuntimeSpec` is snapshotted onto the sandbox. `imageId` is the only required field.
 - `resources.accelerator.type` is the AcceleratorType enum (`NVIDIA_L4` or `NONE` for CPU-only); `count` must be `1` for `NVIDIA_L4` and `0`/absent for `NONE`. Platform allowlist `IGNITION_ALLOWED_ACCELERATORS` (default `NONE,NVIDIA_L4`). An accelerator type with no scheduling profile fails `WORKLOAD_NOT_SUPPORTED` with no Pod.
@@ -22,12 +21,12 @@ The first implementation slice is this create/get/list/terminate/watch surface p
 - Terminate/cancel permission deny is `404`; create/exec deny stays `403`.
 - Watch emits an SSE snapshot whenever the resource changes, supports `Last-Event-ID`, sends heartbeats, and closes on a terminal state or after ~60s.
 
-Provisioning behavior behind the API is owned by the active runtime design:
+Provisioning behavior behind the API:
 
-- **MVP (recommended):** the [GKE Sandbox MVP](ignition-design-gke-sandbox.md) design is normative. `ignition-controller` reconciles admitted sandboxes into gVisor Pods on pre-warmed one-GPU GKE nodes; the warm-capacity startup SLO (p95 API-to-`READY` ≤ 9 seconds) and its exclusions are defined there.
-- **Custom runtime (future, gated):** the scheduler/worker flow described in [Processing flow](#processing-flow) and [Detailed control-plane behavior](#detailed-control-plane-behavior) below applies when the custom GCE/MIG runtime replaces GKE provisioning.
+- **Shipped:** the [GKE Sandbox](ignition-design-gke-sandbox.md) design is normative. `ignition-controller` reconciles admitted sandboxes into gVisor Pods on GKE Sandbox nodes; the warm-capacity startup SLO (target p95 API-to-`READY` ≤ 9 seconds) and its exclusions are defined there.
+- **Deferred, not implemented:** the scheduler/worker flow in [Processing flow](#processing-flow) and [Detailed control-plane behavior](#detailed-control-plane-behavior) below is the custom GCE/MIG runtime.
 
-Sandbox creation normally selects existing warm capacity. It never synchronously creates a GPU VM. When no compatible capacity is available, the request remains queued while the fleet layer (GKE Cluster Autoscaler in the MVP; `ignition-fleet` in the custom runtime) replenishes the warm pool.
+Sandbox creation selects existing warm capacity and never synchronously creates a GPU VM. When no compatible capacity is available, the request stays queued while the GKE Cluster Autoscaler adds a node.
 
 ### Placement
 
@@ -113,15 +112,15 @@ Required OAuth permission: `sandbox.create`.
 ### Fields
 
 - `name`: optional display name, unique only when project policy requires it.
-- `imageId`: required admitted image. This slice requires `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`; mutable OCI tags are not accepted on create.
+- `imageId`: required. Must match `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`; the controller resolves it under the Artifact Registry sandbox prefix. Digest pinning is future work.
 - `command`: optional argv array. It is never evaluated by a shell. When omitted, Ignition starts its sandbox init supervisor and waits for later `exec` requests.
 - `workingDirectory`: optional absolute path inside the image.
 - `secretRefs`: stored on create; the controller resolves Secret Manager at Pod create and injects env. Values never enter SQL.
-- `cpuMilli`: required, positive, max 8000 in this slice.
-- `memoryMiB`: required, positive, max 32768 in this slice.
-- `accelerator.type`: required `AcceleratorType` enum. Public JSON drops the proto prefix (`ACCELERATOR_TYPE_NVIDIA_L4` → `"NVIDIA_L4"`, `ACCELERATOR_TYPE_NONE` → `"NONE"`). This slice allowlists `NVIDIA_L4` via `IGNITION_ALLOWED_ACCELERATORS`. GCE accelerator name `nvidia-l4` is infra-only, not the API value.
+- `cpuMilli`: optional, positive, max 8000.
+- `memoryMiB`: optional, positive, max 32768.
+- `accelerator.type`: `AcceleratorType` enum. Public JSON drops the proto prefix (`ACCELERATOR_TYPE_NVIDIA_L4` → `"NVIDIA_L4"`, `ACCELERATOR_TYPE_NONE` → `"NONE"`). `IGNITION_ALLOWED_ACCELERATORS` defaults to `NONE,NVIDIA_L4`. GCE accelerator name `nvidia-l4` is infra-only, not the API value.
 - `accelerator.count`: `1` for `NVIDIA_L4`, `0` for `NONE`.
-- `region`: must be enabled for the project. Initial production is single-region.
+- `region`: must be enabled for the project. Deployment is single-region (`us-central1`).
 - `computeEnvironment`: `STANDARD` (default) or `BARE_METAL`. `STANDARD` hides the managed runtime implementation. `BARE_METAL` never falls back to `STANDARD` when its backend is unavailable.
 - `startupSeconds`: maximum queue plus worker activation time before creation fails (max 600).
 - `maximumRuntimeSeconds`: hard sandbox lifetime (max 86400).
@@ -183,15 +182,18 @@ any nonterminal state → FAILED
 READY → TERMINATING → FINISHED
 ```
 
-- `CREATING`: admission is durable and request is queued.
-- `SCHEDULED`: GPU lease and worker assignment are committed.
-- `STARTED`: worker runtime exists but GPU/ingress verification is incomplete.
-- `READY`: runtime and exact GPU visibility are verified, and ingress route registration has completed so exec can attach.
+- `CREATING`: admission is durable; the Pod is not yet scheduled.
+- `SCHEDULED`: the sandbox Pod is bound to a node (`PodScheduled=True`).
+- `STARTED`: the container is running; readiness verification is incomplete.
+- `READY`: kubelet `PodReady`, and for `NVIDIA_L4` an `ignition-gpu-agent`-stamped canonical GPU UUID + `init-healthy` annotation.
 - `FAILED`: terminal creation failure; includes a stable reason.
 
 ## Processing flow
 
-This sequence describes the custom GCE/MIG runtime (future, gated). For the MVP, the equivalent sequence — controller reconciliation onto pre-warmed GKE Sandbox nodes — is defined in the [GKE Sandbox MVP](ignition-design-gke-sandbox.md) design.
+> **This section (Processing flow and Detailed control-plane behavior) describes
+> the deferred custom GCE/MIG runtime and is not implemented.** The shipped
+> sequence — `ignition-controller` reconciliation onto GKE Sandbox nodes — is in
+> the [GKE Sandbox](ignition-design-gke-sandbox.md) design.
 
 ```mermaid
 sequenceDiagram

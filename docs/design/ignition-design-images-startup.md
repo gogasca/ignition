@@ -1,11 +1,22 @@
 # Ignition Images and Startup Acceleration Design
 
-**Status:** Draft v0.1  
+**Status:** Not implemented — image admission, lazy delivery, and golden startup snapshots are not built.
+
+> The shipped system has no image import pipeline, no lazy snapshotter, no
+> `ignition-artifacts`/`ignition-builder`, and no golden startup snapshots.
+> `ignition-controller` resolves a sandbox's `imageId` to
+> `${IGNITION_SANDBOX_IMAGE_PREFIX}/{imageId}` after a charset check and lets GKE
+> image streaming pull it; digest pinning and an admission catalog are future
+> work. Sandboxes always cold-start. This document is the design for that
+> pipeline and for the deferred custom-runtime golden-snapshot path — see
+> [GKE Sandbox](ignition-design-gke-sandbox.md) and
+> [Checkpoint and Restore](ignition-design-checkpoint-restore.md).
+
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 
 ## Scope
 
-Defines OCI admission, lazy image delivery, content-addressed caches, startup artifact building, immutable golden startup snapshots, application hooks, strategy selection, and invalidation. Initial production supports golden startup memory snapshots only for allowlisted stateless inference workloads; public session snapshots and periodic runtime recovery snapshots are deferred.
+Defines OCI admission, lazy image delivery, content-addressed caches, startup artifact building, immutable golden startup snapshots, application hooks, strategy selection, and invalidation. Golden startup memory snapshots are scoped to allowlisted stateless inference workloads; public session snapshots and periodic runtime recovery snapshots are out of scope.
 
 ## Components
 
@@ -141,7 +152,7 @@ Revoke immediately for security or correctness defects. New placement ignores re
 
 ## Custom filesystem decision
 
-Start with eStargz and SOCI. Build `ignitionfs` only when reproducible tests show an unmet latency, throughput, integrity, or cost requirement that cannot be addressed by configuration or caching.
+Start with eStargz and SOCI. Build `ignitionfs` only when reproducible tests show an unmet latency, throughput, integrity, or cost requirement that cannot be addressed by configuration or caching. The content-addressed FUSE design for `ignitionfs`, scoped to arbitrary large customer images, is [Image Data Layer](ignition-design-image-datalayer.md).
 
 ## Observability
 

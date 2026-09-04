@@ -1,6 +1,16 @@
 # Ignition Fleet and VM Lifecycle Design
 
-**Status:** Draft v0.1  
+**Status:** Not implemented — design of record for the deferred custom GCE/MIG worker runtime.
+
+> `ignition-fleet` and the GCE Managed Instance Group worker fleet are not built
+> and not on the deploy path. The shipped system runs GPU and CPU sandboxes on
+> GKE Standard node pools with GKE Sandbox (gVisor); GKE owns VM lifecycle,
+> drivers, and autoscaling, and `ignition-controller` maintains warm capacity with
+> balloon Pods (see [GKE Sandbox](ignition-design-gke-sandbox.md)). This document
+> is retained as the design for the custom Compute Engine runtime, a possible
+> future optimization — see
+> [GKE Sandbox — Relationship to the custom runtime](ignition-design-gke-sandbox.md#relationship-to-the-custom-runtime).
+
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 
 ## Scope

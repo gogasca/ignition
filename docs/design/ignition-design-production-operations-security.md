@@ -1,11 +1,12 @@
 # Ignition Production Operations and Security Design
 
-**Status:** Draft v0.1  
+**Status:** Target state for a production launch. Some of it is in place (per-service GCP/KSA identities, least-privilege Cloud SQL roles, private networking, Cloud SQL HA + PITR, audit-log lines on RBAC mutations, a CI pipeline); SPIFFE/SPIRE, the usage/metering ledger, the outbox, cross-region DR drills, and the launch gates are not built.
+
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 
 ## Scope
 
-Defines threat ownership, service identity, IAM, secrets, audit, observability, metering, SLOs, incident response, disaster recovery, release security, and operational gates.
+Defines threat ownership, service identity, IAM, secrets, audit, observability, metering, SLOs, incident response, disaster recovery, release security, and operational gates for a production launch. It is the bar, not a description of current behavior.
 
 ## Threat model
 
@@ -27,7 +28,7 @@ Trusted:
 - Ignition control/worker services;
 - configured identity provider.
 
-Host-administrator and GCP-operator confidentiality is outside the initial guarantee.
+Host-administrator and GCP-operator confidentiality is outside the guarantee.
 
 ## Service identity
 
@@ -36,7 +37,7 @@ Host-administrator and GCP-operator confidentiality is outside the initial guara
 - SPIFFE IDs identify environment, service, workload class, and, for workers, expected GCP project and pool.
 - Worker identity is attested to the expected GCP project, MIG/template, and service account.
 - Separate development, staging, and production trust domains.
-- Preview GCP Managed Workload Identities are not an initial-production dependency. Google API authentication and internal mTLS remain separate mechanisms.
+- Preview GCP Managed Workload Identities are not a dependency. Google API authentication and internal mTLS remain separate mechanisms.
 
 ## IAM
 
@@ -106,9 +107,9 @@ Rows are never updated or deleted. Corrections append a reversing entry linked t
 
 An hourly reconciler compares lease transitions, worker observations, usage-ledger intervals, artifact/storage measures, network export, and cloud billing data. It emits append-only corrections, records discrepancies, and pages when unreconciled quantity exceeds the launch tolerance: 0.1% of daily GPU-seconds or any single interval longer than 60 seconds.
 
-## Initial-production SLOs
+## Launch-target SLOs
 
-These are launch targets, not historical guarantees:
+These are targets for a production launch, not measured guarantees:
 
 - public API availability: 99.9% monthly;
 - gateway request availability: 99.9% monthly;
@@ -138,7 +139,7 @@ Any isolation suspicion stops placement on affected tuple, preserves forensic me
 
 ## Disaster recovery
 
-- Initial production serves from one region.
+- Deployment serves from one region.
 - Cloud SQL for PostgreSQL uses regional HA, private IP, the supported connector with bounded connection pools, automated cross-region backups, and PITR.
 - Database clients retry a serialization failure, deadlock, or failover only by retrying the whole transaction with bounded jitter.
 - Tested metadata and KMS-reference backups.

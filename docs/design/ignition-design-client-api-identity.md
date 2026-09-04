@@ -1,43 +1,45 @@
 # Ignition Client API and Identity Design
 
-**Status:** Draft v0.2  
+**Status:** Current for identity, project RBAC, and the sandbox/process/operation API. SDK packages and the full resource set (Project/Image/Secret/Event, Volumes, Session snapshots) are not built.
+
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 
 ## Scope
 
-Defines the initial public v1 API, SDK and CLI contracts, external identity, project authorization, idempotency, errors, and compatibility. The initial production API does **not** expose persistent writable Volume resources or SESSION memory-snapshot resources; both are post-v1.
+Defines the public API, external identity, project authorization, idempotency, errors, and compatibility. The API does **not** expose persistent writable Volume resources or SESSION memory-snapshot resources.
 
-**Machine-readable schema:** [`api/proto/ignition/v1/`](../../api/proto/ignition/v1/) (`SandboxService`, `OperationService`). The first implementation slice is sandbox lifecycle, process exec, and operations. Project, image, secret, and event endpoints below remain specified but are **deferred** until their protos are added. See the [Implementation guide](../guides/ignition-implementation.md).
+**Machine-readable schema:** [`api/proto/ignition/v1/`](../../api/proto/ignition/v1/) (`SandboxService`, `OperationService`). The exposed surface is sandbox lifecycle, the process control plane, operations, project `roleBindings`, and the default-runtime read. Project, image, secret, and event endpoints below are specified but not exposed. See the [Implementation guide](../guides/ignition-implementation.md).
 
 ## Components
 
-- `ignition-api`: resource CRUD, authentication, authorization, operations, and events.
-- `ignitionctl`: human and automation CLI.
-- Python package `ignition-sandbox`.
-- TypeScript package `@ignition/sandbox`.
-- A managed Auth0-compatible OpenID Connect provider. Ignition does not implement passwords, MFA, or primary identity storage.
+- `ignition-api`: resource CRUD, authentication, authorization, operations.
+- `ignitionctl`: human and automation CLI — specified; the binary exists but every subcommand returns `not implemented`. Use `curl` against the API.
+- Python package `ignition-sandbox` — not built.
+- TypeScript package `@ignition/sandbox` — not built.
+- Google as the identity provider (Google Workspace accounts and GCP service accounts). Ignition does not implement passwords, MFA, or primary identity storage.
 
 ## External authentication contract
 
-Initial production uses these OAuth/OIDC flows:
+`ignition-api` accepts two Google-issued credential paths, plus an optional first-party token type. Both paths resolve to one `Principal{Subject, Email, Kind, Domain}` — with `IGNITION_OIDC_SUBJECT_CLAIM=email` the verified email is the RBAC subject — and the same project RBAC.
 
-- human browser and interactive CLI: Authorization Code with PKCE (`S256`);
-- headless human CLI: Device Authorization Grant;
-- machine-to-machine clients: Client Credentials with `private_key_jwt`. Shared client secrets and API keys are not general M2M credentials.
+| Path | Caller | Credential | Verification |
+| --- | --- | --- | --- |
+| Through the Ingress | Human Workspace users, external automation | Cloud IAP browser flow → `X-Goog-IAP-JWT-Assertion` | issuer `https://cloud.google.com/iap`, ES256, `aud` = `IGNITION_IAP_AUDIENCE` (the backend-service resource path) |
+| In-cluster / impersonation | Probers, CI, service-to-service | `Authorization: Bearer <Google ID token>` | issuer `https://accounts.google.com`, `typ=JWT`, RS256, `aud` ∈ `IGNITION_OIDC_AUDIENCE` + `IGNITION_OIDC_AUDIENCES`, `email_verified`, and (users only) `hd` ∈ `IGNITION_OIDC_HOSTED_DOMAINS` |
 
-The provider issues RFC 9068 access JWTs with a 10-minute lifetime, asymmetric signatures, `typ=at+jwt`, stable subject, authorized-party/client ID, scopes, issuer, and the exact Ignition API audience. Its discovery document and HTTPS JWKS endpoint are part of the provider contract. Validators pin allowed algorithms, cache JWKS only within response bounds, refresh once on an unknown key ID, and fail closed if a usable key cannot be obtained. They allow at most 60 seconds of clock skew for `iat`, `nbf`, and `exp`.
+The middleware verifies the IAP assertion header when present, otherwise the bearer. Validators use JWKS (pinned to `https://www.googleapis.com/oauth2/v3/certs` where node egress cannot reach the OIDC discovery document), refresh once on an unknown key ID, fail closed if a usable key cannot be obtained, and allow at most 60 seconds of skew on `iat`/`nbf`/`exp`.
 
-Token validation requires exact issuer and audience, signature, allowed algorithm, expiry, not-before, token type, client authorization, and required scopes. ID tokens are never API credentials. Provider-side user/client disablement and refresh-token revocation stop future issuance; because access JWTs are self-contained, emergency revocation uses a control-plane denylist keyed by `jti` or subject/client through the remaining 10-minute lifetime.
+A `*.gserviceaccount.com` email is classified as a service account: exempt from the hosted-domain check and **not** privilege-capped — a service account may hold any role, including `owner`. First-party RFC 9068 `at+jwt` access tokens are also accepted when `IGNITION_OIDC_ALLOWED_TYPES` includes `at+jwt`; there is no first-party OAuth provider, PKCE/device flow, or API-key exchange.
 
-API keys are one-time bootstrap/exchange credentials only. The API stores only a hash, binds each key to a principal and narrow exchange purpose, displays it once, expires it, and invalidates it on first successful exchange. API keys cannot call resource APIs or open data-plane connections.
+ID tokens issued for other audiences, IAP assertions with the wrong `aud`, garbage, and cross-class tokens fail closed with `401`. Emergency revocation is Google-side disablement of the user or service account.
 
-Three credential classes are distinct and non-interchangeable:
+Credential classes are distinct and non-interchangeable:
 
-1. external access JWTs for public control-plane API calls;
-2. short-lived exec stream tokens bound to project, sandbox, process, stream epoch, and action;
-3. internal route tokens plus SPIFFE mTLS identities for gateway-to-ingress routing.
+1. external Google ID tokens / IAP assertions for public control-plane API calls;
+2. short-lived exec stream tokens bound to project, sandbox, process, stream epoch, and action (`IGNITION_STREAM_TOKEN_SECRET`);
+3. internal route tokens plus SPIFFE mTLS identities for gateway-to-ingress routing — part of the deferred custom runtime.
 
-No validator accepts a token issued for another class or audience. Internal workloads use workload identities represented by SPIFFE X.509 SVIDs and mTLS.
+No validator accepts a token issued for another class or audience.
 
 ## Resource hierarchy and principals
 
@@ -56,9 +58,9 @@ organization
 
 Users and service accounts are **principals**. A service account is not a role. Organization membership permits discovery of a project; project role bindings grant actions within that project. SQL queries are project-scoped before object rows are loaded, attribute checks bind children to their parent sandbox, and denial is the default.
 
-### Initial role/permission matrix
+### Role/permission matrix
 
-`owner` is immutable in the sense that a project must always retain at least one owner. `admin` can manage access but cannot transfer/delete the project or alter owners.
+A project must always retain at least one `owner` (the API's last-owner guard enforces this). `admin` can manage access but cannot transfer/delete the project or alter owners. Rows for resources that are not yet exposed (image, secret, event, `project.*`) describe the intended model; only the `sandbox.*`, `process.get`, `operation.*`, and `rolebinding.*` permissions are enforced today. Role lookup resolves the exact subject, then a `domain:<hd>` binding for a Workspace user.
 
 | Permission | owner | admin | developer | operator | viewer |
 |---|---:|---:|---:|---:|---:|
@@ -76,19 +78,19 @@ Users and service accounts are **principals**. A service account is not a role. 
 | `sandbox.get`, `sandbox.list`, `process.get`, `operation.get` | yes | yes | yes | yes | yes |
 | `operation.cancel` | yes | yes | own | yes | no |
 
-`own` means the principal initiated the sandbox or operation. Custom roles and resource-level sharing are post-v1. SQL-backed RBAC and explicit ownership/context checks are authoritative initially.
+`own` means the principal initiated the sandbox or operation. Custom roles and resource-level sharing are out of scope. SQL-backed RBAC (`role_bindings`) and explicit ownership/context checks are authoritative.
 
 For an object ID that does not exist **or belongs to another project**, return `404 NOT_FOUND` with indistinguishable response shape and timing bounds. Return `403 PERMISSION_DENIED` when the object is in the requested project but the principal lacks **create** or **exec**. **Terminate and operation-cancel** deny on a known in-project object also return `404`, so existence is not leaked by the permission check.
 
-## Public v1 resources and endpoints
+## Public resources and endpoints
 
 All resource names are immutable opaque IDs. List APIs use cursor pagination and deterministic `(create_time, id)` ordering. Secret payloads are write-only and never returned.
 
-The normative request, response, state progression, failure behavior, and acceptance tests for sandbox creation are defined in [Create Sandbox API Specification](ignition-sandbox-create-api.md). MVP provisioning behavior behind that contract (controller reconciliation, warm GPU node pools, and the warm-capacity startup SLO) is defined in the [GKE Sandbox MVP](ignition-design-gke-sandbox.md) design.
+The normative request, response, state progression, failure behavior, and acceptance tests for sandbox creation are defined in [Create Sandbox API Specification](ignition-sandbox-create-api.md). Provisioning behavior behind that contract (controller reconciliation, warm GPU node pools, the warm-capacity startup SLO) is defined in the [GKE Sandbox](ignition-design-gke-sandbox.md) design.
 
-### First implementation slice (protos)
+### Exposed endpoints
 
-These endpoints are in `SandboxService` / `OperationService` today:
+These endpoints are served today (`SandboxService` / `OperationService`, plus `roleBindings` and the default-runtime read):
 
 ```text
 POST   /v1/projects/{project}/sandboxes
@@ -108,9 +110,17 @@ GET    /v1/projects/{project}/operations
 GET    /v1/projects/{project}/operations/{operation}
 GET    /v1/projects/{project}/operations/{operation}:watch
 POST   /v1/projects/{project}/operations/{operation}:cancel
+
+GET    /v1/projects/{project}/runtimes/default
+
+GET    /v1/projects/{project}/roleBindings
+PUT    /v1/projects/{project}/roleBindings/{subject}
+DELETE /v1/projects/{project}/roleBindings/{subject}
 ```
 
-### Full v1 contract (deferred endpoints included)
+`{subject}` is an email or `domain:<fqdn>`. `roleBindings` write access is owner/admin only, with a last-owner guard and an audit-log line per mutation.
+
+### Full contract (specified, not exposed)
 
 All resource names are immutable opaque IDs. List APIs use cursor pagination and deterministic `(create_time, id)` ordering. Secret payloads are write-only and never returned.
 
@@ -168,7 +178,7 @@ GET    /v1/projects/{project}/events:watch
 
 Image import, sandbox creation/termination, secret rotation/deletion, and other long work return `202` with an Operation. Watch endpoints use authenticated Server-Sent Events, emit content-addressed snapshots when product state changes, honor `Last-Event-ID`, send heartbeats, and close on terminal state or after ~60s. Cancellation of an in-flight `CREATE_SANDBOX` fails the sandbox (`CANCELLED`) and releases quota; otherwise the Operation records whether work was cancelled or had already reached a non-cancellable/terminal point.
 
-There are no Volume, sandbox volume-mount, or Session snapshot endpoints in initial production.
+There are no Volume, sandbox volume-mount, or Session snapshot endpoints.
 
 ## Idempotency
 
@@ -193,7 +203,7 @@ READY → TERMINATING → FINISHED
 any nonterminal state → FAILED
 ```
 
-`READY` means runtime started and GPU/device setup succeeded, and ingress route registration has completed so the sandbox can accept exec. Initial production has no user-configured readiness probe; application health remains the application's responsibility.
+`READY` means the sandbox Pod is running, its runtime started, and (for `NVIDIA_L4`) GPU identity and health were attested by `ignition-gpu-agent`. There is no user-configured readiness probe; application health remains the application's responsibility. Exec is not yet servable — `ignition-gateway` is not built.
 
 Process SDK handles are in this proto slice. The first CLI/SDK slice is `Sandbox` + `Process` + `Operation`.
 
@@ -209,11 +219,15 @@ any pre-terminal state → FAILED
 
 ## SDK and CLI contract
 
-SDK handles include `Project`, `Image`, `Secret`, `Sandbox`, `Process`, `Operation`, `Event`, `StreamReader`, and `StreamWriter`. No v1 `Volume` or session-snapshot handle exists.
+> The Python and TypeScript SDKs and `ignitionctl` are **not built** — the binary
+> exists but returns `not implemented`. Callers use `curl` against the HTTP/JSON
+> API with a Google bearer token. The rest of this section is the target contract.
+
+SDK handles include `Project`, `Image`, `Secret`, `Sandbox`, `Process`, `Operation`, `Event`, `StreamReader`, and `StreamWriter`. No `Volume` or session-snapshot handle exists.
 
 Python provides synchronous and native asynchronous APIs; TypeScript provides native promises and async iterators. Stream reads are bytes by default. Explicit text wrappers take an encoding and error policy, use an incremental decoder across frame boundaries, and expose partial final lines instead of dropping them. `iter_lines()` does not wait indefinitely for a newline and preserves whether a line was complete.
 
-Writers expose bounded flow control: synchronous writes block up to a deadline and asynchronous writes await capacity. Readers do not buffer without limit. Cancellation propagates to pending calls without implicitly cancelling a remote Process unless requested. SDKs refresh external access JWTs before control calls and obtain a new stream credential for reconnect; they never reuse or refresh one credential class as another.
+Writers expose bounded flow control: synchronous writes block up to a deadline and asynchronous writes await capacity. Readers do not buffer without limit. Cancellation propagates to pending calls without implicitly cancelling a remote Process unless requested. SDKs obtain a fresh Google ID token before control calls and a new stream credential for reconnect; they never reuse or refresh one credential class as another.
 
 `Client`, `Sandbox`, and Process attachment support context managers/`using`. Exiting an attachment closes the local stream only. Exiting a client closes transports. Exiting a sandbox context terminates only if that context created the sandbox with `terminate_on_exit=True`.
 
@@ -235,7 +249,7 @@ with Client() as client:
     sandbox.terminate(wait=True)
 ```
 
-The CLI supports login/device login, project context, image import/status, secret lifecycle, sandbox create/list/inspect/terminate, exec/shell attach/reconnect, operation watch/cancel, and events. It supports PTY resize and detach, stable JSON output, explicit deadlines, secret redaction, and stable exit codes.
+The CLI target: `gcloud`-based auth, project context, image import/status, secret lifecycle, sandbox create/list/inspect/terminate, exec/shell attach/reconnect, operation watch/cancel, and events, with PTY resize and detach, stable JSON output, explicit deadlines, secret redaction, and stable exit codes.
 
 ## Errors, quotas, and SLO
 
@@ -250,8 +264,8 @@ For a `READY` sandbox, successful exec attachment has p95 latency at most 1 seco
 - Role-matrix tests cover every permission for user and service-account principals; a service account cannot be assigned as a role.
 - Every endpoint returns indistinguishable `404` for nonexistent and cross-project IDs, and `403` for a known in-project denied action.
 - Authorization queries cannot load an object before applying its project scope.
-- Authorization Code + PKCE, Device Grant, and Client Credentials with `private_key_jwt` pass provider conformance; ID tokens, API keys, wrong issuer/audience/type, stale JWKS keys, excessive skew, and cross-class tokens fail closed.
-- Disabled principals cannot obtain new tokens, emergency-denylisted access JWTs fail, and normal access JWTs expire within 10 minutes.
+- Google ID tokens and Cloud IAP assertions with the correct issuer/`aud`/type authenticate; wrong issuer/audience/type, stale JWKS keys, excessive skew, unverified email, a disallowed hosted domain on a user token, and cross-class tokens fail closed with `401`.
+- A subject with no `role_bindings` row (and no `domain:` fallback) is denied; a Google-side-disabled principal cannot obtain a new token.
 - Concurrent same-hash idempotent requests produce one side effect and replay one response; different-hash key reuse conflicts; records remain replayable for 24 hours.
 - Sandbox readiness succeeds without a user probe only after runtime/device/route setup. Every Process transition, cancel race, disconnect, exit code, signal, and startup failure is deterministic.
 - SDK conformance covers binary data, split multibyte text, partial lines, bounded backpressure, local versus remote cancellation, token refresh, reconnect credentials, and context-manager cleanup.

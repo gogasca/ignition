@@ -1,25 +1,25 @@
-# Ignition GKE Sandbox MVP Design
+# Ignition GKE Sandbox Design
 
-**Status:** Draft v0.1 — recommended MVP architecture
+**Status:** Current — this is the shipped architecture (`ignition-api` + `ignition-controller` on GKE).
+
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 **Public API contract:** [Create Sandbox API Specification](ignition-sandbox-create-api.md)  
 **Protos:** [`api/proto/ignition/v1/`](../../api/proto/ignition/v1/)  
 **Build and deploy:** [Implementation guide](../guides/ignition-implementation.md)  
-
 **API/controller software design:** [API and Controller proposal](ignition-design-api-controller.md)
 
 ## Purpose
 
-Defines the recommended initial (MVP) architecture for Ignition: GPU sandboxes built on GKE Standard with GKE Sandbox (gVisor/`nvproxy`), rather than the custom GCE MIG worker runtime. The custom runtime described in the other module designs remains a gated future optimization; see [Relationship to the custom runtime](#relationship-to-the-custom-runtime).
+Defines the architecture Ignition runs: GPU and CPU sandboxes on GKE Standard with GKE Sandbox (gVisor/`nvproxy`), rather than the custom GCE MIG worker runtime. The custom runtime described in the other module designs is deferred and not implemented; see [Relationship to the custom runtime](#relationship-to-the-custom-runtime).
 
-Sandboxes are now also CPU-only (`accelerator: NONE`), scheduled on a separate `cpu-sandbox` gVisor pool with no device request or one-per-node anti-affinity. The compute/timeout/network settings for any sandbox come from a system-managed [default runtime](ignition-design-default-runtime.md) (built-in default: CPU-only) that a request may override field-by-field. This document otherwise describes the GPU path; the accelerator profile registry (`internal/k8s/profile.go`) is the branch point.
+A sandbox is either GPU (`accelerator: NVIDIA_L4`, one whole GPU, on the `gpu-sandbox-l4` pool with one-per-node anti-affinity) or CPU-only (`accelerator: NONE`, on the `cpu-sandbox` gVisor pool with no device request). Compute/timeout/network settings come from a system-managed [default runtime](ignition-design-default-runtime.md) (built-in default: CPU-only) that a request may override field-by-field. The accelerator profile registry (`internal/k8s/profile.go`) is the branch point; sections below that discuss GPU specifics apply to the `NVIDIA_L4` profile.
 
 Requirements this design satisfies:
 
-1. **Fast startup:** p95 API-ingress-to-`READY` of at most 9 seconds on pre-warmed GPU capacity (see [Startup SLO](#startup-slo-and-definition)).
+1. **Fast startup:** target p95 API-ingress-to-`READY` of at most 9 seconds on pre-warmed GPU capacity (see [Startup SLO](#startup-slo-and-definition)).
 2. **GPU isolation:** one hostile customer sandbox per one-GPU GCE node, isolated by gVisor/`nvproxy` plus the VM boundary.
-3. **Public API:** the same asynchronous Sandbox resource API defined in the [Create Sandbox API Specification](ignition-sandbox-create-api.md).
-4. **CLI:** `ignitionctl` for login, create, wait, inspect, exec/shell, and terminate.
+3. **Public API:** the asynchronous Sandbox resource API defined in the [Create Sandbox API Specification](ignition-sandbox-create-api.md).
+4. **CLI:** `ignitionctl` for login, create, wait, inspect, exec/shell, and terminate — specified; the binary exists but every subcommand returns `not implemented`.
 
 ## Architecture
 
@@ -98,7 +98,7 @@ GKE owns the GPU node pool's underlying MIGs; Ignition never resizes or mutates 
 
 **SLO:** for a qualified image, p95 time from `ignition-api` receiving an authenticated `POST /v1/projects/{project}/sandboxes` to the sandbox reaching public state `READY` is **at most 9 seconds**, when compatible pre-warmed GPU capacity exists.
 
-Qualified image means: admitted through image import, present in Artifact Registry in the same region, streamable via GKE image streaming, and its entrypoint reaches the sandbox init supervisor without model loading on the critical path (application/model readiness is the application's own concern). In this slice `READY` means runtime started, GPU visible, and the sandbox can accept exec.
+Qualified image means: present in Artifact Registry in the same region, streamable via GKE image streaming, and its entrypoint reaches the `sandbox-init` supervisor without model loading on the critical path (application/model readiness is the application's own concern). `READY` means runtime started, GPU visible and attested, and the sandbox could accept exec once the gateway ships.
 
 Explicitly **outside** the 9-second SLO:
 
@@ -136,7 +136,7 @@ Each stage is measured independently; regressions are attributed per stage.
 
 ## API and reconciliation flow
 
-The public request/response schema, states (`CREATING → SCHEDULED → STARTED → READY`), idempotency, and error model are canonical in the [Create Sandbox API Specification](ignition-sandbox-create-api.md). In the MVP, the provisioning path behind the API replaces the custom scheduler/worker-control/`ignitiond` machinery with the controller and the GKE scheduler:
+The public request/response schema, states (`CREATING → SCHEDULED → STARTED → READY`), idempotency, and error model are canonical in the [Create Sandbox API Specification](ignition-sandbox-create-api.md). The provisioning path behind the API is `ignition-controller` plus the GKE scheduler, not the custom scheduler/worker-control/`ignitiond` machinery:
 
 ```mermaid
 sequenceDiagram
@@ -246,10 +246,10 @@ spec:
 - **VM boundary.** A gVisor or driver compromise is contained to one GCE node hosting one customer sandbox — the configuration Google recommends for untrusted GPU workloads.
 - **No cluster credentials.** `automountServiceAccountToken: false`; the sandbox namespace's default service account has no RBAC grants.
 - **Metadata blocked.** The GCP network profile must block `169.254.169.254`, private control-plane ranges, Cloud SQL, and cross-tenant traffic regardless of internet access. `ENABLED` permits outbound public internet traffic only; it does not create inbound exposure. Any cluster-owned NetworkPolicy is defense in depth and is not generated from client input.
-- **Server-owned images and init.** This slice concatenates Artifact Registry `…/sandboxes/{imageId}` after a charset check; digest pin remains the v1 target. The entrypoint is Ignition's init supervisor, which brokers exec and signals for the gateway. Its GPU readiness probe stats the device nodes, runs `nvidia-smi` for a canonical UUID and ECC health, and runs a `cuInit()` helper — it never reads `NVIDIA_VISIBLE_DEVICES` or a device-node name.
+- **Server-owned images and init.** The controller resolves `imageId` to Artifact Registry `…/sandboxes/{imageId}` after a charset check; digest pinning is future work. The entrypoint is Ignition's `sandbox-init` supervisor (which will broker exec and signals for the gateway). Its GPU readiness probe stats the device nodes, runs `nvidia-smi` for a canonical UUID and ECC health, and runs a `cuInit()` helper — it never reads `NVIDIA_VISIBLE_DEVICES` or a device-node name.
 - **Trusted GPU attestation.** `ignition-gpu-agent`, a privileged DaemonSet on the `gpu-sandbox-l4` pool (one Pod per node, no `nvidia.com/gpu` request), is the authority on GPU identity and health. Because each node has exactly one GPU and one sandbox, it maps that GPU onto the sandbox Pod, verifies (NVML via `nvidia-smi`) that the GPU is healthy and carries no residual compute processes, and patches `ignition.io/gpu-uuid` + `ignition.io/init-healthy` onto the Pod. The controller requires that before `READY`.
 - **Read-only root.** The sandbox container has `readOnlyRootFilesystem: true`; `/scratch` is a writable emptyDir.
-- **Secrets scoped per sandbox.** The controller resolves Secret Manager references at Pod creation and injects them as environment values in the Pod spec (not as cluster-visible Secret objects readable by other principals); nothing grants the sandbox a Google identity. Secret injection is not implemented in this slice.
+- **Secrets scoped per sandbox.** The controller resolves Secret Manager references at Pod creation and injects them as environment values in the Pod spec (not as cluster-visible Secret objects readable by other principals); nothing grants the sandbox a Google identity.
 - **Node reuse policy.** After a sandbox Pod is gone, `ignition-gpu-agent` re-checks the node's GPU (residual compute processes, ECC, reset-required). If it cannot prove the GPU clean it annotates the **Node** `ignition.io/gpu-cleanup=ambiguous`. On the next teardown reconcile the controller reads that annotation (or a stale Pod annotation), **GET**s the node, and cordons only if `ignition.io/node-pool=gpu-sandbox-l4`; GKE recreates it fresh. Cordon errors fail the reconcile (they are not ignored). A clean node returns to the warm pool untouched.
 
 System DaemonSets (GKE logging, driver plugin) and `ignition-gpu-agent` still run on sandbox nodes. The guarantee is one **customer** sandbox with one exclusive GPU per node, not literally one Pod.
@@ -285,7 +285,7 @@ Contract: `create` sends `Idempotency-Key` automatically and prints the sandbox 
 - **Warm capacity exhausted:** sandbox stays `CREATING` while the autoscaler adds nodes; fails with retryable `CAPACITY_UNAVAILABLE` at `startupSeconds`.
 - **Pod unschedulable (quota/zone stockout):** same queueing path; the controller emits a capacity event for fleet sizing.
 - **Image pull/stream failure:** `FAILED` with `IMAGE_UNAVAILABLE`; quota reservation released.
-- **Node lost while running:** Pod disappears; controller marks the sandbox `FAILED` with `WORKER_LOST` (no transparent recovery in the MVP), releases quota, and removes routes.
+- **Node lost while running:** Pod disappears; controller marks the sandbox `FAILED` with `WORKER_LOST` (no transparent recovery), releases quota, and removes routes.
 - **Controller crash:** deterministic Pod names plus Cloud SQL state make reconciliation resume-safe; no duplicate Pods, no lost sandboxes.
 - **API crash after commit:** the Operation is durable; the controller proceeds regardless of which API replica handled admission.
 - **Client disconnect:** creation continues; the client re-attaches via Operation watch.
@@ -306,7 +306,7 @@ Cost controls: warm buffer clamped by budget policy; scale-in after cooldown; id
 
 ## Relationship to the custom runtime
 
-This design supersedes, for the MVP, the provisioning machinery in [Scheduler and GPU Leasing](ignition-design-scheduler-leasing.md), [Fleet and VM Lifecycle](ignition-design-fleet-vm-lifecycle.md), [Worker Runtime and GPU Isolation](ignition-design-worker-runtime.md), [Checkpoint and Restore](ignition-design-checkpoint-restore.md), and the custom lazy-image path of [Images and Startup Acceleration](ignition-design-images-startup.md). Those designs remain the specification for a future custom runtime, gated on measured evidence that GKE cannot meet requirements — specifically any of:
+This design replaces the provisioning machinery in [Scheduler and GPU Leasing](ignition-design-scheduler-leasing.md), [Fleet and VM Lifecycle](ignition-design-fleet-vm-lifecycle.md), [Worker Runtime and GPU Isolation](ignition-design-worker-runtime.md), [Checkpoint and Restore](ignition-design-checkpoint-restore.md), and the custom lazy-image path of [Images and Startup Acceleration](ignition-design-images-startup.md). Those designs are deferred and not implemented — retained as the specification for a future custom runtime, gated on measured evidence that GKE cannot meet requirements, specifically any of:
 
 1. the 9-second warm-capacity SLO or the cold-node target cannot be met after image-streaming and warm-pool tuning;
 2. golden CPU+GPU memory snapshots (CUDA checkpoint/restore) become a committed product requirement, which GKE Sandbox does not expose;

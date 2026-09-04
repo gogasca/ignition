@@ -1,6 +1,18 @@
 # Ignition Worker Runtime and GPU Isolation Design
 
-**Status:** Draft v0.1  
+**Status:** Not implemented — design of record for the deferred custom GCE/MIG worker runtime.
+
+> `ignitiond`, `ignition-hostd`, `snapshotd`, and `ignition-ingress` are not built.
+> The shipped system runs sandboxes as gVisor Pods on GKE Sandbox node pools:
+> `runsc`/`nvproxy` lifecycle, drivers, CDI, and cgroups are GKE-managed, and the
+> server-owned Pod spec plus `ignition-controller` replace the worker-side broker
+> chain (see [GKE Sandbox](ignition-design-gke-sandbox.md)). The one role from
+> this document that **is** built is GPU attestation and node-reuse gating,
+> realized as `ignition-gpu-agent` (a privileged DaemonSet on the GPU pool), not
+> `ignition-gpu-health`. This document is otherwise retained as the design for the
+> custom Compute Engine runtime — see
+> [GKE Sandbox — Relationship to the custom runtime](ignition-design-gke-sandbox.md#relationship-to-the-custom-runtime).
+
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 
 ## Scope
@@ -14,7 +26,7 @@ Defines `ignitiond`, the privileged typed runtime broker `ignition-hostd`, conta
 - `snapshotd`: unprivileged snapshot packaging and policy coordinator with a separate design. It requests typed checkpoint/restore operations from `ignition-hostd`.
 - `ignition-ingress`: unprivileged request and exec proxy.
 - containerd and `runsc`: pinned third-party components. Containerd supplies content and lazy snapshot services only.
-- `ignition-gpu-health`: supervised DCGM/NVIDIA health adapter. In the GKE MVP this role is realized by `ignition-gpu-agent`, a per-node DaemonSet that attests the sandbox's GPU (canonical UUID, ECC/reset health, no residual compute processes) via `nvidia-smi` and gates node reuse; see [GKE Sandbox design](ignition-design-gke-sandbox.md).
+- `ignition-gpu-health`: supervised DCGM/NVIDIA health adapter. In the shipped GKE system this role is realized by `ignition-gpu-agent`, a per-node DaemonSet that attests the sandbox's GPU (canonical UUID, ECC/reset health, no residual compute processes) via `nvidia-smi` and gates node reuse; see [GKE Sandbox design](ignition-design-gke-sandbox.md).
 
 Each service uses a dedicated Unix socket, user, filesystem area, and systemd unit.
 
