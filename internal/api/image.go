@@ -58,13 +58,15 @@ func (s *Server) createImage(w http.ResponseWriter, r *http.Request) {
 	}
 
 	img, err := s.store.CreateImage(r.Context(), store.CreateImageInput{
-		ProjectID:   project,
-		ImageID:     body.ImageID,
-		SourceRef:   body.SourceRef,
-		Digest:      resolved.Digest,
-		RegistryRef: resolved.RegistryRef,
-		Entrypoint:  resolved.Entrypoint,
-		Cmd:         resolved.Cmd,
+		ProjectID:         project,
+		ImageID:           body.ImageID,
+		SourceRef:         body.SourceRef,
+		Digest:            resolved.Digest,
+		RegistryRef:       resolved.RegistryRef,
+		Entrypoint:        resolved.Entrypoint,
+		Cmd:               resolved.Cmd,
+		StreamingEligible: resolved.StreamingEligible,
+		IneligibleReason:  resolved.IneligibleReason,
 	})
 	if err != nil {
 		writeStoreError(w, rid, err)

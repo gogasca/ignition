@@ -64,7 +64,8 @@ func (m *Memory) SeedImage(projectID, imageID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.images[imgKey(projectID, imageID)] = Image{
-		ProjectID: projectID, ImageID: imageID, State: "READY", CreateTime: time.Now().UTC(),
+		ProjectID: projectID, ImageID: imageID, State: "READY",
+		StreamingEligible: true, CreateTime: time.Now().UTC(),
 	}
 }
 
@@ -80,15 +81,17 @@ func (m *Memory) CreateImage(_ context.Context, in CreateImageInput) (Image, err
 		return Image{}, ErrImageAlreadyExists
 	}
 	img := Image{
-		ProjectID:   in.ProjectID,
-		ImageID:     in.ImageID,
-		State:       "READY",
-		SourceRef:   in.SourceRef,
-		Digest:      in.Digest,
-		RegistryRef: in.RegistryRef,
-		Entrypoint:  in.Entrypoint,
-		Cmd:         in.Cmd,
-		CreateTime:  time.Now().UTC(),
+		ProjectID:         in.ProjectID,
+		ImageID:           in.ImageID,
+		State:             "READY",
+		SourceRef:         in.SourceRef,
+		Digest:            in.Digest,
+		RegistryRef:       in.RegistryRef,
+		Entrypoint:        in.Entrypoint,
+		Cmd:               in.Cmd,
+		StreamingEligible: in.StreamingEligible,
+		IneligibleReason:  in.IneligibleReason,
+		CreateTime:        time.Now().UTC(),
 	}
 	m.images[key] = img
 	return img, nil

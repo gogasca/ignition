@@ -128,12 +128,21 @@ func (c *Controller) observeWrite(ctx context.Context, sb store.Sandbox, state, 
 	if rank(state) <= rank(sb.State) {
 		return nil
 	}
-	return c.store.UpdateObserved(ctx, store.ObservedUpdate{
+	if err := c.store.UpdateObserved(ctx, store.ObservedUpdate{
 		ProjectID: sb.ProjectID,
 		SandboxID: sb.ID,
 		State:     state,
 		Reason:    reason,
-	})
+	}); err != nil {
+		return err
+	}
+	// This is a genuine first-observation of state (guarded by the rank
+	// check above), so CreateTime -> now is exactly one startup-stage sample
+	// for this sandbox, never a re-observation of an already-reached state.
+	if c.opts.Metrics != nil {
+		c.opts.Metrics.ObserveStage(state, c.opts.Now().Sub(sb.CreateTime))
+	}
+	return nil
 }
 
 func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) error {

@@ -50,27 +50,35 @@ type Image struct {
 	// observes "RESOLVING" for a row it can already GET; the state is kept in
 	// the schema because that is the async delivery contract the design of
 	// record specifies (see docs/design/ignition-design-image-datalayer.md).
-	State       string    `json:"state"`
-	StateReason string    `json:"stateReason,omitempty"`
-	SourceRef   string    `json:"sourceRef,omitempty"`
-	Digest      string    `json:"digest,omitempty"`
-	RegistryRef string    `json:"registryRef,omitempty"`
-	Entrypoint  []string  `json:"entrypoint,omitempty"`
-	Cmd         []string  `json:"cmd,omitempty"`
-	CreateTime  time.Time `json:"createTime"`
+	State       string   `json:"state"`
+	StateReason string   `json:"stateReason,omitempty"`
+	SourceRef   string   `json:"sourceRef,omitempty"`
+	Digest      string   `json:"digest,omitempty"`
+	RegistryRef string   `json:"registryRef,omitempty"`
+	Entrypoint  []string `json:"entrypoint,omitempty"`
+	Cmd         []string `json:"cmd,omitempty"`
+	// StreamingEligible/IneligibleReason are the static GKE image-streaming
+	// eligibility check from admission (see internal/imagecatalog). A
+	// SeedImage row has StreamingEligible true with no reason (unchecked, not
+	// verified eligible).
+	StreamingEligible bool      `json:"streamingEligible"`
+	IneligibleReason  string    `json:"ineligibleReason,omitempty"`
+	CreateTime        time.Time `json:"createTime"`
 }
 
 // CreateImageInput is a fully-resolved catalog row to persist. Resolution
 // (the registry round trip) happens before this is called; the store layer
 // never performs image I/O.
 type CreateImageInput struct {
-	ProjectID   string
-	ImageID     string
-	SourceRef   string
-	Digest      string
-	RegistryRef string
-	Entrypoint  []string
-	Cmd         []string
+	ProjectID         string
+	ImageID           string
+	SourceRef         string
+	Digest            string
+	RegistryRef       string
+	Entrypoint        []string
+	Cmd               []string
+	StreamingEligible bool
+	IneligibleReason  string
 }
 
 type ResourceSpec struct {

@@ -23,6 +23,15 @@ type Resolved struct {
 	// required for this image before ever creating a sandbox.
 	Entrypoint []string
 	Cmd        []string
+	// StreamingEligible/IneligibleReason are the static, documented GKE image
+	// streaming eligibility check from admission step 7 in
+	// docs/design/ignition-design-images-startup.md — schema v1 manifests and
+	// duplicate/empty layers are known-ineligible. This is a static check
+	// only: whether a launch actually streamed is observed separately at
+	// launch time (not yet implemented — GKE exposes no admission-time mount
+	// API, so real eligibility can only be confirmed by watching a launch).
+	StreamingEligible bool
+	IneligibleReason  string
 }
 
 // Resolver resolves a source image reference for admission. Implementations

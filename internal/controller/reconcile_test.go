@@ -6,6 +6,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
+
+	"ignition.dev/ignition/internal/adminz"
 	"ignition.dev/ignition/internal/controller"
 	"ignition.dev/ignition/internal/k8s"
 	"ignition.dev/ignition/internal/store"
@@ -724,6 +727,71 @@ func TestBalloonsCPUDisabledByDefault(t *testing.T) {
 		if p.Labels[k8s.LabelWorkload] == k8s.WorkloadBalloon && p.Annotations[k8s.AnnotGPUType] == store.AcceleratorNone {
 			t.Fatal("CPU balloon created with CPU warm capacity disabled")
 		}
+	}
+}
+
+// The controller records a startup-stage latency sample the moment a
+// sandbox first reaches each state, and only then — never on a repeated
+// observation of an already-reached state (which reconcileSandbox's rank
+// guard prevents from calling observeWrite at all).
+func TestReconcileRecordsStageLatency(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	reg := prometheus.NewRegistry()
+	metrics := adminz.NewReconcileMetrics(reg, adminz.NewRecorder(10))
+	c := controller.New(m, fake, fake, controller.Options{Metrics: metrics})
+	res := admit(t, m, store.TimeoutSpec{})
+	ctx := context.Background()
+
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	name := k8s.PodName(res.Sandbox.ID)
+
+	// Walk each transition separately (as TestReconcileStateMachine does):
+	// observe() reports only the pod's current snapshot, so setting all three
+	// booleans at once would skip straight to READY and record no SCHEDULED
+	// or STARTED sample at all.
+	fake.SetScheduled(name, "gke-node-1")
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fake.SetRunning(name)
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	fake.SetReady(name, "GPU-1")
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	// Reconcile again: the sandbox is already READY, so this must not add a
+	// second READY sample.
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+
+	families, err := reg.Gather()
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := map[string]uint64{}
+	for _, f := range families {
+		if f.GetName() != "ignition_sandbox_stage_latency_seconds" {
+			continue
+		}
+		for _, metric := range f.GetMetric() {
+			for _, lbl := range metric.GetLabel() {
+				if lbl.GetName() == "state" {
+					counts[lbl.GetValue()] = metric.GetHistogram().GetSampleCount()
+				}
+			}
+		}
+	}
+	if counts["READY"] != 1 {
+		t.Fatalf("READY samples = %d, want exactly 1 (no re-observation)", counts["READY"])
+	}
+	if counts["SCHEDULED"] != 1 || counts["STARTED"] != 1 {
+		t.Fatalf("stage samples = %+v, want one SCHEDULED and one STARTED", counts)
 	}
 }
 

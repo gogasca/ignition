@@ -28,10 +28,17 @@ func newImageHarness(t *testing.T) *imgHarness {
 	mem.SeedRole("prj", "viewer@corp.example", auth.RoleViewer)
 	fake := imagecatalog.NewFake()
 	fake.Images["docker.io/library/nginx:1.27"] = imagecatalog.Resolved{
-		Digest:      "sha256:abc",
-		RegistryRef: "docker.io/library/nginx@sha256:abc",
-		Entrypoint:  []string{"/docker-entrypoint.sh"},
-		Cmd:         []string{"nginx", "-g", "daemon off;"},
+		Digest:            "sha256:abc",
+		RegistryRef:       "docker.io/library/nginx@sha256:abc",
+		Entrypoint:        []string{"/docker-entrypoint.sh"},
+		Cmd:               []string{"nginx", "-g", "daemon off;"},
+		StreamingEligible: true,
+	}
+	fake.Images["legacy.example/old:v1"] = imagecatalog.Resolved{
+		Digest:            "sha256:def",
+		RegistryRef:       "legacy.example/old@sha256:def",
+		StreamingEligible: false,
+		IneligibleReason:  "schema version 1 manifest is not eligible for GKE image streaming",
 	}
 	srv := api.NewWithResolver(config.Config{
 		EnabledRegion:     "us-central1",
@@ -87,6 +94,9 @@ func TestCreateImageResolvesAndPins(t *testing.T) {
 	if body["state"] != "READY" {
 		t.Fatalf("state = %v", body["state"])
 	}
+	if body["streamingEligible"] != true {
+		t.Fatalf("streamingEligible = %v", body["streamingEligible"])
+	}
 	entrypoint, _ := body["entrypoint"].([]any)
 	if len(entrypoint) != 1 || entrypoint[0] != "/docker-entrypoint.sh" {
 		t.Fatalf("entrypoint = %v", body["entrypoint"])
@@ -102,6 +112,24 @@ func TestCreateImageRequiresPermission(t *testing.T) {
 		`{"imageId":"img_nginx","sourceRef":"docker.io/library/nginx:1.27"}`)
 	if resp.StatusCode != http.StatusForbidden {
 		t.Fatalf("status = %d, want 403", resp.StatusCode)
+	}
+}
+
+// A streaming-ineligible image is still admitted — ineligibility means it
+// falls back to an eager pull at launch, not that it cannot run — but the
+// reason is recorded on the catalog row.
+func TestCreateImageRecordsStreamingIneligibility(t *testing.T) {
+	h := newImageHarness(t)
+	resp, body := h.req(t, http.MethodPost, "/v1/projects/prj/images", "owner",
+		`{"imageId":"img_legacy","sourceRef":"legacy.example/old:v1"}`)
+	if resp.StatusCode != http.StatusCreated {
+		t.Fatalf("status = %d, body = %v", resp.StatusCode, body)
+	}
+	if body["streamingEligible"] != false {
+		t.Fatalf("streamingEligible = %v, want false", body["streamingEligible"])
+	}
+	if body["ineligibleReason"] == "" || body["ineligibleReason"] == nil {
+		t.Fatal("ineligibleReason must be recorded")
 	}
 }
 

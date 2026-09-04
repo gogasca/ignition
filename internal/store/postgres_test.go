@@ -77,15 +77,19 @@ func TestPostgresCreateImageRoundTrip(t *testing.T) {
 	img, err := p.CreateImage(ctx, store.CreateImageInput{
 		ProjectID: project, ImageID: "img_nginx",
 		SourceRef: "docker.io/library/nginx:1.27", Digest: "sha256:abc",
-		RegistryRef: "docker.io/library/nginx@sha256:abc",
-		Entrypoint:  []string{"/docker-entrypoint.sh"},
-		Cmd:         []string{"nginx", "-g", "daemon off;"},
+		RegistryRef:       "docker.io/library/nginx@sha256:abc",
+		Entrypoint:        []string{"/docker-entrypoint.sh"},
+		Cmd:               []string{"nginx", "-g", "daemon off;"},
+		StreamingEligible: true,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	if img.State != "READY" || img.RegistryRef != "docker.io/library/nginx@sha256:abc" {
 		t.Fatalf("image = %+v", img)
+	}
+	if !img.StreamingEligible {
+		t.Fatal("streamingEligible not persisted")
 	}
 	if img.CreateTime.IsZero() {
 		t.Fatal("createTime not set")
@@ -95,6 +99,27 @@ func TestPostgresCreateImageRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 	if got.Digest != "sha256:abc" || len(got.Cmd) != 3 || got.Cmd[0] != "nginx" {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestPostgresCreateImagePersistsIneligibleReason(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	_, err := p.CreateImage(ctx, store.CreateImageInput{
+		ProjectID: project, ImageID: "img_legacy", SourceRef: "legacy:v1",
+		Digest: "sha256:x", RegistryRef: "legacy@sha256:x",
+		StreamingEligible: false, IneligibleReason: "schema version 1 manifest is not eligible for GKE image streaming",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := p.GetImage(ctx, project, "img_legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StreamingEligible || got.IneligibleReason == "" {
 		t.Fatalf("got = %+v", got)
 	}
 }

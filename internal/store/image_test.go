@@ -14,9 +14,10 @@ func TestMemoryCreateImageRoundTrip(t *testing.T) {
 	img, err := m.CreateImage(ctx, store.CreateImageInput{
 		ProjectID: "prj_dev", ImageID: "img_nginx",
 		SourceRef: "docker.io/library/nginx:1.27", Digest: "sha256:abc",
-		RegistryRef: "docker.io/library/nginx@sha256:abc",
-		Entrypoint:  []string{"/docker-entrypoint.sh"},
-		Cmd:         []string{"nginx", "-g", "daemon off;"},
+		RegistryRef:       "docker.io/library/nginx@sha256:abc",
+		Entrypoint:        []string{"/docker-entrypoint.sh"},
+		Cmd:               []string{"nginx", "-g", "daemon off;"},
+		StreamingEligible: true,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -24,11 +25,34 @@ func TestMemoryCreateImageRoundTrip(t *testing.T) {
 	if img.State != "READY" || img.RegistryRef != "docker.io/library/nginx@sha256:abc" {
 		t.Fatalf("image = %+v", img)
 	}
+	if !img.StreamingEligible {
+		t.Fatal("streamingEligible not persisted")
+	}
 	got, err := m.GetImage(ctx, "prj_dev", "img_nginx")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if got.Digest != "sha256:abc" || len(got.Entrypoint) != 1 || got.Entrypoint[0] != "/docker-entrypoint.sh" {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestMemoryCreateImagePersistsIneligibleReason(t *testing.T) {
+	m := store.NewMemory()
+	ctx := context.Background()
+	_, err := m.CreateImage(ctx, store.CreateImageInput{
+		ProjectID: "prj_dev", ImageID: "img_legacy", SourceRef: "legacy:v1",
+		Digest: "sha256:x", RegistryRef: "legacy@sha256:x",
+		StreamingEligible: false, IneligibleReason: "schema version 1 manifest is not eligible for GKE image streaming",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.GetImage(ctx, "prj_dev", "img_legacy")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.StreamingEligible || got.IneligibleReason == "" {
 		t.Fatalf("got = %+v", got)
 	}
 }

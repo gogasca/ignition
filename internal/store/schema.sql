@@ -34,6 +34,10 @@ CREATE TABLE IF NOT EXISTS images (
     registry_ref TEXT NOT NULL DEFAULT '',
     entrypoint   JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(entrypoint) = 'array'),
     cmd          JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(cmd) = 'array'),
+    -- Static admission-time GKE image-streaming eligibility (see
+    -- internal/imagecatalog); a SeedImage row defaults eligible/unchecked.
+    streaming_eligible BOOLEAN NOT NULL DEFAULT TRUE,
+    ineligible_reason  TEXT NOT NULL DEFAULT '',
     create_time  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (project_id, image_id)
 );

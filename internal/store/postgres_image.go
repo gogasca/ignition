@@ -8,7 +8,7 @@ import (
 )
 
 const imageCols = `project_id, image_id, state, state_reason, source_ref, digest, registry_ref,
-	entrypoint, cmd, create_time`
+	entrypoint, cmd, streaming_eligible, ineligible_reason, create_time`
 
 // scanImageRow scans imageCols without mapping the error, so callers can
 // apply their own error semantics (a duplicate row means something different
@@ -18,7 +18,7 @@ func scanImageRow(scan func(dest ...any) error) (Image, error) {
 	var entrypoint, cmd []byte
 	err := scan(
 		&img.ProjectID, &img.ImageID, &img.State, &img.StateReason, &img.SourceRef, &img.Digest, &img.RegistryRef,
-		&entrypoint, &cmd, &img.CreateTime,
+		&entrypoint, &cmd, &img.StreamingEligible, &img.IneligibleReason, &img.CreateTime,
 	)
 	if err != nil {
 		return Image{}, err
@@ -43,10 +43,11 @@ func (p *Postgres) CreateImage(ctx context.Context, in CreateImageInput) (Image,
 		return Image{}, err
 	}
 	row := tx.QueryRow(ctx, `
-		INSERT INTO images (project_id, image_id, state, source_ref, digest, registry_ref, entrypoint, cmd)
-		VALUES ($1, $2, 'READY', $3, $4, $5, $6, $7)
+		INSERT INTO images (project_id, image_id, state, source_ref, digest, registry_ref, entrypoint, cmd, streaming_eligible, ineligible_reason)
+		VALUES ($1, $2, 'READY', $3, $4, $5, $6, $7, $8, $9)
 		RETURNING `+imageCols,
 		in.ProjectID, in.ImageID, in.SourceRef, in.Digest, in.RegistryRef, jsonSlice(in.Entrypoint), jsonSlice(in.Cmd),
+		in.StreamingEligible, in.IneligibleReason,
 	)
 	img, err := scanImageRow(row.Scan)
 	if err != nil {
