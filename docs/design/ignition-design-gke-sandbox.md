@@ -309,7 +309,7 @@ Cost controls: warm buffer clamped by budget policy; scale-in after cooldown; id
 This design replaces the provisioning machinery in [Scheduler and GPU Leasing](ignition-design-scheduler-leasing.md), [Fleet and VM Lifecycle](ignition-design-fleet-vm-lifecycle.md), [Worker Runtime and GPU Isolation](ignition-design-worker-runtime.md), [Checkpoint and Restore](ignition-design-checkpoint-restore.md), and the custom lazy-image path of [Images and Startup Acceleration](ignition-design-images-startup.md). Those designs are deferred and not implemented — retained as the specification for a future custom runtime, gated on measured evidence that GKE cannot meet requirements, specifically any of:
 
 1. the 9-second warm-capacity SLO or the cold-node target cannot be met after image-streaming and warm-pool tuning;
-2. golden CPU+GPU memory snapshots (CUDA checkpoint/restore) become a committed product requirement, which GKE Sandbox does not expose;
+2. managed GKE Pod snapshots fail the measured startup, lifecycle, compatibility, isolation, or storage requirements after qualification;
 3. driver/`nvproxy`/CUDA tuple pinning stricter than GKE's validated versions is required for snapshot portability;
 4. per-GPU lease fencing or lifecycle control beyond Kubernetes semantics is demonstrated necessary by an isolation or billing defect.
 

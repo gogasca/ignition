@@ -1,355 +1,439 @@
-# Ignition Image Data Layer Design (`ignitionfs`)
+# Ignition Image Data Layer Design
 
-**Status:** Not implemented — design of record for the deferred custom lazy-image path.
+**Status:** Proposed — backend-neutral image admission and delivery are not
+implemented. The previously proposed custom FUSE filesystem (`ignitionfs`) is
+not approved for implementation.
 
-> The shipped system has no image-admission catalog and no lazy image delivery.
-> `ignition-controller` resolves a sandbox's `imageId` to
-> `${IGNITION_SANDBOX_IMAGE_PREFIX}/{imageId}` and lets GKE image streaming pull
-> it; sandboxes always cold-start from the OCI image. This document specifies the
-> content-addressed FUSE data layer named `ignitionfs` in
-> [Images and Startup Acceleration](ignition-design-images-startup.md#custom-filesystem-decision),
-> for the case the MVP's curated-image assumption breaks: arbitrary, large
-> (tens to hundreds of GB) customer images. It belongs to the custom Compute
-> Engine runtime and is gated on the same evidence — see
-> [Relationship to the custom runtime](#relationship-to-the-custom-runtime).
+> The shipped system delegates image delivery to GKE image streaming. This
+> document defines the next implementation for arbitrary OCI containers on GKE
+> and, if the custom Compute Engine runtime is justified, on GCE. It deliberately
+> does not assume a workload language, framework, entrypoint, readiness protocol,
+> or file-access pattern.
 
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
-**Sibling:** [Images and Startup Acceleration](ignition-design-images-startup.md) — golden startup snapshots, admission, strategy selection
-**Sibling:** [Checkpoint and Restore](ignition-design-checkpoint-restore.md) — process/GPU memory snapshots
-**Runtime boundary:** [Worker Runtime and GPU Isolation](ignition-design-worker-runtime.md) — `ignition-hostd`, gVisor, containerd content services
+**Sibling:** [Images and Startup Acceleration](ignition-design-images-startup.md)
+**Class-specific accelerator:** [Fast Startup on GCP](ignition-design-fast-startup-gcp.md) — re-layering as an alternative representation; admitted read-only data on block storage
+**Runtime boundary:** [Worker Runtime and GPU Isolation](ignition-design-worker-runtime.md)
 
-## Scope
+## Decision
 
-Defines content-addressed image ingest, the chunk store and its cache tiers, the
-per-node `ignitionfs` FUSE daemon, the sandbox rootfs mount, prefetch, cross-tenant
-dedup and its confidentiality controls, and the integrity model.
+Ignition does not build a new filesystem first.
 
-Out of scope: golden CPU/GPU memory snapshots and the lifecycle-hook contract
-([Images and Startup Acceleration](ignition-design-images-startup.md)); process and
-GPU checkpoint ordering ([Checkpoint and Restore](ignition-design-checkpoint-restore.md));
-writable persistent Volumes ([Storage and Volumes](ignition-design-storage-volumes.md)).
-`ignitionfs` delivers the immutable image rootfs only.
+- On GKE, use same-region Artifact Registry, GKE image streaming, and versioned
+  secondary boot-disk container-image caches for selected node pools.
+- On the deferred custom GCE runtime, qualify Nydus RAFS v6/EROFS, eStargz, and
+  SOCI, then select the best supported backend per image class. Eager OCI pull is
+  always a correctness fallback.
+- Ignition owns admission, immutable catalog metadata, optional access profiles,
+  cache placement policy, strategy selection, observability, and revocation.
+- A custom `ignitionfs` may be reconsidered only after a production-shaped
+  benchmark demonstrates a required capability unavailable in the qualified
+  upstream backends. General claims about chunking, deduplication, prefetch, or
+  partial file reads do not meet that gate because existing backends provide
+  those capabilities.
 
-## Problem statement
+This replaces the earlier design that proposed a flattened, content-addressed
+FUSE filesystem. Nydus already provides a merged filesystem tree, chunk-addressed
+data, integrity checking, prefetch, local caching, and FUSE or in-kernel EROFS
+operation. eStargz also addresses regular files in independently verifiable
+chunks, and SOCI addresses compressed layers in configurable spans. Neither may
+be described as necessarily downloading an entire file on first read.
 
-eStargz and SOCI are the MVP answer for lazy image delivery and remain the default
-([Images and Startup Acceleration](ignition-design-images-startup.md#custom-filesystem-decision)).
-They dedup at layer granularity, require a per-image conversion or index, and
-materialize a whole file on first read — so a model server that `mmap`s a 40 GB
-weight file pays the full transfer before the first inference, and two customer
-images that share a 15 GB base but differ in one layer share nothing below the
-layer boundary.
+Modal's published architecture validates the broad pattern: load a small
+filesystem index, fetch content on demand, and serve it through tiered
+content-addressed caches. It does not establish that Modal's private filesystem
+can be deployed or operated on GKE. The Ignition-specific contribution is instead
+a backend-neutral control plane that binds one canonical OCI identity to verified
+delivery representations, partitions caches by security domain, and selects lazy,
+cached, or eager delivery from measured behavior. That capability is useful even
+when GKE owns the data path.
 
-`ignitionfs` targets the regime where those properties dominate cost:
+## Goals
 
-1. customers ship arbitrary images, not an allowlisted set, so the image is on the
-   critical path of every cold start;
-2. images are large (tens to hundreds of GB) and share substantial content
-   (base OS, CUDA, framework wheels, common model shards);
-3. loaders `mmap` large files and touch a fraction of the bytes.
+1. Start any admitted OCI image without requiring the complete image to be
+   downloaded and unpacked first when a lazy backend is selected.
+2. Preserve OCI filesystem and process semantics, including the source process
+   remaining PID 1. Optimization must not require an access profile, injected
+   binary, or application integration.
+3. Minimize platform-controlled time to authenticated rootfs availability and
+   container start.
+4. Select eager delivery when lazy faults would be slower, rather than assuming
+   lazy delivery always wins.
+5. Isolate private image data and cache observations between projects.
+6. Fail closed on identity or integrity errors and fail predictably on backend
+   loss.
 
-The design goal is **cold-start latency independent of image size**: container
-creation blocks on metadata only, and data transfers on demand at chunk
-granularity from a tiered content-addressed cache.
+## Non-goals
 
-## Components
+- Ignition cannot bound arbitrary application initialization. A container may
+  intentionally sleep, compute indefinitely, or read its entire image.
+- This layer does not checkpoint process or device memory.
+- This layer does not deliver persistent volumes or application datasets.
+- Cross-project deduplication of private data is not a goal.
+- Transparent recovery of a running sandbox after its rootfs service fails is
+  not promised.
 
-- `ignitionfs` — per-node unprivileged FUSE daemon. Serves one read-only mount per
-  sandbox from an in-memory manifest and a tiered chunk cache.
-- `ignition-builder` ingest extension — flattens an admitted OCI image, chunks it,
-  uploads missing chunks to the CAS, and publishes a signed image manifest.
-- `ignition-artifacts` catalog extension — stores manifests, chunk references,
-  prefetch profiles, and per-project chunk keys.
-- Chunk store (CAS) — object-storage bucket of immutable, self-verifying chunks,
-  with an optional per-zone read-through cache.
+## Startup definitions
 
-`ignition-hostd` owns the privileged mount setup and namespace wiring; `ignitionfs`
-itself is unprivileged and holds no host credentials beyond a read-only CAS
-identity. Containerd content and lazy-snapshot services are not on the image-data
-path when `ignitionfs` is selected; the manifest and CAS are the source of truth.
+The following measurements are distinct:
 
-## Addressing model
+- `image_resolved`: the immutable OCI digest and admitted catalog entry exist;
+- `rootfs_ready`: authenticated filesystem metadata is mounted or the eager
+  rootfs is unpacked;
+- `container_created`: the OCI runtime has completed create;
+- `container_started`: the runtime reports that the source container process has
+  started;
+- `application_ready`: an optional application-declared readiness condition.
 
-The manifest maps each path to an ordered list of chunk references. Chunking is
-hybrid:
+Only `rootfs_ready` for a lazy backend and the platform portion of
+`container_created` can be approximately independent of logical image size.
+Completion after `container_started` depends on the bytes the loader and
+entrypoint touch.
+`application_ready` is unbounded without an application contract.
 
-- files smaller than 64 KiB are stored whole as one chunk;
-- larger files are split by **FastCDC** content-defined chunking, ~1 MiB average,
-  256 KiB–4 MiB bounds;
-- a chunk id is `sha256` of the chunk plaintext.
+## Image admission and catalog
 
-Content-defined boundaries keep dedup robust across inserts and shifts (model
-shards re-exported with different headers, rebuilt wheels). Chunk granularity
-below the file boundary is what enables partial reads and `mmap` fault-in.
+Admission runs once for an immutable source digest:
 
-Chunks are immutable and self-verifying. The cache therefore needs no invalidation
-and is safely shared across images and — subject to
-[Dedup and confidentiality](#dedup-and-confidentiality) — across tenants.
+1. resolve a mutable reference to an OCI manifest or index digest;
+2. copy the selected platform manifest and blobs into same-region Artifact
+   Registry under an Ignition-owned immutable repository;
+3. verify registry identity, signature, provenance, and project policy;
+4. validate OCI configuration, layer descriptors, diff IDs, whiteouts, path
+   normalization, hardlinks, symlinks, xattrs, ownership, and allowed special
+   files;
+5. scan for prohibited configuration and known vulnerabilities according to
+   policy;
+6. statically validate documented GKE image-streaming requirements and record
+   eligibility or a specific incompatibility; actual streaming is observed only
+   at launch because GKE exposes no admission-time mount API;
+7. asynchronously create candidate alternative representations needed for the
+   custom GCE runtime; and
+8. atomically publish the signed catalog record.
 
-## Ingest
-
-Runs once per admitted OCI digest, after signature, provenance, and policy
-verification ([Images and Startup Acceleration](ignition-design-images-startup.md#image-admission)):
-
-1. pull the image layers into an isolated scratch area;
-2. **apply the layers to a flattened rootfs**, resolving whiteouts and opaque
-   directories, so the manifest is layer-independent and dedup is not capped at
-   the layer boundary;
-3. walk the flattened tree:
-   - regular file → FastCDC → `sha256` per chunk → conditional PUT of each chunk
-     the CAS does not already hold;
-   - symlink, directory, device, fifo, socket, hardlink, xattrs → metadata only;
-4. emit the **image manifest**:
-   - per path: type, mode, uid, gid, mtime, size, xattrs, and either the ordered
-     `(chunk digest, offset, length)` list or the link target;
-   - the OCI config subset the runtime needs: `Entrypoint`, `Cmd`, `Env`,
-     `WorkingDir`, `User`;
-   - a **Merkle root** over the sorted `(path → file digest)` set;
-   - schema version, source OCI digest, chunker parameters, created-at;
-5. sign the manifest and publish it to the catalog keyed by source OCI digest;
-6. optionally build a [prefetch profile](#prefetch).
-
-Ingest is O(image bytes) once. It is amortized across every launch of the image
-and every other image that shares content. Tenant code never receives worker
-registry or CAS credentials.
-
-Ingest cost is comparable to producing an eStargz image or a SOCI index; the
-manifest replaces the SOCI index.
-
-## Chunk store and cache tiers
+The catalog record contains:
 
 ```text
-read(chunk):
-  ignitionfs page cache / node page cache      ~microseconds
-  → node local NVMe CAS cache                   ~100 microseconds
-  → per-zone read-through chunk cache (option)  ~1-5 ms
-  → object storage (GCS)                        ~10-50 ms
+source manifest digest and selected platform
+admitted OCI config digest
+registry location and residency
+available delivery representations and their immutable digests
+filesystem semantic digest
+logical, compressed, metadata, and object counts
+streaming eligibility and incompatibility reason
+access-profile IDs
+security domain and encryption-key version
+qualified runtime/kernel/backend tuples
+revocation state and policy revision
 ```
 
-- Object layout: `casv1/sha256/<first-2-hex>/<full-digest>`. Small chunks are
-  packed into aggregate objects with a side index (as `casync` castr and git
-  packfiles do) to bound per-object request cost; large chunks are stored
-  individually.
-- The node NVMe cache is content-addressed and evicts by least-frequently-used.
-  It is sized to a small multiple of the working set. Because chunks are shared
-  across images, warm-node hit ratio is high once a few images are resident.
-- The per-zone cache is added only after measurement shows cross-node first-fetch
-  latency or object-storage egress is material. It is itself a set of `ignitionfs`
-  daemons in cache-only mode or an equivalent object cache; it is never
-  authoritative.
-- `ignitionfs` fetches chunks with a node Workload Identity scoped to read-only on
-  the CAS bucket. It cannot write the CAS and has no other Google API scope.
+The filesystem semantic digest covers the canonical flattened result, including
+path, type, content digest, size, mode, uid, gid, hardlink identity, symlink
+target, permitted xattrs, and permitted device metadata. The signed catalog also
+covers the complete OCI execution configuration. A converted data representation
+is accepted only if a differential extractor proves that its canonical tree and
+execution configuration match the admitted source.
 
-## `ignitionfs` daemon
+Generic image acceleration does not add `/ignition/init`, rewrite the entrypoint,
+or wrap the source process. The existing GKE sandbox design's hard-coded
+supervisor is a separate runtime concern and must not be used to claim support
+for arbitrary images. A future opt-in managed lifecycle representation may add a
+supervisor, but it has different PID 1 and signal semantics and requires a
+separate public contract and qualification suite.
 
-One daemon per node, one read-only FUSE mount per sandbox.
+Tenant code receives neither registry credentials nor backend object-store
+credentials.
 
-### Mount topology
+Catalog publication uses these states:
 
-`ignition-hostd` mounts the `ignitionfs` tree read-only at
-`/var/lib/ignition/images/<sandbox>/lower` in the sandbox's mount namespace, then
-composes the sandbox rootfs as an overlay: `ignitionfs` lower, an NVMe-backed
-`upperdir` for writes, and a `workdir`. The gVisor gofer is given the overlay (or,
-per benchmark, the `ignitionfs` lower directly with `runsc`'s own overlay on top).
+```text
+RESOLVING -> IMPORTING -> VERIFYING -> READY_BASE
+                                      -> REJECTED
 
-The rootfs is read-only to the tenant except for policy-permitted writable paths
-and `/scratch`, consistent with the
-[GKE Sandbox](ignition-design-gke-sandbox.md#sandbox-pod-profile-normative) profile.
+READY_BASE -> BUILDING_REPRESENTATION -> QUALIFYING -> READY
+                                                  -> FAILED
 
-### Metadata path
+READY_BASE or READY -> REVOKED
+```
 
-The full manifest is loaded into daemon memory at mount. Even a 100 GB image has a
-manifest of tens of MB — it is path-and-attribute data plus chunk-digest lists.
-`lookup`, `getattr`, `readdir`, `readlink`, and `open` are served from memory with
-zero I/O. `entry_timeout` and `attr_timeout` are set high because image metadata is
-immutable for the life of the mount.
+`READY_BASE` permits the admitted source representation to run on GKE.
+Alternative GCE representations and profiles never delay it. Each transition is
+idempotent and fenced by `(source digest, platform, policy revision, generation)`.
+Only a catalog transaction that publishes a verified immutable digest makes a
+representation selectable.
 
-This is the property that lets container creation block on metadata, not on image
-transfer: `runsc create` completes as soon as the manifest is resident.
+## GKE implementation
 
-### Data path
+GKE owns the containerd and rootfs streaming path. Ignition must not depend on a
+custom snapshotter, host FUSE mount, undocumented `gcfsd` API, or direct mutation
+of the GKE-managed node runtime.
 
-`read(fd, offset, length)`:
+### Standard path
 
-1. resolve the covering chunk set from the file's chunk list;
-2. for each chunk, fetch through the tier stack;
-3. verify the chunk against its `sha256` before use — always, on every tier
-   including local NVMe;
-4. serve the requested range; the decompressed chunk remains in page cache.
+1. Schedule only the admitted source digest from same-region Artifact Registry.
+2. Require an eligible containerd node image and enable GKE image streaming.
+3. Because GKE does not expose the internal remote-rootfs mount timestamp, record
+   successful image-pull completion immediately before container creation as the
+   managed-path `rootfs_ready` proxy. Record container creation separately and
+   never infer streaming from image size.
+4. Record whether the launch streamed, used a node-local image, or fell back to a
+   full pull from Kubernetes events and measured timings.
+5. If the image is ineligible for streaming, either use an admitted eager pull or
+   reject it when the request deadline cannot accommodate the measured eager
+   path. The decision is explicit in sandbox status.
 
-`mmap` is supported through the FUSE page-fault path: a fault becomes a `read` of
-the faulted range, so a loader that maps a large weight file transfers only the
-pages it touches. On a custom fleet, target a node kernel with `FUSE_PASSTHROUGH`
-(6.9+) so reads that hit an already-local chunk file bypass the daemon entirely.
+GKE streaming can introduce remote-read latency when startup touches many files,
+downloads the complete image into the node cache in the background, and can
+surface stale file handles after the managed streaming service restarts. These
+are backend properties, not conditions Ignition can repair inside a running Pod.
+An affected sandbox fails with `IMAGE_UNAVAILABLE`; retry creates a new sandbox.
 
-Readahead: sequential access prefetches the next N chunks; files named in the
-prefetch profile fetch asynchronously on `open`.
+### Secondary boot-disk cache cohorts
 
-### Integrity
+For stable, frequently launched images, CI builds a versioned GKE secondary
+boot-disk image in `CONTAINER_IMAGE_CACHE` mode:
 
-- The manifest signature is verified at mount; an unverifiable or mismatched
-  manifest fails the mount.
-- Every chunk is verified against its digest on every read.
-- The manifest Merkle root is recorded on the sandbox's compatibility row, so the
-  runtime can assert the sandbox booted exactly the admitted image.
-- A cache or object-store compromise cannot inject content: unverified bytes are
-  never served.
+- cache large, shared, immutable OCI layers selected by measured launch demand;
+- include multiple compatible images in one cache epoch where supported;
+- create a new disk image and node pool to update content; existing node pools
+  are never mutated in place;
+- identify the epoch in the catalog and select its node pool using a server-owned
+  node selector; and
+- roll epochs blue/green while retaining an uncached GKE streaming pool.
 
-### Failure behavior
+Secondary boot disks accelerate node cold starts as well as Pod starts because
+GKE creates them from disk images in parallel with node provisioning. They are a
+coarse cache for predictable demand, not the per-image default and not suitable
+for high-churn arbitrary images.
 
-- chunk fetch fails after bounded retries → `EIO` on the read → sandbox `FAILED`
-  with `IMAGE_UNAVAILABLE`; quota released;
-- daemon crash → mounts go stale → the node supervisor restarts the daemon and
-  remounts from the manifest; all daemon state is derivable from the manifest and
-  the CAS, so no sandbox state is lost that was not already lost with the process;
-- manifest not resolvable at create time → sandbox `FAILED` with
-  `IMAGE_UNAVAILABLE` before any node work.
+## Custom GCE implementation
 
-### Implementation
+The custom GCE path is deferred until the gate in
+[GKE Sandbox](ignition-design-gke-sandbox.md#relationship-to-the-custom-runtime)
+is met. When enabled, the first implementation uses a qualified upstream remote
+snapshotter.
 
-The FUSE hot path is Rust (low-level FUSE API) to avoid GC pauses on reads and to
-keep per-syscall overhead low. Ingest and control-plane code may be Go. A later,
-more invasive option is to resolve file content from the CAS inside a custom gofer,
-removing the kernel FUSE round trip; it is not the first version.
+### Backend qualification order
 
-## Prefetch
+1. **Nydus RAFS v6/EROFS:** preferred candidate for a merged tree, chunk-level
+   reads and deduplication, prefetch, local blob cache, and an in-kernel hot path.
+2. **eStargz:** OCI-compatible fallback with file/chunk metadata, chunk integrity,
+   and prioritized-file prefetch.
+3. **SOCI:** index-based fallback when preserving the source gzip layers is more
+   valuable than conversion.
+4. **Eager overlayfs:** mandatory compatibility fallback.
 
-- **Prefetch profile.** During admission, trial-boot the image under `runsc` to the
-  init supervisor with `ignitionfs` in trace mode, record the ordered set of chunks
-  read, and store it on the catalog entry. At launch, `ignitionfs` streams the
-  profile chunks in parallel with `runsc create` so the working set is local by
-  the time the entrypoint runs.
-- **Node pinning.** The warm-pool controller pre-pulls the chunk working set of the
-  top-K images by recent launch rate onto warm nodes, into the NVMe cache.
-- **Zonal warm.** The per-zone cache, when present, is pre-populated from the same
-  top-K list so the first node in a zone to launch an image does not pay full
-  object-storage latency.
+Qualification covers the pinned worker kernel, containerd content/snapshot APIs,
+overlay arrangement, gVisor gofer, image features, and failure semantics. A
+backend is never selected merely because its index can be mounted.
 
-## Dedup and confidentiality
+### Mount and cache topology
 
-Content-addressed dedup across tenants is a side channel: a cross-tenant cache hit
-reveals that some other tenant holds a file with a given hash. The response is
-tiered by content class.
+```text
+gVisor sentry
+  -> gofer
+  -> writable per-sandbox upper
+  -> qualified immutable lower
+  -> Linux page cache
+  -> node Local SSD/NVMe backend cache
+  -> optional zonal read-through cache
+  -> same-region registry or object storage
+```
 
-- **Public base content** (OS, CUDA, framework wheels, publicly distributed model
-  weights): plaintext chunk digest, global dedup. No confidentiality is lost
-  because the content is already public.
-- **Customer-private content**: a per-project keyed tier. The chunk id is
-  `HMAC(project_key, sha256(chunk))`, which disables cross-project dedup for
-  private layers while public base layers still dedup globally. Chunks in this
-  tier are additionally encrypted at rest with a per-project data key under
-  envelope encryption and project/domain KMS wrapping, reusing the key hierarchy
-  from [Checkpoint and Restore](ignition-design-checkpoint-restore.md).
-- Ingest classifies each file: content that resolves to a known public base
-  artifact goes to the public tier; everything else goes to the project tier. The
-  classification is recorded in the manifest.
+`ignition-hostd` performs only typed mount and unmount operations and verifies
+that the mounted representation digest matches the catalog. Containerd remains
+the content and snapshot service where the selected backend integrates with it.
+No tenant-controlled path, mount option, backend URL, or credential reaches the
+privileged API.
 
-Object-read permission and decrypt permission on the private tier are separate
-grants. `ignitionfs` on a node hosting a project's sandbox receives only that
-project's decrypt grant for the duration of the mount.
+Local SSD is an ephemeral cache. Loss is a cache miss, never data loss. A zonal
+cache is introduced only after measurements show that it improves cold-cache
+p95 or reduces origin load enough to justify another serving tier.
 
-## Interaction with gVisor
+## Adaptive access profiles
 
-- The gofer performs host filesystem I/O on the sentry's behalf; it is pointed at
-  the overlay whose lower is the `ignitionfs` mount. Sentry VFS sees ordinary
-  files. A read traverses gofer → host kernel → FUSE → daemon; the local NVMe and
-  page-cache tiers keep the common case off the daemon.
-- `ignitionfs` replaces the eStargz/SOCI lazy snapshotter in the
-  [Worker Runtime](ignition-design-worker-runtime.md) design when selected per
-  image. Containerd is not used for image data in that configuration.
-- `runsc` rootfs composition (kernel overlay vs `runsc` internal overlay vs
-  gofer-direct on the `ignitionfs` lower) is a benchmarked choice, recorded per
-  workload class alongside the
-  [restore I/O strategy](ignition-design-images-startup.md#restore-io-strategy).
+Access profiles are optional performance hints. They never restrict which files
+or byte ranges a container may read.
 
-## Relationship to golden snapshots
+A profile is keyed by:
 
-`ignitionfs` and golden startup snapshots
-([Images and Startup Acceleration](ignition-design-images-startup.md#golden-startup-snapshot))
-are complementary and independently selectable per image/startup revision:
+```text
+image digest
+argv and working directory
+non-secret environment policy hash
+runtime/backend tuple
+optional readiness contract revision
+profile schema version
+```
 
-- `ignitionfs` removes image *size* from the cold-start critical path but does not
-  remove framework import, CUDA context creation, kernel autotune, or weights
-  reaching VRAM;
-- a golden snapshot removes those by restoring a warmed process, but its build
-  still needs the image rootfs, which `ignitionfs` delivers;
-- for a large arbitrary image with no golden snapshot, `ignitionfs` plus a
-  prefetch profile is the fastest available path;
-- for an allowlisted stateless workload, the golden snapshot is faster and
-  `ignitionfs` only accelerates the golden build and the clean-recreation path.
+On sampled cold launches, the backend or gofer records ordered file byte ranges
+read from `container_created` until `application_ready`, or for a fixed bounded
+window when no readiness contract exists. The builder aggregates multiple
+successful launches and publishes a candidate only after replay on an empty
+cache. One anomalous trace cannot replace the active profile.
 
-Strategy selection ([Images and Startup Acceleration](ignition-design-images-startup.md#strategy-selection))
-gains `ignitionfs`-lazy as an explicit option to benchmark.
+At launch:
 
-## Relationship to the custom runtime
+- authenticated metadata is fetched first;
+- high-confidence ranges are prefetched concurrently with container creation;
+- adjacent remote ranges are coalesced to limit request amplification;
+- demand faults always outrank speculative prefetch;
+- prefetch has byte, concurrency, CPU, and time budgets; and
+- a profile miss behaves as an ordinary lazy read.
 
-This design is part of the deferred custom Compute Engine runtime and is gated on
-the same evidence as the rest of it
-([GKE Sandbox — Relationship to the custom runtime](ignition-design-gke-sandbox.md#relationship-to-the-custom-runtime)),
-plus a data-layer-specific trigger: reproducible measurements on real customer
-images showing that
+Profiles with unstable coverage or a working set near the complete image are
+disabled. Those images are candidates for eager pull or a secondary boot-disk
+cache rather than increasingly aggressive prefetch.
 
-1. images are large enough and arrive uncurated enough that image transfer is on
-   the cold-start critical path after warm-pool and streaming tuning, **and**
-2. cross-image content sharing is high enough that chunk-level global dedup
-   materially cuts storage and first-fetch cost over layer-level dedup, **and**
-3. whole-file materialization on `mmap` (eStargz/SOCI behavior) measurably delays
-   model readiness for representative loaders.
+## Strategy selection
 
-Absent that evidence, eStargz or SOCI plus the NVMe and page-cache tiers is the
-supported path and `ignitionfs` is not built. The public API, image-admission
-contract, and startup targets are unchanged by this design.
+The catalog stores exponentially weighted observations by image, profile, cache
+state, backend, node class, and region. The selector predicts:
+
+```text
+lazy_cost = metadata_time
+          + predicted_miss_bytes / effective_read_bandwidth
+          + predicted_remote_request_count * request_latency
+          + decompression_cpu_time
+
+eager_cost = missing_compressed_bytes / pull_bandwidth
+           + decompression_and_unpack_time
+```
+
+The prediction is advisory. Hard eligibility, security, disk-capacity, deadline,
+and runtime-compatibility checks run first. Unknown stream-eligible images start
+with lazy delivery and bounded readahead. The selector explores alternatives only
+on sampled launches and never changes strategy within a running sandbox.
+
+Every selection records its inputs, prediction, actual stage timings, bytes, and
+fallbacks. A backend is automatically disabled for a compatibility class after a
+bounded error-rate or latency regression threshold is exceeded.
+
+## Integrity and confidentiality
+
+- Verify the source OCI descriptor chain and the signature on the catalog.
+- Verify alternative representation metadata before mount and data chunks as
+  they enter a trusted cache. Use the backend's authenticated chunk metadata.
+- Protect stable local cache entries with read-only ownership and fs-verity where
+  the selected backend and kernel support it. Kernel page-cache hits are not
+  redundantly rehashed on every read.
+- Partition private caches and metrics by project security domain. Private
+  content never uses cross-project presence checks or timing-visible dedup.
+- Permit fleet-wide dedup only for artifacts on a signed public-content allowlist
+  anchored to an exact digest and redistribution policy. Content similarity does
+  not make an artifact public.
+- Scope object-read and key-decrypt authority separately and bind both to the
+  node's active project lease. Key version and encryption scheme are part of the
+  catalog representation record.
+- On revocation, prevent new mounts immediately. Existing sandboxes follow the
+  incident policy; immutable cached bytes need no in-place mutation.
+
+## Failure behavior
+
+- catalog or signature unavailable before create: fail with
+  `IMAGE_UNAVAILABLE`;
+- digest, metadata, or chunk verification failure: discard the cache entry,
+  retry once from an independent tier, then fail closed;
+- remote fetch exhaustion: return an I/O failure and fail the affected sandbox;
+- remote snapshotter, Nydus daemon, FUSE daemon, or GKE streaming service loss:
+  fail affected sandboxes and recreate them; remounting a new filesystem at the
+  same path does not repair existing mount and file references;
+- local cache corruption: quarantine the cache device after repeated independent
+  verification failures;
+- strategy-specific incompatibility discovered before process start: retry once
+  with the admitted eager representation if the request deadline permits;
+- failure after the process starts: do not switch its rootfs backend in place.
+
+## Feasibility assessment
+
+| Capability | GKE | Custom GCE | Assessment |
+|---|---|---|---|
+| Lazy arbitrary OCI rootfs | Managed image streaming for eligible images | Nydus/eStargz/SOCI | Feasible without new filesystem |
+| Immutable digest admission | Ignition import and catalog | Same catalog | Straightforward control-plane work |
+| Profile-guided prefetch | No supported control of GKE streaming internals | Supported by candidate backends | GCE-only optimization initially |
+| Warm cache on new nodes | Secondary boot-disk image cache | Baked disk or Local SSD warming | Feasible for stable popular sets |
+| Chunk-level cross-image dedup | Managed and opaque | Nydus candidate | Private domains must remain partitioned |
+| Transparent daemon recovery | Not exposed | Existing mounts cannot be replaced transparently | Explicitly unsupported |
+| Size-independent application readiness | No | No | Impossible for arbitrary programs |
+
+The main engineering risk is integration and operations, not data-structure
+invention: representation conversion, differential semantic verification,
+containerd/gVisor compatibility, cache isolation, and representative performance
+testing. Nydus/EROFS remains a candidate until it passes those tests; this design
+does not label it production-ready by assertion.
 
 ## Observability
 
-Per launch and per node, labeled by region, image, and project where applicable:
+Measure per launch:
 
-- manifest resolve and mount time;
-- time to first instruction after `runsc create`;
-- bytes fetched per launch, by cache tier, and chunk hit ratio per tier;
-- `mmap` fault rate and fault-served bytes;
-- prefetch profile coverage: fraction of first-N-seconds reads served from
-  prefetched chunks;
-- ingest time, chunk count, manifest size, and measured dedup ratio
-  (unique bytes ÷ logical bytes) per image and fleet-wide;
-- CAS object count, stored bytes, and per-tier storage;
-- daemon restart count and stale-mount recoveries.
+- resolve, metadata fetch, mount, container create, container start, and
+  optional application-ready latency;
+- selected and actual backend, cache cohort, and fallback reason;
+- logical image bytes, compressed bytes, remotely fetched bytes, decompressed
+  bytes, and unused fetched bytes;
+- requests, range sizes, cache hits, and latency by tier;
+- prefetch precision, coverage, lateness, and interference with demand reads;
+- decompression CPU, gofer/snapshotter CPU, memory, and Local SSD occupancy;
+- integrity failures, backend restarts, stale handles, and sandbox failures; and
+- predicted versus actual lazy and eager cost.
+
+Do not put project or private image identity in globally visible metrics. Use
+bounded-cardinality internal identifiers with project-authorized drill-down.
 
 ## Acceptance
 
-- Container creation for a 100 GB image completes on manifest residency; measured
-  time to `runsc create` completion is independent of image size within noise.
-- A loader that `mmap`s a large weight file and reads a fraction of it transfers
-  approximately that fraction, not the whole file.
-- Two images sharing a large base but differing in one layer share their common
-  chunks in the CAS and in the node cache; measured dedup ratio reflects it.
-- Every chunk is digest-verified on every read from every tier; a corrupted or
-  substituted chunk in any tier yields `EIO` and a `FAILED` sandbox, never served
-  content.
-- A tampered or unsigned manifest fails the mount.
-- The manifest Merkle root recorded on the sandbox matches a recomputation from
-  the admitted image.
-- From inside a sandbox there is no path to the `ignitionfs` socket, the node CAS
-  cache, CAS credentials, or another project's manifest or chunks.
-- Private-tier chunks do not dedup across projects; public base-tier chunks do.
-- Private-tier chunks at rest are encrypted under a per-project key; object-read
-  and decrypt grants are separate.
-- Daemon kill during a running sandbox is recovered by remount from the manifest
-  with no loss beyond the killed process; chunk cache survives the restart.
-- Chunk fetch failure after retries fails the affected sandbox with
-  `IMAGE_UNAVAILABLE` and releases quota, without affecting other sandboxes on the
-  node.
-- `ignitionfs`-lazy is benchmarked against eStargz/SOCI for each representative
-  workload class, and selected only where it wins or is intentionally forced.
+1. Differential extraction proves every qualified representation is semantically
+   equivalent to the admitted OCI source across whiteouts, opaque directories,
+   links, xattrs, ownership, permissions, sparse files, and supported special
+   files.
+2. Shell-less and `scratch` images execute their original entrypoint and argument
+   combination as PID 1 without an injected binary or shell.
+3. With provider-side streaming metadata available and an empty node cache, a
+   stream-eligible 100 GB image reaches `rootfs_ready` after authenticated
+   metadata without transferring the complete image first; first-ever provider
+   ingestion is measured separately.
+4. Random and sequential reads across large files transfer only the backend's
+   covering chunks or spans plus measured bounded amplification.
+5. Images with unpredictable access remain correct without a profile.
+6. An image that reads nearly all data selects eager delivery when measured eager
+   cost is lower.
+7. Cold-cache tests cover 1%, 10%, 50%, and 100% working sets; small-file storms;
+   random `mmap`; deep layer stacks; concurrent starts; and cache eviction.
+8. Corrupt manifests, indices, chunks, cache entries, and registry responses fail
+   closed and never expose unverified bytes.
+9. Private content and cache-hit observations do not cross project security
+   domains. Only digest-allowlisted public content deduplicates globally.
+10. Killing a filesystem or snapshotter daemon produces a bounded failure and
+   sandbox recreation; no test expects an in-place remount to repair the sandbox.
+11. GKE tests exercise streaming, eager fallback, secondary boot-disk cohorts,
+    service quota exhaustion, and managed-service restart behavior.
+12. GCE tests pin kernel, gVisor, containerd, and backend versions and complete
+    1,000 create/read/exec/delete cycles without leaked mounts or cache references.
+13. A custom filesystem project is rejected unless a written benchmark identifies
+    an unmet requirement, reproduces it against all qualified upstream backends,
+    and estimates implementation and long-term operations cost.
 
 ## Rollout
 
-1. Ingest, CAS, and manifest only; no runtime integration. Measure dedup ratio,
-   chunk count, and storage on a corpus of real customer images.
-2. `ignitionfs` read path benchmarked standalone (`fio`, then a representative
-   model load) against local NVMe and against SOCI.
-3. Wire into `runsc` on the custom fleet behind a per-image selection flag;
-   A/B cold-start latency against SOCI.
-4. Prefetch profiles and warm-node chunk pinning.
-5. Per-zone read-through cache, if cross-node first-fetch cost justifies it.
-6. Per-project keyed and encrypted tier for private content.
+1. Implement immutable digest admission, same-region import, eligibility checks,
+   catalog publication, and stage timing on the shipped GKE runtime.
+2. Benchmark GKE streaming against eager pulls using a corpus of arbitrary real
+   images and the acceptance workload matrix.
+3. Add versioned secondary boot-disk cache cohorts for stable popular images.
+4. Build the representation differential verifier and evaluate Nydus, eStargz,
+   and SOCI offline.
+5. If the custom GCE runtime gate is met, integrate the winning backend behind a
+   per-image strategy flag with eager fallback.
+6. Add sampled access profiles and adaptive selection only after baseline
+   correctness and metrics are stable.
+7. Reconsider a zonal cache or custom filesystem only from measured evidence.
+
+## Upstream references
+
+- [GKE image streaming](https://cloud.google.com/kubernetes-engine/docs/how-to/image-streaming)
+- [GKE secondary boot-disk image cache](https://cloud.google.com/kubernetes-engine/docs/how-to/data-container-image-preloading)
+- [Modal lazy container loading](https://modal.com/blog/jono-containers-talk)
+- [Nydus](https://github.com/dragonflyoss/nydus)
+- [eStargz format](https://github.com/containerd/stargz-snapshotter/blob/main/docs/estargz.md)
+- [SOCI snapshotter](https://github.com/awslabs/soci-snapshotter)
+- [Linux FUSE passthrough](https://docs.kernel.org/filesystems/fuse-passthrough.html)

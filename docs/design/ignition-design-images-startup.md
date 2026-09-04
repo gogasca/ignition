@@ -1,111 +1,307 @@
 # Ignition Images and Startup Acceleration Design
 
-**Status:** Not implemented — image admission, lazy delivery, and golden startup snapshots are not built.
+**Status:** Proposed — the shipped GKE system uses image streaming but does not
+yet implement immutable image admission, an image catalog, adaptive delivery, or
+GKE Pod snapshot orchestration.
 
-> The shipped system has no image import pipeline, no lazy snapshotter, no
-> `ignition-artifacts`/`ignition-builder`, and no golden startup snapshots.
-> `ignition-controller` resolves a sandbox's `imageId` to
-> `${IGNITION_SANDBOX_IMAGE_PREFIX}/{imageId}` after a charset check and lets GKE
-> image streaming pull it; digest pinning and an admission catalog are future
-> work. Sandboxes always cold-start. This document is the design for that
-> pipeline and for the deferred custom-runtime golden-snapshot path — see
-> [GKE Sandbox](ignition-design-gke-sandbox.md) and
-> [Checkpoint and Restore](ignition-design-checkpoint-restore.md).
+> This design covers arbitrary OCI containers. Fast image delivery must not
+> depend on a particular application, language, framework, readiness hook, or
+> data layout. GKE Pod snapshots and custom-runtime snapshots are optional
+> accelerators for separately qualified workloads; they are not prerequisites
+> for fast generic container startup.
 
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
+**Data layer:** [Image Data Layer](ignition-design-image-datalayer.md)
+**Snapshot details:** [Checkpoint and Restore](ignition-design-checkpoint-restore.md)
+**Class-specific accelerator:** [Fast Startup on GCP](ignition-design-fast-startup-gcp.md) — stratified delivery and managed Pod snapshots for inference images
 
 ## Scope
 
-Defines OCI admission, lazy image delivery, content-addressed caches, startup artifact building, immutable golden startup snapshots, application hooks, strategy selection, and invalidation. Golden startup memory snapshots are scoped to allowlisted stateless inference workloads; public session snapshots and periodic runtime recovery snapshots are out of scope.
+This document defines:
+
+- immutable OCI image admission and regional import;
+- selection among managed streaming, cached, lazy, and eager delivery;
+- optional access-profile generation and prefetch;
+- startup-stage definitions and objectives;
+- image and startup artifact invalidation;
+- the boundary between generic image startup and optional GKE Pod or custom
+  process snapshots; and
+- a measured gate for moving from GKE to a custom GCE runtime.
+
+Persistent volumes, application datasets, and runtime/session recovery are out of
+scope. Golden startup snapshots are available only to explicitly qualified
+workloads and must pass their independent feasibility gate.
+
+## Design principles
+
+1. **Correct without a profile.** Every admitted image must work with arbitrary
+   file access. A profile changes only prefetch order.
+2. **Optimize the measured bottleneck.** Mount, container start, and
+   application readiness are different measurements.
+3. **Prefer managed and upstream implementations.** Do not build a filesystem
+   merely to obtain chunk reads, deduplication, or prefetch.
+4. **Keep an eager fallback.** Lazy delivery is harmful when startup reads most
+   of the image or issues a remote small-file storm.
+5. **Pin every identity.** Source images, converted representations, profiles,
+   runtimes, and snapshots are immutable and content-addressed.
+6. **Do not promise impossible bounds.** Arbitrary application initialization is
+   not controlled by the platform.
 
 ## Components
 
-- `ignition-artifacts`: authoritative metadata catalog.
-- `ignition-builder`: image conversion and golden-snapshot workflow.
-- eStargz or SOCI snapshotter.
-- worker page cache and Local SSD cache.
-- optional zonal cache after measurement.
-- GCS artifact storage.
+- `ignition-artifacts`: authoritative image, representation, profile, and
+  optional snapshot catalog;
+- `ignition-builder`: isolated import, validation, conversion, differential
+  verification, profile generation, and optional snapshot workflow;
+- `ignition-controller`: GKE delivery-policy and cache-cohort selection;
+- `ignition-hostd`: deferred GCE typed mount/runtime broker;
+- GKE image streaming and secondary boot-disk image caches on the shipped path;
+- GKE Pod snapshots for optional managed rootfs/process/GPU restore;
+- qualified Nydus, eStargz, SOCI, or eager overlayfs on the deferred GCE path;
+- node page cache and backend-managed Local SSD cache where supported; and
+- Artifact Registry and GCS for authoritative immutable artifacts.
 
-Containerd is limited to content and lazy snapshot services. Sandbox lifecycle is performed by direct, typed `runsc` operations owned by `ignition-hostd`; neither the containerd task API nor `containerd-shim-runsc-v1` is used in the initial release.
+## Startup stages
+
+Record these timestamps separately:
+
+```text
+request_admitted
+image_resolved
+worker_assigned
+rootfs_ready
+container_created
+container_started
+runtime_ready
+application_ready (only when declared)
+```
+
+- `rootfs_ready` means authenticated metadata is mounted for lazy delivery or
+  the rootfs is completely unpacked for eager delivery.
+- `container_started` means the runtime reports that the original OCI process
+  has started.
+- `runtime_ready` means required platform isolation and routing checks are ready;
+  it does not imply the customer program is ready.
+- `application_ready` exists only when the image/startup revision declares a
+  health contract.
+
+Logical image size need not dominate `rootfs_ready` under lazy delivery. It can
+still dominate completion after `container_started` or `application_ready` when
+the process reads most of the image. No design may call arbitrary application
+startup independent of image size.
 
 ## Image admission
 
-1. resolve mutable reference to immutable OCI digest;
-2. verify registry identity, signature, provenance, and project policy;
-3. scan metadata and prohibited configuration;
-4. create eStargz image or SOCI index;
-5. bind lazy metadata to source digest;
-6. publish catalog entry atomically.
+Admission is mandatory before an image can run:
 
-Tenant code never receives worker registry credentials.
+1. resolve the requested reference to an immutable OCI manifest or index digest;
+2. select and pin the required platform manifest;
+3. copy manifests and blobs to an Ignition-owned same-region Artifact Registry
+   repository;
+4. verify registry identity, signature, provenance, and project policy;
+5. validate OCI configuration and flattened filesystem semantics;
+6. scan according to the current security policy;
+7. statically validate documented GKE image-streaming requirements and record
+   eligibility or a specific incompatibility; observe the actual streamed or
+   eager path at launch;
+8. publish the source representation and catalog state atomically; and
+9. asynchronously build and verify optional representations and profiles.
 
-## Lazy loading
+Mutable tags are accepted only as import inputs. A sandbox always references the
+admitted digest. Tenant code receives no registry, catalog, cache, or object-store
+credentials.
 
-Read order:
+Generic image acceleration preserves the original entrypoint, command,
+environment, user, working directory, PID 1, and signal behavior. A
+canonical-tree differential verifier rejects any difference in file metadata,
+links, xattrs, special files, or OCI configuration. Shell-less and `scratch`
+images are supported.
+
+### Runtime compatibility dependency
+
+The current GKE sandbox design hard-codes `command: ["/ignition/init"]`. That is
+incompatible with arbitrary third-party images and changes PID 1 semantics even
+when a binary is injected. Before generic image admission is enabled, the GKE
+launcher must run the admitted OCI `Entrypoint` and `Cmd` unchanged unless the
+request explicitly overrides them.
+
+Exec, idle tracking, and advanced lifecycle hooks must use a runtime mechanism
+that does not rewrite the generic image, or an explicitly opt-in managed
+lifecycle mode with separately documented wrapper semantics. The image-delivery
+project does not depend on that mode.
+
+## Generic delivery strategies
+
+### GKE managed streaming
+
+This is the default for a stream-eligible image on the shipped runtime. GKE owns
+the rootfs service and background download. Ignition observes it through
+Kubernetes state, events, and stage timings; it does not rely on undocumented
+`gcfsd` control or install a custom snapshotter on managed nodes.
+
+An image that is not streamed uses an explicitly recorded eager pull. If its
+measured pull cannot fit the sandbox startup deadline, creation fails early with
+`IMAGE_UNAVAILABLE` rather than remaining ambiguously stuck.
+
+### GKE secondary boot-disk cache
+
+Use `CONTAINER_IMAGE_CACHE` secondary boot disks for stable sets of frequently
+launched images or base layers. Cache images are immutable epochs produced by CI.
+Changing an epoch creates a new node pool and rolls traffic blue/green. The
+controller selects a cache cohort using server-owned scheduling directives and
+always retains an uncached streaming pool.
+
+This strategy accelerates known demand, including newly provisioned nodes. It is
+not appropriate for every unique or rapidly changing customer image.
+
+### Custom GCE lazy delivery
+
+Only after the custom-runtime gate is met, benchmark Nydus RAFS v6/EROFS,
+eStargz, and SOCI on the exact worker kernel, containerd, gVisor, and storage
+path. Select a backend per qualified compatibility class. Do not assume one
+backend wins for every small-file, random-read, sequential-read, deep-layer, or
+high-concurrency workload.
+
+The GCE implementation and custom-filesystem rejection gate are normative in
+[Image Data Layer](ignition-design-image-datalayer.md).
+
+### Eager delivery
+
+Eager OCI pull and overlayfs unpack remain supported when:
+
+- an image is incompatible with the available lazy backend;
+- observed startup consumes most of the image;
+- remote request amplification makes lazy delivery slower;
+- sufficient image content is already present locally; or
+- backend health policy disables lazy delivery.
+
+### GKE Pod snapshot restore
+
+For a snapshot-qualified container, GKE Pod snapshots are another managed startup
+strategy. GKE saves whole-Pod process memory and filesystem changes to Cloud
+Storage and restores a compatible Pod through GKE Sandbox. The gVisor kernel is
+restored before application memory streams in the background; demand page faults
+take priority over background loading.
+
+This is not a universal image-delivery replacement:
+
+- the Pod must use GKE Sandbox and a supported machine type;
+- the distilled Pod spec, machine series, CPU architecture, gVisor kernel, and
+  GPU driver where applicable must meet GKE's matching rules;
+- persistent volumes are not captured;
+- external connections terminate on restore;
+- hostname, network identity, wall clock, per-instance identity, secrets, and
+  environment-derived state require application-safe refresh; and
+- the restored Pod may be `Running` before its hot memory working set has arrived.
+
+If GKE finds no compatible ready snapshot, it cold-starts the Pod. Ignition treats
+that as an observed strategy fallback, not as successful snapshot acceleration.
+
+## Access profiles and prefetch
+
+An access profile records ordered file byte ranges observed between
+`container_created` and a declared readiness event or bounded observation
+window. It is keyed by image digest, argv, working directory, non-secret
+environment-policy hash, runtime/backend tuple, and readiness revision.
+
+Profiles are learned from multiple successful sampled launches, replayed on an
+empty cache, signed, and published immutably. At runtime they provide bounded
+prefetch hints only. Demand reads have priority, and an access outside the
+profile follows the normal backend read path.
+
+GKE image streaming exposes no supported per-image prefetch API, so profiles on
+GKE initially inform cache-cohort placement and eager-versus-streaming analysis.
+On GCE they may drive the selected upstream backend's supported prefetch
+mechanism.
+
+## Adaptive strategy selection
+
+Selection occurs before sandbox creation and does not change the rootfs backend
+of a running process. Hard eligibility, security, compatibility, available disk,
+and deadline constraints run before cost prediction.
+
+For each `(image, startup key, backend, cache state, region, node class)`, retain
+observed metadata latency, requested bytes, remote requests, throughput,
+decompression CPU, unpack time, container start, and optional readiness. Use
+those observations to compare:
 
 ```text
-Linux page cache
-→ worker Local SSD
-→ optional zonal cache
-→ regional/object storage
+lazy = metadata + remote_bytes / throughput
+     + remote_requests * request_latency + decompression
+
+eager = missing_compressed_bytes / pull_throughput + decompress_and_unpack
 ```
 
-Container creation blocks on authenticated metadata, not complete image transfer. Measure index lookup, mount, first instruction, bytes fetched, decompression CPU, and cache-tier latency.
+Unknown eligible images begin with lazy delivery and conservative readahead.
+Snapshot restore is considered only when the catalog contains a compatible,
+verified snapshot and its measured restore cost beats normal image startup.
+Exploration of another strategy is sampled and bounded. Automatically stop
+selecting a backend for a compatibility class when its error rate or latency
+crosses a configured rollback threshold.
 
-## Golden startup snapshot
+## Optional golden startup snapshots
+
+Snapshot restore is not guaranteed for an arbitrary image, but it is not tied to
+a workload type. It is an independent, opt-in strategy for a snapshot-compatible
+image/startup revision with no request-derived or instance-unique state at the
+capture point.
 
 A golden snapshot:
 
-- is immutable;
-- contains no request/session data;
-- belongs to one project and image/startup revision;
-- is keyed by exact compatibility tuple and GPU SKU;
-- is verified by restoring on a second worker before publication;
-- accelerates new replicas and provides the clean recreation point after Spot or host failure;
-- does not preserve in-flight requests or mutable runtime/session state.
+- is immutable and belongs to one project;
+- is keyed by the exact image, distilled Pod spec inputs, startup revision,
+  lifecycle contract, CPU/runtime compatibility tuple, and device tuple when
+  applicable;
+- captures only declared filesystem/process state;
+- is verified by restore on another compatible worker before publication; and
+- never substitutes for the admitted immutable rootfs.
 
-Initial production does not promise runtime-state recovery. On Spot or host failure, the platform recreates the sandbox from its golden snapshot and in-flight requests may fail.
+### Managed GKE snapshot path
 
-Build key:
+GKE Pod snapshots are generally available on GKE 1.35.3-gke.1234000 or later
+(GKE release notes, May 6, 2026). GA removes the pre-GA dependency concern; it
+does not remove Ignition's own qualification gate — cross-node restore,
+correctness, isolation, and storage tests must pass before an artifact is
+selectable. Normal image startup remains the production fallback and does not
+depend on this feature. The composition-aware build, VRAM tiering, zonal cache,
+and host-side prefetch for stratified inference images are specified in
+[Fast Startup on GCP](ignition-design-fast-startup-gcp.md).
 
-```text
-project
-image digest
-startup policy revision
-snapshot key
-GPU SKU
-compatibility tuple
-lifecycle contract version
-cuda-checkpoint digest and in-container path
-```
+Use `PodSnapshotStorageConfig`, `PodSnapshotPolicy`, and `PodSnapshot` resources.
+The controller must discover and use the API version served by the target cluster
+rather than assume a CRD version. The cluster version must expose the required
+resources and the chosen node class must appear in Google's current compatibility
+list; both are recorded in the qualification tuple.
+Prefer `federatedP4SA` path-scoped tokens for multi-tenant storage access so a
+tenant container does not receive bucket credentials. Group snapshots by project
+and immutable startup key. A workload trigger is used only when the application
+implements the snapshot lifecycle contract; otherwise an authorized manual
+trigger may capture a Pod after an external readiness and quiescence check.
 
-The compatibility tuple pins the exact `cuda-checkpoint` binary digest and its in-container read-only path. The builder injects that exact binary into the sandbox; it never selects a host or image-provided binary by name.
+After GKE reports the snapshot ready, restore it on another compatible node,
+refresh identity and secrets, run health checks, and publish it in
+`ignition-artifacts`. Production launch names the verified `PodSnapshot`
+explicitly. GKE's automatic cold fallback is observed and reported; Ignition does
+not mark the launch snapshot-accelerated unless restore telemetry confirms it.
 
-## Build workflow
+GPU Pod snapshots are supported by current GKE documentation on listed GPU
+machine types, including single-GPU L4 configurations. They copy GPU state into
+process memory, so admission budgets peak host memory and stored bytes as well as
+VRAM. Enablement still requires workload-specific cross-node restore and
+correctness tests.
 
-1. allocate an isolated compatible worker;
-2. cold-start the admitted image;
-3. run `prepare_snapshot`;
-4. wait for declared readiness;
-5. verify zero active requests;
-6. run application sleep/offload policy;
-7. verify that all required startup filesystem state is within the disk-backed overlay2 writable upper or a declared disk-backed tmpfs;
-8. ask `snapshotd` to coordinate a gVisor `fscheckpoint` of the writable rootfs upper and every declared disk-backed tmpfs;
-9. after filesystem checkpoint completion, capture process state and, when selected, GPU state;
-10. manifest, encrypt, and upload under a temporary prefix;
-11. restore the filesystem before process/GPU state on a second worker with a distinct physical GPU;
-12. run `after_restore`, compatibility qualification, and functional probes;
-13. publish manifest and catalog state;
-14. release build workers.
+### Custom GCE snapshot path
 
-Publishing transitions `BUILDING → READY` only after verification.
+Direct `runsc` plus NVIDIA checkpoint integration remains disabled until a
+pinned custom-runtime tuple demonstrates repeatable process-tree checkpoint and
+cross-host restore. The build/restore ordering and artifact rules in
+[Checkpoint and Restore](ignition-design-checkpoint-restore.md) apply only to
+that deferred path. Success of managed GKE Pod snapshots does not prove the
+custom integration.
 
-The rootfs uses disk-backed overlay2, and every tmpfs declared as snapshot-required is configured with a disk-backed gVisor checkpoint representation. User-created tmpfs mounts, user-created mounts, and ephemeral scratch are excluded from the golden artifact and must not contain required startup state. Admission and build probes fail when an allowlisted workload relies on excluded state.
+## Snapshot lifecycle contract
 
-## Lifecycle contract
-
-Allowlisted workloads implement:
+Snapshot-qualified workloads using the managed workload trigger implement:
 
 ```text
 prepare_snapshot
@@ -115,62 +311,148 @@ drain
 abort
 ```
 
-Hooks have strict deadlines and structured results. vLLM/SGLang adapters may use sleep/wake, weight offload, and KV-cache recreation. Transparent checkpointing is not assumed. The checkpointable allowlist prohibits managed-memory/UVM allocations even though the validated CDI device set may expose `/dev/nvidia-uvm`.
+Hooks have strict deadlines and structured results. Generic image delivery does
+not invoke or require them. A manual GKE snapshot may omit hooks only when an
+external controller can prove readiness, quiescence, and post-restore correctness.
+Failure to qualify a snapshot falls back on the admitted image delivery strategy
+for future launches; it never makes the image unrunnable.
 
-## Strategy selection
+## Compatibility and invalidation
 
-Benchmark:
+Create a new immutable catalog artifact when any covered input changes:
 
-1. lazy-image cold start;
-2. CPU snapshot plus GPU initialization;
-3. CPU + GPU snapshot;
-4. sleep/offload plus wake;
-5. ready sandbox reuse.
+- OCI source or config digest;
+- representation format, converter, or parameters;
+- canonical filesystem semantics;
+- access-profile key or schema;
+- worker kernel, runtime, snapshotter, or gVisor compatibility tuple;
+- startup lifecycle contract;
+- encryption or signing policy; or
+- GKE distilled Pod spec, managed runtime versions, or optional custom
+  snapshot/device tuple.
 
-Select per image/startup revision. Snapshotting storage-bound weights may be slower than loading them; imports, JIT compilation, kernels, and CUDA graphs are stronger candidates.
+Security or correctness revocation immediately prevents new placement. Running
+sandboxes follow the incident policy. Caches contain immutable derived data and
+are evicted; they are never edited in place.
 
-## Restore I/O strategy
+## Failure behavior
 
-Benchmark complete local prefetch against gVisor background restore for each admitted workload. Test compression disabled, direct I/O, and zero-page exclusion as explicit dimensions, and record page access traces. A strategy is admitted only from reproducible end-to-end readiness results; there is no assumption that `pages.img` is the only artifact.
+- Missing, unsigned, revoked, or mismatched catalog data fails before node work.
+- GKE streaming ineligibility takes the admitted eager path or fails explicitly.
+- Backend fetch or verification exhaustion fails the sandbox with
+  `IMAGE_UNAVAILABLE` and releases quota.
+- Loss of a filesystem/snapshotter daemon fails affected running sandboxes;
+  restarting and remounting at the same path is not transparent recovery.
+- A strategy failure before process start may retry once with eager delivery if
+  the request deadline permits. A running sandbox never changes rootfs backend.
+- Optional snapshot failure falls back to normal image startup on a fresh
+  sandbox and records the snapshot artifact as unhealthy.
+- A restored Pod must refresh secrets and instance identity before readiness;
+  failure to do so fails the sandbox rather than exposing captured credentials.
 
-Keep all decrypted checkpoint and filesystem-checkpoint files until asynchronous/background restore has completed and `runsc` no longer references them. Secure deletion occurs only after that completion barrier. Capacity planning and admission budget both host CPU RSS and captured GPU VRAM, in addition to encrypted/decrypted disk bytes.
+## Feasibility decision
 
-## Scoped startup targets
+The feasible near-term implementation is admission plus existing managed GKE
+features. Image streaming requires control-plane work but no kernel modification.
+Secondary boot-disk caches are feasible for stable popular images but require
+versioned disk images and new node pools for updates. GKE Pod snapshots are GA
+and technically feasible for qualified containers on supported tuples; they are
+an optional qualification track rather than a prerequisite for generic startup.
+They require snapshot CRD discovery and orchestration, Cloud Storage isolation,
+compatibility-aware placement, state refresh, and functional verification.
 
-For the validated L4 workload with at most 8 GiB of captured VRAM:
+The custom GCE path is feasible as a prototype because mature upstream lazy
+backends exist. Production feasibility is conditional on exact containerd,
+gVisor, overlay, kernel, registry, and failure-injection qualification. Building
+and operating a new FUSE filesystem is not justified by the requirements in this
+document.
 
-- locally cached golden artifact: p95 application-ready time is at most 20 seconds;
-- cold lazy-image path: p95 application-ready time is at most 120 seconds.
+Custom GCE snapshot feasibility remains unproven and cannot be placed on the
+critical path of the generic startup project.
 
-These are scoped qualification targets, not general SLOs for other GPU SKUs, larger VRAM captures, arbitrary images, cross-region fetches, or unvalidated workloads.
+## Service objectives
 
-## Invalidation
+The shipped GKE warm-capacity `runtime_ready` SLO remains defined in
+[GKE Sandbox](ignition-design-gke-sandbox.md#startup-slo-and-definition). Add the
+following objectives only after baseline measurements establish defensible
+budgets:
 
-Create a new golden artifact when image digest, tuple (including `cuda-checkpoint` digest/path), GPU SKU, lifecycle contract, startup key, filesystem layout, or policy changes. Never mutate a ready artifact.
+- p95 `image_resolved -> rootfs_ready`, separated by streamed, cached, and eager;
+- p95 `rootfs_ready -> container_started`, separated by runtime tuple;
+- p95 platform overhead, excluding application execution;
+- fetched-byte amplification relative to bytes requested before readiness; and
+- backend failure rate and eager-fallback rate.
 
-Revoke immediately for security or correctness defects. New placement ignores revoked artifacts; running sandboxes follow the incident policy.
-
-## Custom filesystem decision
-
-Start with eStargz and SOCI. Build `ignitionfs` only when reproducible tests show an unmet latency, throughput, integrity, or cost requirement that cannot be addressed by configuration or caching. The content-addressed FUSE design for `ignitionfs`, scoped to arbitrary large customer images, is [Image Data Layer](ignition-design-image-datalayer.md).
+Do not define a universal `application_ready` SLO for arbitrary containers.
+Images with a declared readiness contract may have a scoped SLO tied to their
+image digest, startup key, and cache condition.
 
 ## Observability
 
-Measure image ingest, conversion, metadata size, cache hit ratio, bytes by tier, mount, first instruction, model ready, golden build, verification restore, invalidation, and selected-strategy accuracy.
+Measure image import, validation, conversion, differential verification,
+metadata size, streaming eligibility, selected backend, cache cohort, mount,
+container start, bytes and requests by tier, decompression CPU, profile
+precision/coverage, eager fallback, backend health, and optional readiness.
+
+Keep the platform stages visible individually. A single cold-start histogram
+cannot distinguish scheduling, image delivery, runtime creation, and arbitrary
+application work.
 
 ## Acceptance
 
-- Digest/signature/index tampering fails closed.
-- Golden snapshots contain no request-derived data.
-- Golden snapshots are available only to allowlisted stateless inference; session and periodic recovery memory snapshot APIs are absent.
-- The manifest covers every file in the opaque `runsc` checkpoint and `fscheckpoint` directories, not only `pages.img`.
-- Filesystem capture precedes process/GPU capture, and restore recreates the overlay2 upper and declared disk-backed tmpfs before process state.
-- Required startup state in user-created tmpfs/mounts or ephemeral scratch fails admission or build verification.
-- Publication requires restore on a second worker with a distinct physical GPU and the full cross-host qualification gate.
-- The exact pinned `cuda-checkpoint` digest is injected read-only at the tuple's in-container path.
-- Managed-memory/UVM allocation tests fail closed for checkpointable allowlisted workloads.
-- Full-prefetch and gVisor-background-restore benchmarks cover no compression, direct I/O, and zero-page exclusion; decrypted artifacts survive until async restore completion.
-- Resource tests account for CPU RSS and VRAM.
-- The validated L4 workload meets p95 ready targets of 20 seconds for a locally cached artifact and 120 seconds for a cold lazy image, with at most 8 GiB captured VRAM.
-- Selected strategy beats or intentionally disables snapshot restore.
-- Artifact invalidation prevents new restores within the security-response target.
+1. Every sandbox runs an immutable admitted digest; tags cannot change a running
+   or pending sandbox.
+2. Source and converted representations are semantically equivalent under the
+   canonical differential suite, including unchanged OCI process configuration.
+3. Shell-less and `scratch` images execute their original entrypoint and argument
+   combination as PID 1 without requiring an injected binary or shell.
+4. Arbitrary unprofiled reads work correctly on every selected backend.
+5. With provider-side streaming metadata available and an empty node cache, a
+   stream-eligible large image can reach `rootfs_ready` without full image
+   transfer. First-ever provider ingestion is measured separately, and no test
+   claims arbitrary application readiness is independent of bytes read.
+6. Tests cover 1%, 10%, 50%, and 100% working sets, random and sequential reads,
+   small-file storms, `mmap`, deep layers, sparse files, and concurrent starts.
+7. Strategy selection chooses eager delivery when it is reproducibly faster and
+   records prediction error.
+8. GKE tests cover managed streaming, eager fallback, secondary boot-disk cache
+   epochs, Pod snapshot cold fallback, quota exhaustion, and managed-service
+   restart behavior.
+9. GCE qualification compares Nydus, eStargz, SOCI, and eager overlayfs on the
+   pinned production tuple before choosing a default.
+10. Manifest, index, chunk, cache, and registry corruption fail closed.
+11. Private content and cache observations never cross project security domains.
+12. Daemon failure has bounded sandbox failure and cleanup; no in-place remount
+    recovery is claimed.
+13. Snapshots are selected only for compatible, verified startup keys; external
+    connections, secrets, environment changes, persistent volumes, and
+    instance-unique state pass explicit restore tests.
+14. Direct custom-GCE snapshots remain disabled until their independent
+    cross-host feasibility gate passes.
+
+## Rollout
+
+1. Implement digest admission, regional import, streaming eligibility, signed
+   catalog publication, and startup-stage metrics on GKE.
+2. Measure managed streaming against eager pulls over a representative corpus of
+   arbitrary images.
+3. Add secondary boot-disk cache epochs for stable high-demand image sets.
+4. Qualify managed GKE Pod snapshots independently for selected compatible
+   containers.
+5. Evaluate alternative formats and the differential verifier offline.
+6. Integrate a qualified lazy backend only if the custom GCE runtime gate is met.
+7. Add access profiles and adaptive selection after correctness and baseline
+   performance are stable.
+8. Evaluate direct custom-GCE snapshots separately; they do not block the generic
+   image-delivery rollout.
+
+## Upstream references
+
+- [GKE image streaming](https://cloud.google.com/kubernetes-engine/docs/how-to/image-streaming)
+- [GKE secondary boot-disk image cache](https://cloud.google.com/kubernetes-engine/docs/how-to/data-container-image-preloading)
+- [GKE Pod snapshots](https://cloud.google.com/kubernetes-engine/docs/concepts/pod-snapshots)
+- [GKE Pod snapshot restore](https://cloud.google.com/kubernetes-engine/docs/how-to/pod-snapshots)
+- [Nydus](https://github.com/dragonflyoss/nydus)
+- [eStargz format](https://github.com/containerd/stargz-snapshotter/blob/main/docs/estargz.md)
+- [SOCI snapshotter](https://github.com/awslabs/soci-snapshotter)
+- [NVIDIA CUDA checkpoint](https://github.com/NVIDIA/cuda-checkpoint)
