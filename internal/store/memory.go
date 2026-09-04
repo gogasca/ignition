@@ -16,7 +16,7 @@ type Memory struct {
 	mu sync.Mutex
 
 	roles       map[string]string   // project\x1fsubject -> role
-	images      map[string]string   // project\x1fimage -> READY
+	images      map[string]Image    // project\x1fimage -> catalog row
 	secrets     map[string]struct{} // project\x1fsecret -> registered
 	sandboxes   map[string]Sandbox
 	operations  map[string]Operation
@@ -38,7 +38,7 @@ type idemRecord struct {
 func NewMemory() *Memory {
 	return &Memory{
 		roles:       map[string]string{},
-		images:      map[string]string{},
+		images:      map[string]Image{},
 		secrets:     map[string]struct{}{},
 		sandboxes:   map[string]Sandbox{},
 		operations:  map[string]Operation{},
@@ -63,7 +63,45 @@ func (m *Memory) SeedRole(projectID, subject, role string) {
 func (m *Memory) SeedImage(projectID, imageID string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	m.images[imgKey(projectID, imageID)] = "READY"
+	m.images[imgKey(projectID, imageID)] = Image{
+		ProjectID: projectID, ImageID: imageID, State: "READY", CreateTime: time.Now().UTC(),
+	}
+}
+
+// CreateImage registers an already-resolved catalog row. imageId is
+// immutable once admitted: a second CreateImage for the same (project,
+// imageId) fails with ErrImageAlreadyExists rather than re-resolving or
+// silently overwriting the pinned digest.
+func (m *Memory) CreateImage(_ context.Context, in CreateImageInput) (Image, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	key := imgKey(in.ProjectID, in.ImageID)
+	if _, exists := m.images[key]; exists {
+		return Image{}, ErrImageAlreadyExists
+	}
+	img := Image{
+		ProjectID:   in.ProjectID,
+		ImageID:     in.ImageID,
+		State:       "READY",
+		SourceRef:   in.SourceRef,
+		Digest:      in.Digest,
+		RegistryRef: in.RegistryRef,
+		Entrypoint:  in.Entrypoint,
+		Cmd:         in.Cmd,
+		CreateTime:  time.Now().UTC(),
+	}
+	m.images[key] = img
+	return img, nil
+}
+
+func (m *Memory) GetImage(_ context.Context, projectID, imageID string) (Image, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	img, ok := m.images[imgKey(projectID, imageID)]
+	if !ok {
+		return Image{}, ErrNotFound
+	}
+	return img, nil
 }
 
 func (m *Memory) SeedSecret(projectID, secretID string) {
@@ -191,7 +229,7 @@ func (m *Memory) CreateSandbox(_ context.Context, in CreateSandboxInput) (Create
 	}
 	m.idem[slot] = idemRecord{Hash: in.IdemHash, Done: false}
 
-	if m.images[imgKey(in.ProjectID, in.ImageID)] != "READY" {
+	if m.images[imgKey(in.ProjectID, in.ImageID)].State != "READY" {
 		delete(m.idem, slot)
 		return CreateSandboxResult{}, ErrImageNotReady
 	}

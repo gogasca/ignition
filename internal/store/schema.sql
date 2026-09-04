@@ -17,10 +17,24 @@ CREATE TABLE IF NOT EXISTS role_bindings (
     PRIMARY KEY (project_id, subject)
 );
 
+-- source_ref/digest/registry_ref/entrypoint/cmd are the v0 image catalog
+-- (see internal/imagecatalog): a client-admitted image is resolved once by
+-- digest and pinned, rather than the mutable-tag placeholder rows SeedImage
+-- creates for dev/test images. Both kinds share this table and the same
+-- 'READY' gate CreateSandbox already checks; a seeded row simply leaves the
+-- new columns at their defaults and the controller falls back to prefix
+-- resolution for it (see ignition-controller's default ResolveImage).
 CREATE TABLE IF NOT EXISTS images (
-    project_id TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
-    image_id   TEXT NOT NULL,
-    state      TEXT NOT NULL DEFAULT 'READY',
+    project_id   TEXT NOT NULL REFERENCES projects (id) ON DELETE CASCADE,
+    image_id     TEXT NOT NULL,
+    state        TEXT NOT NULL DEFAULT 'READY',
+    state_reason TEXT NOT NULL DEFAULT '',
+    source_ref   TEXT NOT NULL DEFAULT '',
+    digest       TEXT NOT NULL DEFAULT '',
+    registry_ref TEXT NOT NULL DEFAULT '',
+    entrypoint   JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(entrypoint) = 'array'),
+    cmd          JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(cmd) = 'array'),
+    create_time  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (project_id, image_id)
 );
 

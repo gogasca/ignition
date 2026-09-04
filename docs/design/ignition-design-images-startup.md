@@ -59,7 +59,7 @@ accelerator.
 
 | Layer | Mechanism | Requires image cooperation | Applies to |
 |---|---|---|---|
-| Scheduling latency | Warm buffer / balloon Pods | No | GPU pool today ([GKE Sandbox — Warm capacity mechanism](ignition-design-gke-sandbox.md#warm-capacity-mechanism)); an equivalent CPU-pool buffer is candidate future work if generic CPU sandboxes need the same guarantee — `IGNITION_MIN_WARM` is GPU-only today ([Default runtime](ignition-design-default-runtime.md#boundaries)) |
+| Scheduling latency | Warm-node buffer / balloon Pods | No | GPU by default; CPU is independently opt-in with `IGNITION_MIN_WARM_CPU` / `IGNITION_MAX_WARM_CPU` ([GKE Sandbox — Warm capacity mechanism](ignition-design-gke-sandbox.md#warm-capacity-mechanism), [Default runtime](ignition-design-default-runtime.md#boundaries)) |
 | Rootfs (default) | GKE image streaming, lazy | No | Every stream-eligible admitted image |
 | Rootfs (fallback) | Eager pull, cost-selected | No | Any image, chosen by measured cost — see [Adaptive strategy selection](#adaptive-strategy-selection) |
 | Rootfs (shared) | Secondary boot-disk cache epoch | No | Popular or content-sharing image sets, not unique/high-churn images |
@@ -173,6 +173,21 @@ is not yet a pinned digest (see [Image Data Layer](ignition-design-image-datalay
 and exec, idle tracking, and lifecycle hooks are simply unavailable on a
 `nativeEntrypoint` sandbox rather than degrading through an alternate
 mechanism — that gap is unchanged from before.
+
+The sandbox Pod's security context (`runAsNonRoot: true`,
+`readOnlyRootFilesystem: true`, all capabilities dropped, no service-account
+token) is uniform across both entrypoint modes and is not relaxed for
+`nativeEntrypoint`. This is a separate blocker from the three above, and a
+sharper one for *generic* admission specifically: most public third-party
+images either run as root by default (no `USER` directive, which
+`runAsNonRoot` rejects at container-create) or write somewhere under their own
+root filesystem at startup (which `readOnlyRootFilesystem` rejects at
+runtime), so an arbitrary image handed to `nativeEntrypoint` today commonly
+fails to start rather than running with reduced isolation. Loosening either
+flag is not a generic-admission unblock to take lightly — it changes the
+isolation posture uniformly for every sandbox on the platform, GPU and CPU,
+managed and native — and should go through its own security review rather
+than ride in with unrelated `nativeEntrypoint` work.
 
 ## Generic delivery strategies
 

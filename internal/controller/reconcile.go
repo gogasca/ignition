@@ -214,7 +214,7 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 		if !now.Before(deadline) {
 			return c.fail(ctx, sb, "CAPACITY_UNAVAILABLE")
 		}
-		ref := c.opts.ResolveImage(sb.ImageID)
+		ref := c.opts.ResolveImage(ctx, sb.ProjectID, sb.ImageID)
 		if ref == "" {
 			return c.fail(ctx, sb, "IMAGE_UNAVAILABLE")
 		}

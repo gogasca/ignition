@@ -69,15 +69,16 @@ func (c *Controller) reconcileBalloons(ctx context.Context, sbs []store.Sandbox)
 		}
 	}
 	queuedByClass := map[string]int{}
+	createdByClass := map[string][]time.Time{}
 	for _, sb := range sbs {
-		if sb.State != "CREATING" {
-			continue
-		}
 		accel := sb.Resources.Accelerator.Type
 		if accel == "" {
 			accel = store.AcceleratorNVIDIAL4
 		}
-		queuedByClass[accel]++
+		createdByClass[accel] = append(createdByClass[accel], sb.CreateTime)
+		if sb.State == "CREATING" {
+			queuedByClass[accel]++
+		}
 	}
 	if c.balloonExcessSince == nil {
 		c.balloonExcessSince = map[string]time.Time{}
@@ -90,12 +91,14 @@ func (c *Controller) reconcileBalloons(ctx context.Context, sbs []store.Sandbox)
 		balloons := balloonsByClass[accel]
 		sort.Slice(balloons, func(i, j int) bool { return balloons[i].Name < balloons[j].Name })
 		want := capacity.DesiredWarm(capacity.Inputs{
-			Busy:    busyByClass[accel],
-			Queued:  queuedByClass[accel],
-			Warm:    len(balloons),
-			MinWarm: cl.minWarm,
-			MaxWarm: cl.maxWarm,
-			Safety:  1.3,
+			CreatePerMinute:  capacity.P95CreatesPerMinute(createdByClass[accel], now, c.opts.WarmWindow),
+			NodeProvisionMin: c.opts.NodeProvisionTime.Minutes(),
+			Busy:             busyByClass[accel],
+			Queued:           queuedByClass[accel],
+			Warm:             len(balloons),
+			MinWarm:          cl.minWarm,
+			MaxWarm:          cl.maxWarm,
+			Safety:           1.3,
 		})
 		if len(balloons) > want {
 			if c.balloonExcessSince[accel].IsZero() {

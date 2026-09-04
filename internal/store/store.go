@@ -16,6 +16,12 @@ type Store interface {
 	DeleteRoleBinding(ctx context.Context, projectID, subject string) (existed bool, err error)
 	// ListRoleBindings returns every binding in the project, ordered by subject.
 	ListRoleBindings(ctx context.Context, projectID string) ([]RoleBinding, error)
+	// CreateImage registers an already-resolved catalog row. It fails with
+	// ErrImageAlreadyExists if imageId is already registered in the project;
+	// an imageId is immutable once admitted, matching every other admitted
+	// identity in the system.
+	CreateImage(ctx context.Context, in CreateImageInput) (Image, error)
+	GetImage(ctx context.Context, projectID, imageID string) (Image, error)
 	CreateSandbox(ctx context.Context, in CreateSandboxInput) (CreateSandboxResult, error)
 	GetSandbox(ctx context.Context, projectID, sandboxID string) (Sandbox, error)
 	ListSandboxes(ctx context.Context, projectID string, pageSize int, pageToken string) ([]Sandbox, string, error)

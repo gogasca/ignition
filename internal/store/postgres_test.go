@@ -70,6 +70,79 @@ func postgresForTest(t *testing.T) *store.Postgres {
 	return p
 }
 
+func TestPostgresCreateImageRoundTrip(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	img, err := p.CreateImage(ctx, store.CreateImageInput{
+		ProjectID: project, ImageID: "img_nginx",
+		SourceRef: "docker.io/library/nginx:1.27", Digest: "sha256:abc",
+		RegistryRef: "docker.io/library/nginx@sha256:abc",
+		Entrypoint:  []string{"/docker-entrypoint.sh"},
+		Cmd:         []string{"nginx", "-g", "daemon off;"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if img.State != "READY" || img.RegistryRef != "docker.io/library/nginx@sha256:abc" {
+		t.Fatalf("image = %+v", img)
+	}
+	if img.CreateTime.IsZero() {
+		t.Fatal("createTime not set")
+	}
+	got, err := p.GetImage(ctx, project, "img_nginx")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Digest != "sha256:abc" || len(got.Cmd) != 3 || got.Cmd[0] != "nginx" {
+		t.Fatalf("got = %+v", got)
+	}
+}
+
+func TestPostgresCreateImageRejectsDuplicateImageID(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	in := store.CreateImageInput{ProjectID: project, ImageID: "img_dup", SourceRef: "nginx:1.27", Digest: "sha256:a", RegistryRef: "nginx@sha256:a"}
+	if _, err := p.CreateImage(ctx, in); err != nil {
+		t.Fatal(err)
+	}
+	in.SourceRef, in.Digest, in.RegistryRef = "nginx:1.28", "sha256:b", "nginx@sha256:b"
+	if _, err := p.CreateImage(ctx, in); !errors.Is(err, store.ErrImageAlreadyExists) {
+		t.Fatalf("err = %v, want ErrImageAlreadyExists", err)
+	}
+	got, err := p.GetImage(ctx, project, "img_dup")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Digest != "sha256:a" {
+		t.Fatalf("digest = %q, want unchanged sha256:a", got.Digest)
+	}
+}
+
+func TestPostgresGetImageNotFound(t *testing.T) {
+	p := postgresForTest(t)
+	if _, err := p.GetImage(context.Background(), "prj_pg_missing", "missing"); !errors.Is(err, store.ErrNotFound) {
+		t.Fatalf("err = %v, want ErrNotFound", err)
+	}
+}
+
+func TestPostgresSeedImageIsCatalogCompatible(t *testing.T) {
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	p.SeedImage(project, "img_seed")
+	got, err := p.GetImage(context.Background(), project, "img_seed")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "READY" {
+		t.Fatalf("state = %q", got.State)
+	}
+	if got.RegistryRef != "" {
+		t.Fatalf("seeded image must have no pinned RegistryRef, got %q", got.RegistryRef)
+	}
+}
+
 func TestPostgresCreateSandboxIdempotency(t *testing.T) {
 	ctx := context.Background()
 	p := postgresForTest(t)

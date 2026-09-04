@@ -19,6 +19,7 @@ var Components = map[string][]string{
 		"internal/auth/**",
 		"internal/config/**",
 		"internal/store/**",
+		"internal/imagecatalog/**",
 		"internal/id/**",
 		"go.mod",
 		"go.sum",

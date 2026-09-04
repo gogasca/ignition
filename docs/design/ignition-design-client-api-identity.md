@@ -1,6 +1,6 @@
 # Ignition Client API and Identity Design
 
-**Status:** Current for identity, project RBAC, and the sandbox/process/operation API. SDK packages and the full resource set (Project/Image/Secret/Event, Volumes, Session snapshots) are not built.
+**Status:** Current for identity, project RBAC, the sandbox/process/operation API, and the first Python/TypeScript SDK slice. The full resource set (Project/Image/Secret/Event, Volumes, Session snapshots) is not built.
 
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 
@@ -14,8 +14,8 @@ Defines the public API, external identity, project authorization, idempotency, e
 
 - `ignition-api`: resource CRUD, authentication, authorization, operations.
 - `ignitionctl`: human and automation CLI — specified; the binary exists but every subcommand returns `not implemented`. Use `curl` against the API.
-- Python package `ignition-sandbox` — not built.
-- TypeScript package `@ignition/sandbox` — not built.
+- Python package `ignition-sandbox` — implemented for the shipped control-plane lifecycle, with sync/async clients and bounded batch execution.
+- TypeScript package `@ignition/sandbox` — implemented for the shipped control-plane lifecycle and bounded batch execution.
 - Google as the identity provider (Google Workspace accounts and GCP service accounts). Ignition does not implement passwords, MFA, or primary identity storage.
 
 ## External authentication contract
@@ -219,9 +219,11 @@ any pre-terminal state → FAILED
 
 ## SDK and CLI contract
 
-> The Python and TypeScript SDKs and `ignitionctl` are **not built** — the binary
-> exists but returns `not implemented`. Callers use `curl` against the HTTP/JSON
-> API with a Google bearer token. The rest of this section is the target contract.
+> The first Python and TypeScript SDK slice is implemented for sandbox,
+> process, operation, and batch control-plane calls. `ignitionctl` and the exec
+> byte stream are **not built**; process attachment currently returns gateway
+> credentials only. The richer streaming behavior below remains the target
+> contract.
 
 SDK handles include `Project`, `Image`, `Secret`, `Sandbox`, `Process`, `Operation`, `Event`, `StreamReader`, and `StreamWriter`. No `Volume` or session-snapshot handle exists.
 

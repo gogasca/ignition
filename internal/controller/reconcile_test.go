@@ -634,6 +634,33 @@ func TestBalloonsMatchMinWarm(t *testing.T) {
 	}
 }
 
+func TestBalloonsTrackRecentCreateRate(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	res := admit(t, m, store.TimeoutSpec{})
+	now := res.Sandbox.CreateTime.Add(time.Second)
+	c := controller.New(m, fake, fake, controller.Options{
+		MaxWarm:           8,
+		WarmWindow:        time.Minute,
+		NodeProvisionTime: time.Minute,
+		Now:               func() time.Time { return now },
+	})
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	list, _ := fake.List()
+	balloons := 0
+	for _, p := range list {
+		if p.Labels[k8s.LabelWorkload] == k8s.WorkloadBalloon && p.Annotations[k8s.AnnotGPUType] == store.AcceleratorNVIDIAL4 {
+			balloons++
+		}
+	}
+	// One create/minute * one minute replenishment * 1.3 safety, rounded up.
+	if balloons != 2 {
+		t.Fatalf("GPU balloons = %d, want 2", balloons)
+	}
+}
+
 // GPU and CPU warm buffers scale independently: each class's MinWarm is met
 // without the two classes' balloons being confused for one another, and a
 // CPU balloon requests no GPU and lands on the CPU sandbox pool.
@@ -843,6 +870,44 @@ func TestResolveImageUsesConfiguredPrefix(t *testing.T) {
 	want := "us-central1-docker.pkg.dev/my-gcp/sandboxes/img_seed"
 	if p.Spec.Containers[0].Image != want {
 		t.Fatalf("image = %q", p.Spec.Containers[0].Image)
+	}
+}
+
+// A catalog image with a pinned RegistryRef (created via the image
+// admission API, not SeedImage) schedules the Pod on that digest-pinned
+// reference, never the mutable-tag prefix path.
+func TestResolveImagePrefersCatalogDigest(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{
+		ImagePrefix: "us-central1-docker.pkg.dev/my-gcp/sandboxes",
+	})
+	if _, err := m.CreateImage(context.Background(), store.CreateImageInput{
+		ProjectID: "prj_dev", ImageID: "img_pinned",
+		SourceRef: "docker.io/library/nginx:1.27", Digest: "sha256:abc",
+		RegistryRef: "docker.io/library/nginx@sha256:abc",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
+		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
+		ImageID:   "img_pinned",
+		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	p, err := fake.Get(k8s.PodName(res.Sandbox.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if p.Spec.Containers[0].Image != "docker.io/library/nginx@sha256:abc" {
+		t.Fatalf("image = %q, want the pinned digest reference", p.Spec.Containers[0].Image)
 	}
 }
 

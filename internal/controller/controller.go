@@ -41,10 +41,20 @@ type Options struct {
 	// to zero with no warm capacity, and enabling a buffer has a real node
 	// cost, so it stays opt-in rather than silently changing existing
 	// deployments' spend.
-	MinWarmCPU      int
-	MaxWarmCPU      int
-	Now             func() time.Time
-	ResolveImage    func(imageID string) string
+	MinWarmCPU int
+	MaxWarmCPU int
+	// WarmWindow is the rolling history used to calculate p95 creates/minute.
+	// NodeProvisionTime is the replenishment horizon covered by the buffer.
+	WarmWindow        time.Duration
+	NodeProvisionTime time.Duration
+	Now               func() time.Time
+	// ResolveImage returns the reference the controller schedules, or "" if
+	// the image is unavailable. The default prefers the image catalog's
+	// digest-pinned RegistryRef (see internal/store.Image) and falls back to
+	// ImagePrefix + imageID for a row with none (SeedImage placeholders,
+	// dev/test images) — this keeps every pre-catalog image working exactly
+	// as before.
+	ResolveImage    func(ctx context.Context, projectID, imageID string) string
 	ImagePrefix     string
 	GCPProject      string
 	Region          string
@@ -74,12 +84,21 @@ func New(st store.ControllerStore, pods k8s.Pods, nodes k8s.Nodes, opts Options)
 	if opts.LeaseTTL <= 0 {
 		opts.LeaseTTL = 10 * time.Second
 	}
+	if opts.WarmWindow <= 0 {
+		opts.WarmWindow = 15 * time.Minute
+	}
+	if opts.NodeProvisionTime <= 0 {
+		opts.NodeProvisionTime = 4 * time.Minute
+	}
 	if opts.ResolveImage == nil {
 		prefix := opts.ImagePrefix
 		if prefix == "" {
 			prefix = "us-central1-docker.pkg.dev/ignition/sandboxes"
 		}
-		opts.ResolveImage = func(imageID string) string {
+		opts.ResolveImage = func(ctx context.Context, projectID, imageID string) string {
+			if img, err := st.GetImage(ctx, projectID, imageID); err == nil && img.State == "READY" && img.RegistryRef != "" {
+				return img.RegistryRef
+			}
 			if !store.ValidImageID(imageID) {
 				return ""
 			}
@@ -208,24 +227,23 @@ func Run(cfg config.Config) error {
 	reg := prometheus.NewRegistry()
 	rec := adminz.NewRecorder(200)
 	c := New(st, cluster, cluster, Options{
-		HolderID:        holder,
-		MinWarm:         cfg.MinWarm,
-		MaxWarm:         cfg.MaxWarm,
-		MinWarmCPU:      cfg.MinWarmCPU,
-		MaxWarmCPU:      cfg.MaxWarmCPU,
-		ImagePrefix:     cfg.SandboxImagePrefix,
-		GCPProject:      cfg.GCPProject,
-		Region:          cfg.EnabledRegion,
-		Secrets:         secretResolver,
-		BalloonCooldown: defaultBalloonCooldown,
-		Recorder:        rec,
-		Metrics:         adminz.NewReconcileMetrics(reg, rec),
-		ResolveImage: func(imageID string) string {
-			if !store.ValidImageID(imageID) {
-				return ""
-			}
-			return config.ResolveSandboxImage(imageID, cfg.SandboxImagePrefix, cfg.EnabledRegion, cfg.GCPProject)
-		},
+		HolderID:          holder,
+		MinWarm:           cfg.MinWarm,
+		MaxWarm:           cfg.MaxWarm,
+		MinWarmCPU:        cfg.MinWarmCPU,
+		MaxWarmCPU:        cfg.MaxWarmCPU,
+		WarmWindow:        cfg.WarmWindow,
+		NodeProvisionTime: cfg.NodeProvisionTime,
+		ImagePrefix:       cfg.SandboxImagePrefix,
+		GCPProject:        cfg.GCPProject,
+		Region:            cfg.EnabledRegion,
+		Secrets:           secretResolver,
+		BalloonCooldown:   defaultBalloonCooldown,
+		Recorder:          rec,
+		Metrics:           adminz.NewReconcileMetrics(reg, rec),
+		// ResolveImage is left unset: New's default already builds the same
+		// prefix-resolution closure from ImagePrefix/Region/GCPProject above,
+		// now backed by the image catalog when a row has a pinned RegistryRef.
 	})
 
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)

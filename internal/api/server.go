@@ -15,6 +15,7 @@ import (
 	"ignition.dev/ignition/internal/adminz"
 	"ignition.dev/ignition/internal/auth"
 	"ignition.dev/ignition/internal/config"
+	"ignition.dev/ignition/internal/imagecatalog"
 	"ignition.dev/ignition/internal/store"
 )
 
@@ -30,6 +31,7 @@ type Server struct {
 	cfg      config.Config
 	store    store.Store
 	authn    auth.Authenticator
+	resolver imagecatalog.Resolver
 	now      func() time.Time
 	started  time.Time
 	registry *prometheus.Registry
@@ -37,13 +39,21 @@ type Server struct {
 	metrics  *adminz.HTTPMetrics
 }
 
+// New constructs a Server that resolves admitted images against their real
+// source registry (imagecatalog.RemoteResolver). Use NewWithResolver to
+// inject a test double.
 func New(cfg config.Config, st store.Store, authn auth.Authenticator) *Server {
+	return NewWithResolver(cfg, st, authn, imagecatalog.RemoteResolver{})
+}
+
+func NewWithResolver(cfg config.Config, st store.Store, authn auth.Authenticator, resolver imagecatalog.Resolver) *Server {
 	reg := prometheus.NewRegistry()
 	rec := adminz.NewRecorder(200)
 	return &Server{
 		cfg:      cfg,
 		store:    st,
 		authn:    authn,
+		resolver: resolver,
 		now:      time.Now,
 		started:  time.Now(),
 		registry: reg,
@@ -55,6 +65,8 @@ func New(cfg config.Config, st store.Store, authn auth.Authenticator) *Server {
 // Handler returns the authenticated HTTP handler. It does not listen.
 func (s *Server) Handler() http.Handler {
 	mux := http.NewServeMux()
+	mux.HandleFunc("POST /v1/projects/{project}/images", s.createImage)
+	mux.HandleFunc("GET /v1/projects/{project}/images/{image}", s.getImage)
 	mux.HandleFunc("POST /v1/projects/{project}/sandboxes", s.createSandbox)
 	mux.HandleFunc("GET /v1/projects/{project}/sandboxes", s.listSandboxes)
 	mux.HandleFunc("GET /v1/projects/{project}/runtimes/default", s.getDefaultRuntime)

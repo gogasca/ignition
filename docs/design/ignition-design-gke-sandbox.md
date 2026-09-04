@@ -109,11 +109,11 @@ Explicitly **outside** the 9-second SLO:
 
 These paths get separate published metrics: `queue_wait_seconds`, `node_provision_seconds`, and `cold_image_start_seconds`, with a cold-node target of p95 at most 4 minutes for the L4 pool.
 
-### Warm capacity mechanism
+### Warm-node capacity mechanism
 
-Sandbox Pods scale to zero; GPU **nodes** do not. A pre-warmed node is a `Ready` GKE GPU node with the driver installed, gVisor runtime available, base image layers cached, and no customer sandbox scheduled.
+Sandbox Pods scale to zero; configured GPU or CPU **nodes** do not. A pre-warmed node is a `Ready` GKE sandbox node with its runtime dependencies available and no customer sandbox scheduled. This is a warm-node buffer, not an image-specific pool of already-running tenant sandboxes.
 
-- `ignition-controller` maintains a warm buffer per `(region, GPU SKU)` pool: `target_warm = max(min_warm, ceil(p95_creates_per_minute × node_provision_minutes))`, recomputed from a sliding window and clamped by cost policy.
+- `ignition-controller` maintains an independent warm buffer for each accelerator class: `target_warm = clamp(ceil(p95_creates_per_minute × node_provision_minutes × safety), min_warm, max_warm)`. The rate comes from recent durable sandbox rows over `IGNITION_WARM_WINDOW_SECONDS`; `IGNITION_NODE_PROVISION_SECONDS` sets the replenishment horizon. GPU bounds are `IGNITION_MIN_WARM` / `IGNITION_MAX_WARM`; CPU bounds are independently opt-in through `IGNITION_MIN_WARM_CPU` / `IGNITION_MAX_WARM_CPU`.
 - The buffer is implemented with low-priority **balloon Pods**: placeholder Pods with `priorityClassName: ignition-balloon` (negative priority, full GPU request) keep the Cluster Autoscaler from scaling warm nodes away. A real sandbox Pod preempts a balloon instantly, landing on a node that is already `Ready`.
 - When a balloon is preempted, the Cluster Autoscaler provisions a replacement node in the background, restoring the buffer without blocking any sandbox.
 - Scale-in: when warm nodes exceed the target for a cooldown period (default 15 minutes), the controller deletes balloon Pods and lets the Cluster Autoscaler remove the empty nodes. Nodes running a customer sandbox are never scale-in candidates; the sandbox Pod's presence blocks autoscaler removal, and the controller additionally annotates active nodes with `cluster-autoscaler.kubernetes.io/scale-down-disabled=true` while a sandbox is bound.

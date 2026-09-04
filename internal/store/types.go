@@ -38,6 +38,41 @@ type SecretRef struct {
 	EnvironmentName string `json:"environmentName"`
 }
 
+// Image is a project-scoped catalog entry: a client-chosen imageId pinned,
+// once, to an immutable digest resolved from a source registry reference.
+// SourceRef/Digest/RegistryRef/Entrypoint/Cmd are empty for a row created by
+// SeedImage (dev/test placeholders) rather than real admission.
+type Image struct {
+	ProjectID string `json:"projectId"`
+	ImageID   string `json:"imageId"`
+	// State is "RESOLVING", "READY", or "REJECTED". CreateSandbox admits only
+	// "READY". v0 resolves synchronously inside CreateImage, so a client never
+	// observes "RESOLVING" for a row it can already GET; the state is kept in
+	// the schema because that is the async delivery contract the design of
+	// record specifies (see docs/design/ignition-design-image-datalayer.md).
+	State       string    `json:"state"`
+	StateReason string    `json:"stateReason,omitempty"`
+	SourceRef   string    `json:"sourceRef,omitempty"`
+	Digest      string    `json:"digest,omitempty"`
+	RegistryRef string    `json:"registryRef,omitempty"`
+	Entrypoint  []string  `json:"entrypoint,omitempty"`
+	Cmd         []string  `json:"cmd,omitempty"`
+	CreateTime  time.Time `json:"createTime"`
+}
+
+// CreateImageInput is a fully-resolved catalog row to persist. Resolution
+// (the registry round trip) happens before this is called; the store layer
+// never performs image I/O.
+type CreateImageInput struct {
+	ProjectID   string
+	ImageID     string
+	SourceRef   string
+	Digest      string
+	RegistryRef string
+	Entrypoint  []string
+	Cmd         []string
+}
+
 type ResourceSpec struct {
 	CPUMilli  int `json:"cpuMilli"`
 	MemoryMiB int `json:"memoryMiB"`

@@ -25,6 +25,9 @@ type ProcessObserved struct {
 // ControllerStore is the product-state surface used by ignition-controller.
 // Implementations must not call the Kubernetes API.
 type ControllerStore interface {
+	// GetImage backs digest-pinned image resolution: the controller reads
+	// RegistryRef here instead of computing an image string from imageId.
+	GetImage(ctx context.Context, projectID, imageID string) (Image, error)
 	ListSandboxesAll(ctx context.Context) ([]Sandbox, error)
 	UpdateObserved(ctx context.Context, in ObservedUpdate) error
 	ListProcessesBySandbox(ctx context.Context, projectID, sandboxID string) ([]Process, error)
