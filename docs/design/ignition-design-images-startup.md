@@ -13,6 +13,7 @@ GKE Pod snapshot orchestration.
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 **Data layer:** [Image Data Layer](ignition-design-image-datalayer.md)
 **Snapshot details:** [Checkpoint and Restore](ignition-design-checkpoint-restore.md)
+**Class-specific accelerator:** [Fast Startup on GCP](ignition-design-fast-startup-gcp.md) — stratified delivery and managed Pod snapshots for inference images
 
 ## Scope
 
@@ -257,10 +258,14 @@ A golden snapshot:
 
 ### Managed GKE snapshot path
 
-GKE Pod snapshots are currently a Preview feature. Treat them as an experimental,
-optional accelerator until the product's launch stage, support terms, security
-review, and operational limits satisfy Ignition's production policy. Normal image
-startup remains the production fallback and does not depend on this feature.
+GKE Pod snapshots are generally available on GKE 1.35.3-gke.1234000 or later
+(GKE release notes, May 6, 2026). GA removes the pre-GA dependency concern; it
+does not remove Ignition's own qualification gate — cross-node restore,
+correctness, isolation, and storage tests must pass before an artifact is
+selectable. Normal image startup remains the production fallback and does not
+depend on this feature. The composition-aware build, VRAM tiering, zonal cache,
+and host-side prefetch for stratified inference images are specified in
+[Fast Startup on GCP](ignition-design-fast-startup-gcp.md).
 
 Use `PodSnapshotStorageConfig`, `PodSnapshotPolicy`, and `PodSnapshot` resources.
 The controller must discover and use the API version served by the target cluster
@@ -350,12 +355,11 @@ are evicted; they are never edited in place.
 The feasible near-term implementation is admission plus existing managed GKE
 features. Image streaming requires control-plane work but no kernel modification.
 Secondary boot-disk caches are feasible for stable popular images but require
-versioned disk images and new node pools for updates. GKE Pod snapshots are
-technically feasible for qualified containers on supported tuples, but their
-Preview status makes them an optional qualification track rather than a production
-dependency. They require snapshot CRD discovery and orchestration, Cloud Storage
-isolation, compatibility-aware placement, state refresh, and functional
-verification.
+versioned disk images and new node pools for updates. GKE Pod snapshots are GA
+and technically feasible for qualified containers on supported tuples; they are
+an optional qualification track rather than a prerequisite for generic startup.
+They require snapshot CRD discovery and orchestration, Cloud Storage isolation,
+compatibility-aware placement, state refresh, and functional verification.
 
 The custom GCE path is feasible as a prototype because mature upstream lazy
 backends exist. Production feasibility is conditional on exact containerd,

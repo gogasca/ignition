@@ -12,6 +12,7 @@ not approved for implementation.
 
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)
 **Sibling:** [Images and Startup Acceleration](ignition-design-images-startup.md)
+**Class-specific accelerator:** [Fast Startup on GCP](ignition-design-fast-startup-gcp.md) — re-layering as an alternative representation; admitted read-only data on block storage
 **Runtime boundary:** [Worker Runtime and GPU Isolation](ignition-design-worker-runtime.md)
 
 ## Decision

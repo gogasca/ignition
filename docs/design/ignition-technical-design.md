@@ -22,6 +22,7 @@ This document is the architecture overview and cross-module contract. The module
 6. [Worker Runtime and GPU Isolation](ignition-design-worker-runtime.md) — deferred, not implemented
 7. [Images and Startup Acceleration](ignition-design-images-startup.md) — deferred, not implemented
    - [Image Data Layer](ignition-design-image-datalayer.md) — backend-neutral admission and adaptive GKE/GCE image delivery for arbitrary OCI images; proposed, not implemented
+   - [Fast Startup on GCP](ignition-design-fast-startup-gcp.md) — content-derived re-layering, ReadOnlyMany weight disks, managed Pod snapshot qualification, data-locality warm pool; proposed, not implemented
 8. [Checkpoint and Restore](ignition-design-checkpoint-restore.md) — managed GKE Pod snapshot orchestration not built; direct custom-runtime path deferred
 9. [Data Plane and Networking](ignition-design-data-plane-networking.md) — exec byte path not built; `ignition-ingress`/route table/exec spool are custom-runtime
 10. [Storage and Volumes](ignition-design-storage-volumes.md) — scratch and read-only mounts only; Volumes deferred

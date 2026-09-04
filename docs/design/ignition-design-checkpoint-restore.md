@@ -4,10 +4,10 @@
 GCE/MIG worker runtime. Managed GKE Pod snapshots are specified separately in
 [Images and Startup Acceleration](ignition-design-images-startup.md#managed-gke-snapshot-path).
 
-> No checkpoint/restore orchestration is built. Current GKE provides Preview
-> managed Pod snapshots, including compatible GPU state, but Ignition does not
-> yet create, qualify, select, or restore them and cannot depend on them in
-> production while they remain Pre-GA. This document is retained for a possible
+> No checkpoint/restore orchestration is built. GKE provides managed Pod
+> snapshots, including compatible GPU state, generally available on GKE
+> 1.35.3-gke.1234000 or later; Ignition does not yet create, qualify, select,
+> or restore them. This document is retained for a possible
 > direct custom Compute Engine implementation only; it must not be used to
 > reimplement capabilities already provided by managed GKE without a measured
 > requirement — see
