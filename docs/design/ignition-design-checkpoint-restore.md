@@ -1,14 +1,16 @@
 # Ignition Checkpoint and Restore Design
 
-**Status:** Not implemented — design of record for the deferred custom GCE/MIG worker runtime.
+**Status:** Not implemented — design of record only for the deferred custom
+GCE/MIG worker runtime. Managed GKE Pod snapshots are specified separately in
+[Images and Startup Acceleration](ignition-design-images-startup.md#managed-gke-snapshot-path).
 
-> No checkpoint/restore path is built. The shipped system has no golden startup
-> snapshots, no `ignition-builder`/`snapshotd`, and no `cuda-checkpoint`
-> integration; sandboxes always cold-start from their OCI image on GKE Sandbox
-> nodes, and Spot/host loss fails the sandbox rather than restoring it. This
-> document is retained as the design for the custom Compute Engine runtime, whose
-> gate includes committed golden CPU+GPU memory snapshots that GKE Sandbox does
-> not expose — see
+> No checkpoint/restore orchestration is built. Current GKE provides Preview
+> managed Pod snapshots, including compatible GPU state, but Ignition does not
+> yet create, qualify, select, or restore them and cannot depend on them in
+> production while they remain Pre-GA. This document is retained for a possible
+> direct custom Compute Engine implementation only; it must not be used to
+> reimplement capabilities already provided by managed GKE without a measured
+> requirement — see
 > [GKE Sandbox — Relationship to the custom runtime](ignition-design-gke-sandbox.md#relationship-to-the-custom-runtime).
 
 **Parent:** [Ignition Technical Design](ignition-technical-design.md)

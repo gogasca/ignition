@@ -21,8 +21,8 @@ This document is the architecture overview and cross-module contract. The module
 5. [Fleet and VM Lifecycle](ignition-design-fleet-vm-lifecycle.md) — deferred, not implemented
 6. [Worker Runtime and GPU Isolation](ignition-design-worker-runtime.md) — deferred, not implemented
 7. [Images and Startup Acceleration](ignition-design-images-startup.md) — deferred, not implemented
-   - [Image Data Layer](ignition-design-image-datalayer.md) — content-addressed FUSE (`ignitionfs`) for arbitrary large custom images; deferred, not implemented
-8. [Checkpoint and Restore](ignition-design-checkpoint-restore.md) — deferred, not implemented
+   - [Image Data Layer](ignition-design-image-datalayer.md) — backend-neutral admission and adaptive GKE/GCE image delivery for arbitrary OCI images; proposed, not implemented
+8. [Checkpoint and Restore](ignition-design-checkpoint-restore.md) — managed GKE Pod snapshot orchestration not built; direct custom-runtime path deferred
 9. [Data Plane and Networking](ignition-design-data-plane-networking.md) — exec byte path not built; `ignition-ingress`/route table/exec spool are custom-runtime
 10. [Storage and Volumes](ignition-design-storage-volumes.md) — scratch and read-only mounts only; Volumes deferred
 11. [Production Operations and Security](ignition-design-production-operations-security.md)
@@ -429,10 +429,11 @@ The milestone plan below is the roadmap for the deferred custom GCE/MIG runtime.
 
 **Gate:** one black-box conformance suite passes across REST, SDKs, and CLI; attach, reconnect, truncation/gap, and path-isolation tests pass.
 
-### Milestone 5 — Images, golden startup, and fleet
+### Milestone 5 — Images, optional golden startup, and fleet
 
-- Select eStargz or SOCI by benchmark.
-- Implement builder/catalog atomic publication and complete opaque-directory manifests.
+- Implement immutable image admission and benchmark GKE streaming, cached, and eager delivery.
+- If the custom GCE gate is met, qualify Nydus, eStargz, SOCI, and eager overlayfs before selecting a backend.
+- Implement builder/catalog atomic publication, representation differential verification, and complete optional snapshot manifests.
 - Bake immutable worker images and roll compatibility tuples blue/green.
 - Implement warm pools and deterministic instance-specific scale-in.
 
@@ -469,7 +470,7 @@ Genuine remaining decisions:
 
 - exact allowlisted model servers, models, CUDA APIs, and versions;
 - initial OCI registry product;
-- eStargz versus SOCI benchmark winner;
+- GKE cache-cohort policy and, only if the custom GCE gate is met, the qualified lazy-image backend;
 - project queue deadlines and interrupted-request retry policy;
 - maximum captured VRAM and artifact size beyond the launch-qualified class;
 - golden artifact retention and invalidation windows;
