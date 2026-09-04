@@ -30,7 +30,7 @@ Together they implement sandbox lifecycle, process metadata, and operations on G
 **Out of scope**
 
 - Custom `ignition-scheduler` / `ignition-fleet` / `ignitiond` / `ignition-hostd`.
-- Project, image import, secret, and event public APIs (the API runs on seed `projects`/`images` rows; these surfaces are not exposed).
+- Project, secret, and event public APIs (the API runs on seed `projects` rows; these surfaces are not exposed). A v0 image admission slice (`POST/GET .../images`, resolve-and-pin only — see [Image Data Layer](ignition-design-image-datalayer.md#security-status)) is exposed; the full image import/catalog contract is not.
 - Writable Volume or Session snapshot resources.
 - Multi-region active-active databases. Deployment is one region (`us-central1`) behind an optional global hostname.
 
@@ -103,6 +103,8 @@ Required permissions:
 | Get/List/WatchOperation | `operation.get` |
 | CancelOperation | `operation.cancel` |
 | GetRuntimeDefault | `runtime.get` |
+| CreateImage (v0 resolve-and-pin) | `image.create` |
+| GetImage | `image.get` |
 | List/GetRoleBinding | `rolebinding.get` (owner/admin) |
 | Put/DeleteRoleBinding | `rolebinding.admin` (owner/admin) |
 
@@ -124,6 +126,8 @@ One serializable Cloud SQL transaction. The API never creates a Pod.
 On any validation failure before commit, return a stable `Status` (`INVALID_ARGUMENT`, `IMAGE_NOT_READY`, `QUOTA_EXCEEDED`, `WORKLOAD_NOT_SUPPORTED`, …) with `requestId`, `retryable`, optional `retryAfterSeconds`.
 
 Startup deadline `timeouts.startupSeconds` is stored on the sandbox; the **controller** fails the sandbox with `CAPACITY_UNAVAILABLE` if `READY` is not reached in time. The API does not wait.
+
+**Create image (v0 admission, `internal/imagecatalog`):** `POST .../images` runs synchronously, not in a Cloud SQL transaction against the request's own commit path — it resolves `sourceRef` against the source registry (no Ignition-owned copy), then inserts one `images` row keyed `(project_id, image_id)`. A primary-key collision fails closed to `409 IMAGE_ALREADY_EXISTS` rather than re-resolving or overwriting the pinned digest; there is no `Idempotency-Key` on this route. The resolver does not currently restrict which registry host `sourceRef` may name — see [Image Data Layer — Security status](ignition-design-image-datalayer.md#security-status) before relying on this endpoint being safe against an adversarial caller holding ordinary `image.create`.
 
 ### 5.4 Terminate
 

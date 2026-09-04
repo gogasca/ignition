@@ -111,9 +111,14 @@ GET    /v1/projects/{project}/operations
 GET    /v1/projects/{project}/operations/{operation}
 GET    /v1/projects/{project}/operations/{operation}:watch
 POST   /v1/projects/{project}/operations/{operation}:cancel
+
+POST   /v1/projects/{project}/images
+GET    /v1/projects/{project}/images/{image}
 ```
 
-Require `Authorization: Bearer <token>` on every route except `GET /healthz` (Cloud IAP callers send `X-Goog-IAP-JWT-Assertion` instead — see below). Require `Idempotency-Key` (max 128 bytes) on create, terminate, cancel, and process create/attach/signal/cancel.
+Require `Authorization: Bearer <token>` on every route except `GET /healthz` (Cloud IAP callers send `X-Goog-IAP-JWT-Assertion` instead — see below). Require `Idempotency-Key` (max 128 bytes) on create, terminate, cancel, and process create/attach/signal/cancel — `POST .../images` is the one create route without one; a retry after a successful admission fails closed with `409 IMAGE_ALREADY_EXISTS` (`imageId` is immutable) instead of replaying.
+
+`POST .../images` resolves the request's `sourceRef` synchronously against its source registry (`internal/imagecatalog`, `permission image.create`) — it does not yet restrict which registry host `sourceRef` may name (no allowlist, no private/link-local/metadata-range block) and has no server-side resolve timeout independent of the caller's own connection. Anyone who can already create a sandbox in a project can use it to make `ignition-api` issue an outbound request to a host of their choosing and see the resulting error text. Treat this route as internal-only, or add the destination check described in [Image Data Layer — Security status](../design/ignition-design-image-datalayer.md#security-status), before granting `image.create` to an untrusted project member.
 
 ### Auth
 
@@ -126,7 +131,7 @@ Two identity paths reach the same `Principal{Subject, Email, Kind, Domain}` and 
 
 The middleware verifies the IAP assertion header when present, otherwise the bearer. `IGNITION_OIDC_SUBJECT_CLAIM=email` makes the verified email the RBAC subject; a `*.gserviceaccount.com` email is classified as a service account (exempt from the hosted-domain check; no role restriction). First-party RFC 9068 `at+jwt` access tokens are still accepted when `IGNITION_OIDC_ALLOWED_TYPES` includes `at+jwt`.
 
-RBAC checks the project role for `sandbox.create` / `sandbox.get` / `sandbox.terminate` / `sandbox.exec` / `process.get` / `operation.get` / `operation.cancel` / `rolebinding.get` / `rolebinding.admin`. Role lookup resolves the exact subject, then a `domain:<hd>` binding for a Workspace user.
+RBAC checks the project role for `sandbox.create` / `sandbox.get` / `sandbox.terminate` / `sandbox.exec` / `process.get` / `operation.get` / `operation.cancel` / `image.create` / `image.get` / `rolebinding.get` / `rolebinding.admin`. Role lookup resolves the exact subject, then a `domain:<hd>` binding for a Workspace user.
 
 - no/invalid credential → `401`
 - no role binding, unknown IDs, **and** in-project deny of terminate/cancel → `404`

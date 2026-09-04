@@ -60,7 +60,7 @@ Users and service accounts are **principals**. A service account is not a role. 
 
 ### Role/permission matrix
 
-A project must always retain at least one `owner` (the API's last-owner guard enforces this). `admin` can manage access but cannot transfer/delete the project or alter owners. Rows for resources that are not yet exposed (image, secret, event, `project.*`) describe the intended model; only the `sandbox.*`, `process.get`, `operation.*`, and `rolebinding.*` permissions are enforced today. Role lookup resolves the exact subject, then a `domain:<hd>` binding for a Workspace user.
+A project must always retain at least one `owner` (the API's last-owner guard enforces this). `admin` can manage access but cannot transfer/delete the project or alter owners. Rows for resources that are not yet exposed (secret, event, `project.*`) describe the intended model; only the `sandbox.*`, `process.get`, `operation.*`, `image.create`, `image.get`, and `rolebinding.*` permissions are enforced today. Role lookup resolves the exact subject, then a `domain:<hd>` binding for a Workspace user.
 
 | Permission | owner | admin | developer | operator | viewer |
 |---|---:|---:|---:|---:|---:|
@@ -68,8 +68,10 @@ A project must always retain at least one `owner` (the API's last-owner guard en
 | `project.update` | yes | yes | no | no | no |
 | `project.delete`, `project.owner.manage` | yes | no | no | no | no |
 | `project.iam.manage` (non-owner bindings) | yes | yes | no | no | no |
-| `image.import`, `image.delete` | yes | yes | yes | no | no |
-| `image.get`, `image.list` | yes | yes | yes | yes | yes |
+| `image.create` (v0: resolve `sourceRef`, pin digest — see [Image Data Layer](ignition-design-image-datalayer.md#security-status)) | yes | yes | yes | yes | no |
+| `image.get` | yes | yes | yes | yes | yes |
+| `image.import`, `image.delete` (full contract, not built) | yes | yes | yes | no | no |
+| `image.list` (full contract, not built) | yes | yes | yes | yes | yes |
 | `secret.create`, `secret.version`, `secret.rotate`, `secret.delete` | yes | yes | yes | no | no |
 | `secret.getMetadata`, `secret.list` | yes | yes | yes | yes | yes |
 | `secret.use` | yes | yes | yes | yes | no |
@@ -113,12 +115,17 @@ POST   /v1/projects/{project}/operations/{operation}:cancel
 
 GET    /v1/projects/{project}/runtimes/default
 
+POST   /v1/projects/{project}/images
+GET    /v1/projects/{project}/images/{image}
+
 GET    /v1/projects/{project}/roleBindings
 PUT    /v1/projects/{project}/roleBindings/{subject}
 DELETE /v1/projects/{project}/roleBindings/{subject}
 ```
 
 `{subject}` is an email or `domain:<fqdn>`. `roleBindings` write access is owner/admin only, with a last-owner guard and an audit-log line per mutation.
+
+`POST .../images` is a v0 slice of the full Image contract below: it takes `{imageId, sourceRef}`, resolves `sourceRef` synchronously against the source registry (no `RESOLVING` transient state, no `Idempotency-Key` — a retry after success fails closed with `409 IMAGE_ALREADY_EXISTS`), and returns the pinned record including `digest`, `registryRef`, `entrypoint`, `cmd`, and `streamingEligible`. It does not implement steps 2–5, 7, or 8 of [Image admission and catalog](ignition-design-image-datalayer.md#image-admission-and-catalog) — see [Security status](ignition-design-image-datalayer.md#security-status) before exposing this to untrusted callers.
 
 ### Full contract (specified, not exposed)
 
@@ -135,10 +142,11 @@ GET    /v1/projects/{project}/roleBindings
 PUT    /v1/projects/{project}/roleBindings/{binding}
 DELETE /v1/projects/{project}/roleBindings/{binding}
 
-# Image import and status
+# Image import and status — POST .../images and GET .../images/{image} are
+# exposed today as a narrower v0 slice (see Exposed endpoints above); this
+# :import shape, list, /status, and delete remain unbuilt.
 POST   /v1/projects/{project}/images:import
 GET    /v1/projects/{project}/images
-GET    /v1/projects/{project}/images/{image}
 GET    /v1/projects/{project}/images/{image}/status
 DELETE /v1/projects/{project}/images/{image}
 

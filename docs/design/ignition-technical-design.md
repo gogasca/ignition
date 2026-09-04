@@ -184,7 +184,7 @@ Cloud IAP wiring (Terraform + a k8s overlay component) exists but requires a pub
 
 ### 4.2 Public resources
 
-The implemented public resources are Sandbox, Process, Operation, and project `roleBindings`. Project, Image, Secret, and Event are specified but not yet exposed (the API runs on seed `projects` and `images` rows). Writable Volume and public Snapshot resources are absent. Scratch is explicitly ephemeral.
+The implemented public resources are Sandbox, Process, Operation, project `roleBindings`, and a v0 Image admission slice (`POST/GET .../images`; see [§7](#7-images-and-golden-startup-artifacts) and [Image Data Layer — Security status](ignition-design-image-datalayer.md#security-status)). Project, Secret, and Event are specified but not yet exposed (the API also still runs on seed `projects` rows for bootstrap). Writable Volume and public Snapshot resources are absent. Scratch is explicitly ephemeral.
 
 Every create or retriable mutation requires `Idempotency-Key`. Its record is scoped to authenticated principal, organization, `projectId` where present, method, and canonical route, and stores a canonical request hash and replayable committed result for at least 24 hours. Same-key/same-hash retries produce one side effect; different-hash reuse conflicts.
 
@@ -263,6 +263,16 @@ A database lease transition is not sufficient for GPU reuse. Normal release requ
 Missing acknowledgement, stream loss, token/epoch mismatch, local/database disagreement, or ambiguous cleanup marks the lease and worker `SUSPECT`. The GPU is never reused in place. `ignition-fleet` recreates the VM, and only the replacement's clean registration, burn-in, and health validation can return capacity.
 
 ## 7. Images and golden startup artifacts
+
+> **A v0 slice of image admission is shipped; the rest of this section is not.**
+> `internal/imagecatalog` resolves a client-given `sourceRef` directly against
+> its source registry to an immutable digest and records a static GKE
+> streaming-eligibility check — steps 1 and 6 of
+> [Image admission and catalog](ignition-design-image-datalayer.md#image-admission-and-catalog).
+> It does not copy into an Ignition-owned repository, verify registry
+> identity/signature/provenance, scan, or atomically publish a signed catalog
+> record. See [Security status](ignition-design-image-datalayer.md#security-status)
+> for what that gap currently allows an authenticated caller to do.
 
 Image admission resolves mutable references to an immutable digest, verifies identity/signature/provenance and project policy, creates authenticated lazy metadata, and atomically publishes catalog state.
 
@@ -382,9 +392,9 @@ There is no `ignition-scheduler`, `ignition-worker-control`, `ignition-fleet`, `
 
 **Built and deployed** (`dev` and `anyscale-staging` overlays on GCP project `anyscale-demo`): `ignition-api` and `ignition-controller` on GKE; Cloud SQL schema and idempotent admission; Google OIDC / Cloud IAP auth and SQL project RBAC (verified end to end on staging); the CPU (`accelerator: NONE`) sandbox lifecycle verified end to end on dev; the `NVIDIA_L4` profile and `ignition-gpu-agent` attestation; watch/SSE; a critical-user-journey prober; a PR-merge / nightly / staging CI pipeline (`deploy/PIPELINE.md`); Terraform for the cluster, Cloud SQL, prober identity, and IAP grants.
 
-**Built, not yet exercised end to end:** a real GPU sandbox reaching `READY` (blocked on L4 quota in dev; the staging GPU pool exists).
+**Built, not yet exercised end to end:** a real GPU sandbox reaching `READY` (blocked on L4 quota in dev; the staging GPU pool exists); a v0 image admission slice — digest-pinning resolution and static streaming-eligibility recording (§7) — verified against a real public registry but not yet against a live GKE cluster, and with the registry-host restriction in [Security status](ignition-design-image-datalayer.md#security-status) still open.
 
-**Not built:** the exec byte path (`ignition-gateway`, `sandbox-init` process supervision), `ignitionctl`, digest-pinned images and an image catalog, the Project/Image/Secret/Event public APIs, Cloud IAP rollout (needs a public Ingress + Workspace domain), and everything in the deferred custom runtime.
+**Not built:** the exec byte path (`ignition-gateway`, `sandbox-init` process supervision), `ignitionctl`, the full image data layer (same-region copy, signature/provenance verification, scanning, signed catalog publication — the v0 slice above is a narrower start on it), the Project/Secret/Event public APIs, Cloud IAP rollout (needs a public Ingress + Workspace domain), and everything in the deferred custom runtime.
 
 ### Custom-runtime milestone plan (not executed)
 

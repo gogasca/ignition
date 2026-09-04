@@ -38,9 +38,17 @@ CREATE TABLE IF NOT EXISTS images (
     -- internal/imagecatalog); a SeedImage row defaults eligible/unchecked.
     streaming_eligible BOOLEAN NOT NULL DEFAULT TRUE,
     ineligible_reason  TEXT NOT NULL DEFAULT '',
+    -- Sum of compressed layer sizes from admission; input to a conservative
+    -- eager-pull deadline estimate for a streaming-ineligible image.
+    compressed_bytes BIGINT NOT NULL DEFAULT 0,
+    -- Incremented once per successful CreateSandbox against this image; the
+    -- "measured launch demand" input a cache-epoch build would select from.
+    launch_count     BIGINT NOT NULL DEFAULT 0,
     create_time  TIMESTAMPTZ NOT NULL DEFAULT now(),
     PRIMARY KEY (project_id, image_id)
 );
+
+CREATE INDEX IF NOT EXISTS images_project_launch_count ON images (project_id, launch_count DESC);
 
 CREATE TABLE IF NOT EXISTS sandboxes (
     id            TEXT PRIMARY KEY,

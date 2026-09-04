@@ -1,8 +1,15 @@
 # Ignition Image Data Layer Design
 
-**Status:** Proposed — backend-neutral image admission and delivery are not
-implemented. The previously proposed custom FUSE filesystem (`ignitionfs`) is
-not approved for implementation.
+**Status:** Proposed, with a v0 admission slice implemented. `internal/imagecatalog`
+and `POST/GET /v1/projects/{project}/images` implement step 1 (resolve a mutable
+reference to a digest) and step 6 (static GKE streaming-eligibility check) of
+[Image admission and catalog](#image-admission-and-catalog) below, reading
+directly from the source registry with no same-region copy. Steps 2–5, 7, and 8 —
+the Ignition-owned immutable repository, registry-identity/signature/provenance
+verification, vulnerability scanning, alternative representations, and signed
+atomic publication — remain unimplemented; see
+[Security status](#security-status). The previously proposed custom FUSE
+filesystem (`ignitionfs`) is not approved for implementation.
 
 > The shipped system delegates image delivery to GKE image streaming. This
 > document defines the next implementation for arbitrary OCI containers on GKE
@@ -161,6 +168,37 @@ Alternative GCE representations and profiles never delay it. Each transition is
 idempotent and fenced by `(source digest, platform, policy revision, generation)`.
 Only a catalog transaction that publishes a verified immutable digest makes a
 representation selectable.
+
+## Security status
+
+Step 3 above — verify registry identity, signature, provenance, and project
+policy before resolution — is normative and is the control that would bound
+which network destinations admission can reach. The v0 implementation
+(`internal/imagecatalog.RemoteResolver`) does not implement it: `sourceRef` is
+checked only for length, and resolution is a direct `go-containerregistry`
+`remote.Get` against whatever host the reference parses to, with no allowlist,
+no scheme restriction, and no block on IP-literal, link-local, or private-range
+destinations. `POST /v1/projects/{project}/images` requires `image.create`,
+held by the same project roles that already hold `sandbox.create` — this is a
+new *capability* (the API server issuing outbound requests to a client-chosen
+host, including the GCE metadata address) reachable by an existing permission
+tier, not a new privilege boundary. The resolver's ambient GCP credential
+(`ignition-api`'s Workload Identity) does not currently hold an Artifact
+Registry role in Terraform, so the credential-forwarding/confused-deputy angle
+this step is also meant to close is not live today — but nothing in code
+prevents it from becoming live if that grant is ever added, and the pure
+network-reachability exposure needs no registry credential at all. There is
+also no resolution timeout independent of the client's own connection.
+
+Until step 3 is implemented, at minimum: validate the resolved reference's
+registry host against an explicit allowlist (mirroring
+`IGNITION_ALLOWED_ACCELERATORS`'s pattern) before any network call; resolve and
+reject private/link-local/loopback/metadata address ranges; bound the resolve
+call with its own server-side timeout; and stop returning the raw resolver
+error to the client, which today is specific enough to distinguish "nothing
+listening" from "connection refused" from "TLS/auth failure" — an oracle for
+mapping internal network topology independent of whether resolution ever
+succeeds.
 
 ## GKE implementation
 

@@ -61,9 +61,20 @@ type Image struct {
 	// eligibility check from admission (see internal/imagecatalog). A
 	// SeedImage row has StreamingEligible true with no reason (unchecked, not
 	// verified eligible).
-	StreamingEligible bool      `json:"streamingEligible"`
-	IneligibleReason  string    `json:"ineligibleReason,omitempty"`
-	CreateTime        time.Time `json:"createTime"`
+	StreamingEligible bool   `json:"streamingEligible"`
+	IneligibleReason  string `json:"ineligibleReason,omitempty"`
+	// CompressedBytes is the sum of compressed layer sizes from admission
+	// (internal/imagecatalog). It is the input to a conservative eager-pull
+	// deadline estimate for a streaming-ineligible image (see
+	// internal/api.estimatedEagerPullSeconds) — not a measurement of what GKE
+	// will actually transfer, which may be smaller if layers are cached.
+	CompressedBytes int64 `json:"compressedBytes,omitempty"`
+	// LaunchCount is incremented once per successful CreateSandbox referencing
+	// this image. It is the "measured launch demand" input a secondary
+	// boot-disk cache-epoch build selects from (see TopImagesByLaunchCount) —
+	// not itself a cache; nothing reads it back for scheduling today.
+	LaunchCount int       `json:"launchCount"`
+	CreateTime  time.Time `json:"createTime"`
 }
 
 // CreateImageInput is a fully-resolved catalog row to persist. Resolution
@@ -79,6 +90,7 @@ type CreateImageInput struct {
 	Cmd               []string
 	StreamingEligible bool
 	IneligibleReason  string
+	CompressedBytes   int64
 }
 
 type ResourceSpec struct {
