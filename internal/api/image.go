@@ -65,6 +65,7 @@ func (s *Server) createImage(w http.ResponseWriter, r *http.Request) {
 		RegistryRef:       resolved.RegistryRef,
 		Entrypoint:        resolved.Entrypoint,
 		Cmd:               resolved.Cmd,
+		CompressedBytes:   resolved.CompressedBytes,
 		StreamingEligible: resolved.StreamingEligible,
 		IneligibleReason:  resolved.IneligibleReason,
 	})

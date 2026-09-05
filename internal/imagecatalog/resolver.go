@@ -32,6 +32,12 @@ type Resolved struct {
 	// API, so real eligibility can only be confirmed by watching a launch).
 	StreamingEligible bool
 	IneligibleReason  string
+	// CompressedBytes is the sum of compressed layer sizes — real, measured
+	// image size, used as the input to a conservative eager-pull-time
+	// estimate for ineligible images (see internal/api's admission deadline
+	// guard). It is not the same as GKE's actual pull bytes, which may be
+	// smaller (cached shared layers) or the same (a genuinely unique image).
+	CompressedBytes int64
 }
 
 // Resolver resolves a source image reference for admission. Implementations

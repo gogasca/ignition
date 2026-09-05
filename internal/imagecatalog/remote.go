@@ -40,7 +40,7 @@ func (RemoteResolver) Resolve(ctx context.Context, ref string) (Resolved, error)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("resolve %s: config: %w", ref, err)
 	}
-	eligible, reason, err := streamingEligibility(desc.MediaType, img)
+	eligible, reason, totalSize, err := streamingEligibility(desc.MediaType, img)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("resolve %s: layers: %w", ref, err)
 	}
@@ -51,6 +51,7 @@ func (RemoteResolver) Resolve(ctx context.Context, ref string) (Resolved, error)
 		Cmd:               cfg.Config.Cmd,
 		StreamingEligible: eligible,
 		IneligibleReason:  reason,
+		CompressedBytes:   totalSize,
 	}, nil
 }
 
@@ -59,32 +60,37 @@ func (RemoteResolver) Resolve(ctx context.Context, ref string) (Resolved, error)
 // schema version 1 are not eligible" and "Images with duplicate or empty
 // layers aren't supported; GKE downloads these without streaming." It does
 // not (and cannot, without a running cluster) confirm streaming actually
-// happens — see Resolved.StreamingEligible.
-func streamingEligibility(mediaType types.MediaType, img v1.Image) (eligible bool, reason string, err error) {
-	if mediaType.IsSchema1() {
-		return false, "schema version 1 manifest is not eligible for GKE image streaming", nil
-	}
+// happens — see Resolved.StreamingEligible. It also sums compressed layer
+// size in the same walk, for Resolved.CompressedBytes.
+func streamingEligibility(mediaType types.MediaType, img v1.Image) (eligible bool, reason string, totalSize int64, err error) {
 	layers, err := img.Layers()
 	if err != nil {
-		return false, "", err
+		return false, "", 0, err
 	}
 	seen := map[v1.Hash]bool{}
+	eligible, reason = true, ""
+	if mediaType.IsSchema1() {
+		eligible, reason = false, "schema version 1 manifest is not eligible for GKE image streaming"
+	}
 	for _, l := range layers {
 		digest, err := l.Digest()
 		if err != nil {
-			return false, "", err
+			return false, "", 0, err
 		}
 		size, err := l.Size()
 		if err != nil {
-			return false, "", err
+			return false, "", 0, err
+		}
+		totalSize += size
+		if !eligible {
+			continue
 		}
 		if size == 0 {
-			return false, "image has an empty layer, which GKE downloads without streaming", nil
-		}
-		if seen[digest] {
-			return false, "image has a duplicate layer, which GKE downloads without streaming", nil
+			eligible, reason = false, "image has an empty layer, which GKE downloads without streaming"
+		} else if seen[digest] {
+			eligible, reason = false, "image has a duplicate layer, which GKE downloads without streaming"
 		}
 		seen[digest] = true
 	}
-	return true, "", nil
+	return eligible, reason, totalSize, nil
 }

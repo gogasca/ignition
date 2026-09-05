@@ -8,7 +8,7 @@ import (
 )
 
 const imageCols = `project_id, image_id, state, state_reason, source_ref, digest, registry_ref,
-	entrypoint, cmd, streaming_eligible, ineligible_reason, create_time`
+	entrypoint, cmd, streaming_eligible, ineligible_reason, compressed_bytes, launch_count, create_time`
 
 // scanImageRow scans imageCols without mapping the error, so callers can
 // apply their own error semantics (a duplicate row means something different
@@ -18,7 +18,7 @@ func scanImageRow(scan func(dest ...any) error) (Image, error) {
 	var entrypoint, cmd []byte
 	err := scan(
 		&img.ProjectID, &img.ImageID, &img.State, &img.StateReason, &img.SourceRef, &img.Digest, &img.RegistryRef,
-		&entrypoint, &cmd, &img.StreamingEligible, &img.IneligibleReason, &img.CreateTime,
+		&entrypoint, &cmd, &img.StreamingEligible, &img.IneligibleReason, &img.CompressedBytes, &img.LaunchCount, &img.CreateTime,
 	)
 	if err != nil {
 		return Image{}, err
@@ -43,11 +43,11 @@ func (p *Postgres) CreateImage(ctx context.Context, in CreateImageInput) (Image,
 		return Image{}, err
 	}
 	row := tx.QueryRow(ctx, `
-		INSERT INTO images (project_id, image_id, state, source_ref, digest, registry_ref, entrypoint, cmd, streaming_eligible, ineligible_reason)
-		VALUES ($1, $2, 'READY', $3, $4, $5, $6, $7, $8, $9)
+		INSERT INTO images (project_id, image_id, state, source_ref, digest, registry_ref, entrypoint, cmd, streaming_eligible, ineligible_reason, compressed_bytes)
+		VALUES ($1, $2, 'READY', $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING `+imageCols,
 		in.ProjectID, in.ImageID, in.SourceRef, in.Digest, in.RegistryRef, jsonSlice(in.Entrypoint), jsonSlice(in.Cmd),
-		in.StreamingEligible, in.IneligibleReason,
+		in.StreamingEligible, in.IneligibleReason, in.CompressedBytes,
 	)
 	img, err := scanImageRow(row.Scan)
 	if err != nil {
@@ -70,4 +70,33 @@ func (p *Postgres) GetImage(ctx context.Context, projectID, imageID string) (Ima
 		return Image{}, mapErr(err)
 	}
 	return img, nil
+}
+
+// TopImagesByLaunchCount returns a project's images ordered by measured
+// launch demand, most-launched first. This is the input a secondary
+// boot-disk cache-epoch build selects from (see
+// docs/design/ignition-design-images-startup.md — "cache large, shared,
+// immutable OCI layers selected by measured launch demand"); nothing in
+// Ignition reads this back for scheduling yet, so it is operator tooling,
+// not part of the Store/ControllerStore interfaces.
+func (p *Postgres) TopImagesByLaunchCount(ctx context.Context, projectID string, limit int) ([]Image, error) {
+	if limit <= 0 {
+		limit = 10
+	}
+	rows, err := p.pool.Query(ctx,
+		`SELECT `+imageCols+` FROM images WHERE project_id=$1 ORDER BY launch_count DESC, image_id ASC LIMIT $2`,
+		projectID, limit)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []Image
+	for rows.Next() {
+		img, err := scanImageRow(rows.Scan)
+		if err != nil {
+			return nil, err
+		}
+		out = append(out, img)
+	}
+	return out, rows.Err()
 }

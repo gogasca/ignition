@@ -14,7 +14,7 @@ api/openapi/          HTTP/JSON stub (kept in sync with protos)
 internal/store/schema.sql  complete Cloud SQL schema (embedded by the API)
 deploy/               GKE manifests and Terraform
 images/sandbox-init/  container image for the in-sandbox supervisor
-sdks/                 Python and TypeScript public-API clients and batch runners
+sdks/                 Python and TypeScript clients
 docs/design/          architecture documents
 docs/guides/          build and deploy runbook
 ```
@@ -23,7 +23,7 @@ docs/guides/          build and deploy runbook
 
 | Binary | Current status |
 |---|---|
-| `ignition-api` | Implemented HTTP/JSON API for sandbox, process, and operation state. Owns auth, admission, quota, and idempotency; has no Kubernetes RBAC. |
+| `ignition-api` | Implemented HTTP/JSON API for sandbox, process, and operation state, plus a v0 image admission endpoint (`POST/GET /v1/projects/{project}/images`) that pins a client-given registry reference to a digest. Owns auth, admission, quota, and idempotency; has no Kubernetes RBAC. The image resolver does not yet restrict which registry host it will contact — see [Image Data Layer](docs/design/ignition-design-image-datalayer.md#security-status). |
 | `ignition-controller` | Implements the `STANDARD` GKE reconciliation path and is the only component with Pod/Node RBAC. `BARE_METAL` currently fails closed. |
 | `sandbox-init` | In-sandbox liveness and accelerator readiness on port 8081 (`IGNITION_ACCELERATOR`: single-GPU check for `NVIDIA_L4`, supervisor-up for `NONE`). Process supervision is not implemented yet. |
 | `ignition-gateway` | Stub; exec-stream transport is not shipped. |

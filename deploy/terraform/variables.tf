@@ -120,6 +120,25 @@ variable "sandbox_max_nodes" {
   default = 3
 }
 
+# Secondary boot-disk cache-epoch pool (docs/design/ignition-design-images-startup.md
+# — "GKE secondary boot-disk cache"). The disk image referenced here is built
+# offline (gcloud compute images create ... from a VM whose containerd has
+# pulled the images.TopImagesByLaunchCount(project, K) result, then following
+# https://docs.cloud.google.com/kubernetes-engine/docs/how-to/data-container-image-preloading
+# to produce a CONTAINER_IMAGE_CACHE-mode secondary boot disk image) — nothing
+# in this Terraform module builds it. Leaving this unset creates no resource
+# at all, so an unconfigured environment is unaffected.
+variable "gpu_cache_epoch_disk_image" {
+  type        = string
+  default     = ""
+  description = "Fully-qualified disk image (projects/PROJECT/global/images/NAME) for the gpu-sandbox-l4 cache-epoch pool's CONTAINER_IMAGE_CACHE secondary boot disk. Empty disables the pool."
+}
+
+variable "gpu_cache_epoch_max_nodes" {
+  type    = number
+  default = 2
+}
+
 variable "deletion_protection" {
   type    = bool
   default = false

@@ -91,6 +91,7 @@ func (m *Memory) CreateImage(_ context.Context, in CreateImageInput) (Image, err
 		Cmd:               in.Cmd,
 		StreamingEligible: in.StreamingEligible,
 		IneligibleReason:  in.IneligibleReason,
+		CompressedBytes:   in.CompressedBytes,
 		CreateTime:        time.Now().UTC(),
 	}
 	m.images[key] = img
@@ -105,6 +106,34 @@ func (m *Memory) GetImage(_ context.Context, projectID, imageID string) (Image, 
 		return Image{}, ErrNotFound
 	}
 	return img, nil
+}
+
+// TopImagesByLaunchCount returns a project's images ordered by measured
+// launch demand, most-launched first. See the Postgres implementation for
+// what this feeds and why it is operator tooling, not part of the
+// Store/ControllerStore interfaces.
+func (m *Memory) TopImagesByLaunchCount(_ context.Context, projectID string, limit int) ([]Image, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if limit <= 0 {
+		limit = 10
+	}
+	var out []Image
+	for _, img := range m.images {
+		if img.ProjectID == projectID {
+			out = append(out, img)
+		}
+	}
+	sort.Slice(out, func(i, j int) bool {
+		if out[i].LaunchCount != out[j].LaunchCount {
+			return out[i].LaunchCount > out[j].LaunchCount
+		}
+		return out[i].ImageID < out[j].ImageID
+	})
+	if len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 func (m *Memory) SeedSecret(projectID, secretID string) {
@@ -249,6 +278,14 @@ func (m *Memory) CreateSandbox(_ context.Context, in CreateSandboxInput) (Create
 	if m.quotaActive[in.ProjectID] >= max {
 		delete(m.idem, slot)
 		return CreateSandboxResult{}, ErrQuotaExceeded
+	}
+
+	// Every remaining check has passed; this create will succeed, so this is
+	// the one point safe to count it as a real launch (Postgres does the
+	// equivalent atomically inside its transaction — see CreateSandbox there).
+	if img, ok := m.images[imgKey(in.ProjectID, in.ImageID)]; ok {
+		img.LaunchCount++
+		m.images[imgKey(in.ProjectID, in.ImageID)] = img
 	}
 
 	now := time.Now().UTC()

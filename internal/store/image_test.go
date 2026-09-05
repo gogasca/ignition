@@ -18,6 +18,7 @@ func TestMemoryCreateImageRoundTrip(t *testing.T) {
 		Entrypoint:        []string{"/docker-entrypoint.sh"},
 		Cmd:               []string{"nginx", "-g", "daemon off;"},
 		StreamingEligible: true,
+		CompressedBytes:   12345,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -27,6 +28,12 @@ func TestMemoryCreateImageRoundTrip(t *testing.T) {
 	}
 	if !img.StreamingEligible {
 		t.Fatal("streamingEligible not persisted")
+	}
+	if img.CompressedBytes != 12345 {
+		t.Fatalf("compressedBytes = %d, want 12345", img.CompressedBytes)
+	}
+	if img.LaunchCount != 0 {
+		t.Fatalf("launchCount = %d, want 0 for a never-launched image", img.LaunchCount)
 	}
 	got, err := m.GetImage(ctx, "prj_dev", "img_nginx")
 	if err != nil {
@@ -97,6 +104,82 @@ func TestMemorySeedImageIsCatalogCompatible(t *testing.T) {
 	}
 	if got.RegistryRef != "" {
 		t.Fatalf("seeded image must have no pinned RegistryRef, got %q", got.RegistryRef)
+	}
+}
+
+func TestMemoryLaunchCountIncrementsOnlyOnSuccessfulCreateSandbox(t *testing.T) {
+	m := store.NewMemory()
+	ctx := context.Background()
+	m.SeedImage("prj_dev", "img_a")
+	in := func(key string) store.CreateSandboxInput {
+		return store.CreateSandboxInput{
+			ProjectID: "prj_dev", Principal: "alice", IdemKey: key, IdemHash: key,
+			ImageID: "img_a", Resources: spec(), MaxActive: 10,
+		}
+	}
+	if _, err := m.CreateSandbox(ctx, in("k1")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := m.CreateSandbox(ctx, in("k2")); err != nil {
+		t.Fatal(err)
+	}
+	// A failed create (unknown image) must not increment any counter.
+	failing := in("k3")
+	failing.ImageID = "img_missing"
+	if _, err := m.CreateSandbox(ctx, failing); !errors.Is(err, store.ErrImageNotReady) {
+		t.Fatalf("err = %v, want ErrImageNotReady", err)
+	}
+	got, err := m.GetImage(ctx, "prj_dev", "img_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LaunchCount != 2 {
+		t.Fatalf("launchCount = %d, want 2", got.LaunchCount)
+	}
+}
+
+func TestMemoryTopImagesByLaunchCount(t *testing.T) {
+	m := store.NewMemory()
+	ctx := context.Background()
+	m.SeedImage("prj_dev", "img_low")
+	m.SeedImage("prj_dev", "img_high")
+	m.SeedImage("prj_dev", "img_mid")
+	m.SeedImage("prj_other", "img_other") // a different project must not appear
+	launch := func(projectID, imageID string, n int) {
+		for i := 0; i < n; i++ {
+			key := projectID + "-" + imageID + "-" + string(rune('a'+i))
+			if _, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
+				ProjectID: projectID, Principal: "alice", IdemKey: key, IdemHash: key,
+				ImageID: imageID, Resources: spec(), MaxActive: 100,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	launch("prj_dev", "img_low", 1)
+	launch("prj_dev", "img_high", 3)
+	launch("prj_dev", "img_mid", 2)
+	// Launched many times, but under a different project: must never outrank
+	// prj_dev's own images in prj_dev's top-K.
+	launch("prj_other", "img_other", 5)
+
+	top, err := m.TopImagesByLaunchCount(ctx, "prj_dev", 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(top) != 2 {
+		t.Fatalf("top = %+v, want 2 results", top)
+	}
+	if top[0].ImageID != "img_high" || top[0].LaunchCount != 3 {
+		t.Fatalf("top[0] = %+v", top[0])
+	}
+	if top[1].ImageID != "img_mid" || top[1].LaunchCount != 2 {
+		t.Fatalf("top[1] = %+v", top[1])
+	}
+	for _, img := range top {
+		if img.ProjectID != "prj_dev" {
+			t.Fatalf("cross-project leak: %+v", img)
+		}
 	}
 }
 

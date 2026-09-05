@@ -81,6 +81,7 @@ func TestPostgresCreateImageRoundTrip(t *testing.T) {
 		Entrypoint:        []string{"/docker-entrypoint.sh"},
 		Cmd:               []string{"nginx", "-g", "daemon off;"},
 		StreamingEligible: true,
+		CompressedBytes:   12345,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -90,6 +91,12 @@ func TestPostgresCreateImageRoundTrip(t *testing.T) {
 	}
 	if !img.StreamingEligible {
 		t.Fatal("streamingEligible not persisted")
+	}
+	if img.CompressedBytes != 12345 {
+		t.Fatalf("compressedBytes = %d, want 12345", img.CompressedBytes)
+	}
+	if img.LaunchCount != 0 {
+		t.Fatalf("launchCount = %d, want 0", img.LaunchCount)
 	}
 	if img.CreateTime.IsZero() {
 		t.Fatal("createTime not set")
@@ -165,6 +172,82 @@ func TestPostgresSeedImageIsCatalogCompatible(t *testing.T) {
 	}
 	if got.RegistryRef != "" {
 		t.Fatalf("seeded image must have no pinned RegistryRef, got %q", got.RegistryRef)
+	}
+}
+
+func TestPostgresLaunchCountIncrementsOnlyOnSuccessfulCreateSandbox(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	p.SeedImage(project, "img_a")
+	in := func(key string) store.CreateSandboxInput {
+		return store.CreateSandboxInput{
+			ProjectID: project, Principal: "alice", IdemKey: key, IdemHash: key,
+			ImageID: "img_a", Resources: spec(), MaxActive: 10,
+		}
+	}
+	if _, err := p.CreateSandbox(ctx, in("k1")); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := p.CreateSandbox(ctx, in("k2")); err != nil {
+		t.Fatal(err)
+	}
+	failing := in("k3")
+	failing.ImageID = "img_missing"
+	if _, err := p.CreateSandbox(ctx, failing); !errors.Is(err, store.ErrImageNotReady) {
+		t.Fatalf("err = %v, want ErrImageNotReady", err)
+	}
+	got, err := p.GetImage(ctx, project, "img_a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.LaunchCount != 2 {
+		t.Fatalf("launchCount = %d, want 2", got.LaunchCount)
+	}
+}
+
+func TestPostgresTopImagesByLaunchCount(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	other := "prj_pg_other_" + t.Name()
+	p.SeedImage(project, "img_low")
+	p.SeedImage(project, "img_high")
+	p.SeedImage(project, "img_mid")
+	p.SeedImage(other, "img_other")
+	launch := func(projectID, imageID string, n int) {
+		for i := 0; i < n; i++ {
+			key := projectID + "-" + imageID + "-" + string(rune('a'+i))
+			if _, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
+				ProjectID: projectID, Principal: "alice", IdemKey: key, IdemHash: key,
+				ImageID: imageID, Resources: spec(), MaxActive: 100,
+			}); err != nil {
+				t.Fatal(err)
+			}
+		}
+	}
+	launch(project, "img_low", 1)
+	launch(project, "img_high", 3)
+	launch(project, "img_mid", 2)
+	launch(other, "img_other", 5)
+
+	top, err := p.TopImagesByLaunchCount(ctx, project, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(top) != 2 {
+		t.Fatalf("top = %+v, want 2 results", top)
+	}
+	if top[0].ImageID != "img_high" || top[0].LaunchCount != 3 {
+		t.Fatalf("top[0] = %+v", top[0])
+	}
+	if top[1].ImageID != "img_mid" || top[1].LaunchCount != 2 {
+		t.Fatalf("top[1] = %+v", top[1])
+	}
+	for _, img := range top {
+		if img.ProjectID != project {
+			t.Fatalf("cross-project leak: %+v", img)
+		}
 	}
 }
 

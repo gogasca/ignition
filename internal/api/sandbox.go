@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/json"
 	"fmt"
@@ -47,6 +48,10 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error(), false, 0)
 		return
 	}
+	if msg, fits := s.fitsEagerPullDeadline(r.Context(), project, in); !fits {
+		writeStatus(w, rid, http.StatusBadRequest, "IMAGE_UNAVAILABLE", msg, false, 0)
+		return
+	}
 	hash := canonicalHash(r.Method, r.URL.Path, raw)
 	res, err := s.store.CreateSandbox(r.Context(), store.CreateSandboxInput{
 		ProjectID:        project,
@@ -78,6 +83,41 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 	w.Header().Set("Location", fmt.Sprintf("/v1/projects/%s/sandboxes/%s", project, res.Sandbox.ID))
 	w.Header().Set("Retry-After", "1")
 	writeJSON(w, http.StatusAccepted, map[string]any{"sandbox": res.Sandbox, "operation": res.Operation})
+}
+
+// fitsEagerPullDeadline rejects a create before it can consume a warm-node
+// cycle and quota only when the image is known (from admission) to be
+// streaming-ineligible and its estimated eager pull time exceeds the
+// request's own startupSeconds — see
+// docs/design/ignition-design-images-startup.md: "If its measured pull
+// cannot fit the sandbox startup deadline, creation fails early... rather
+// than remaining ambiguously stuck." The estimate is not a measurement: no
+// launch has ever been observed in this deployment, so this is a
+// conservative size/assumed-bandwidth calculation only (see
+// Config.AssumedEagerPullMBps), and a lookup failure or an eligible/unsized
+// image always passes — this check only ever adds a fast, explicit failure
+// for a case that would otherwise silently time out later.
+func (s *Server) fitsEagerPullDeadline(ctx context.Context, projectID string, in store.CreateSandboxInput) (msg string, fits bool) {
+	img, err := s.store.GetImage(ctx, projectID, in.ImageID)
+	if err != nil || img.StreamingEligible || img.CompressedBytes <= 0 {
+		return "", true
+	}
+	estimate := estimatedEagerPullSeconds(img.CompressedBytes, s.cfg.AssumedEagerPullMBps)
+	deadline := float64(in.Timeouts.StartupSeconds)
+	if deadline <= 0 || estimate <= deadline {
+		return "", true
+	}
+	return fmt.Sprintf(
+		"image %q is not eligible for GKE image streaming (%s) and its estimated eager pull (%.0fs, at an assumed %.0f MB/s) exceeds startupSeconds (%.0fs)",
+		in.ImageID, img.IneligibleReason, estimate, s.cfg.AssumedEagerPullMBps, deadline,
+	), false
+}
+
+// estimatedEagerPullSeconds is a conservative estimate only: compressedBytes
+// is real (measured at admission), mbps is an assumed placeholder throughput
+// (Config.AssumedEagerPullMBps), not a measurement of any actual pull.
+func estimatedEagerPullSeconds(compressedBytes int64, mbps float64) float64 {
+	return float64(compressedBytes) / (mbps * 1_000_000)
 }
 
 func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {

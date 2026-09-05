@@ -492,7 +492,13 @@ application work.
 ## Rollout
 
 1. Implement digest admission, regional import, streaming eligibility, signed
-   catalog publication, and startup-stage metrics on GKE.
+   catalog publication, and startup-stage metrics on GKE. **Partially shipped:**
+   digest admission (source-registry resolve only, no regional import),
+   streaming eligibility, and startup-stage metrics have a v0 slice in
+   `internal/imagecatalog` and `ignition_sandbox_stage_latency_seconds`; regional
+   import and signed catalog publication remain undone — see
+   [Image Data Layer — Security status](ignition-design-image-datalayer.md#security-status)
+   for the gap the missing registry-identity verification currently leaves open.
 2. Measure managed streaming against eager pulls over a representative corpus of
    arbitrary images.
 3. Add secondary boot-disk cache epochs for stable high-demand image sets.

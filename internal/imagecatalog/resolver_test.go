@@ -69,6 +69,9 @@ func TestRemoteResolverAgainstRealRegistry(t *testing.T) {
 	if !got.StreamingEligible || got.IneligibleReason != "" {
 		t.Fatalf("streaming eligibility = %v %q, want an ordinary public image to be eligible", got.StreamingEligible, got.IneligibleReason)
 	}
+	if got.CompressedBytes <= 0 {
+		t.Fatalf("compressedBytes = %d, want > 0 for a real image", got.CompressedBytes)
+	}
 	if got.Digest == "" || got.RegistryRef == "" {
 		t.Fatalf("resolved = %+v", got)
 	}

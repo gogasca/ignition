@@ -63,6 +63,16 @@ type Config struct {
 	NodeProvisionTime   time.Duration
 	GCPProject          string
 	SandboxImagePrefix  string
+	// AssumedEagerPullMBps is a conservative, unmeasured placeholder pull
+	// throughput used only to estimate whether a streaming-ineligible
+	// image's eager pull can plausibly fit a sandbox's startupSeconds
+	// before CreateSandbox is even attempted (see internal/api's
+	// estimatedEagerPullSeconds). It is not a measured value — no launch has
+	// ever been observed in this deployment — and must be replaced by a
+	// real per-region/per-node-class measurement per
+	// docs/design/ignition-design-images-startup.md's adaptive strategy
+	// selection once that data exists.
+	AssumedEagerPullMBps float64
 	// DefaultRuntime fills any RuntimeSpec field a CreateSandbox request
 	// leaves unset. Overridden by IGNITION_DEFAULT_RUNTIME (JSON); the
 	// built-in fallback is a CPU-only sandbox.
@@ -137,17 +147,18 @@ func Load() (Config, error) {
 		EnabledRegion:     getenv("IGNITION_REGION", "us-central1"),
 		AllowedAccelerators: splitCSV(getenv("IGNITION_ALLOWED_ACCELERATORS",
 			getenv("IGNITION_ALLOWED_GPU_TYPES", defaultAccelerators))),
-		MaxActiveSandboxes: maxActive,
-		KubeconfigPath:     os.Getenv("KUBECONFIG"),
-		K8sNamespace:       getenv("IGNITION_K8S_NAMESPACE", "ignition-sandboxes"),
-		MinWarm:            minWarm,
-		MaxWarm:            maxWarm,
-		MinWarmCPU:         minWarmCPU,
-		MaxWarmCPU:         maxWarmCPU,
-		WarmWindow:         warmWindow,
-		NodeProvisionTime:  nodeProvisionTime,
-		GCPProject:         strings.TrimSpace(os.Getenv("IGNITION_GCP_PROJECT")),
-		SandboxImagePrefix: strings.TrimSpace(os.Getenv("IGNITION_SANDBOX_IMAGE_PREFIX")),
+		MaxActiveSandboxes:   maxActive,
+		KubeconfigPath:       os.Getenv("KUBECONFIG"),
+		K8sNamespace:         getenv("IGNITION_K8S_NAMESPACE", "ignition-sandboxes"),
+		MinWarm:              minWarm,
+		MaxWarm:              maxWarm,
+		MinWarmCPU:           minWarmCPU,
+		MaxWarmCPU:           maxWarmCPU,
+		WarmWindow:           warmWindow,
+		NodeProvisionTime:    nodeProvisionTime,
+		GCPProject:           strings.TrimSpace(os.Getenv("IGNITION_GCP_PROJECT")),
+		SandboxImagePrefix:   strings.TrimSpace(os.Getenv("IGNITION_SANDBOX_IMAGE_PREFIX")),
+		AssumedEagerPullMBps: floatEnv("IGNITION_ASSUMED_EAGER_PULL_MBPS", 50),
 	}
 	rt, err := parseDefaultRuntime(os.Getenv("IGNITION_DEFAULT_RUNTIME"))
 	if err != nil {
@@ -182,6 +193,9 @@ func parseDefaultRuntime(raw string) (store.RuntimeSpec, error) {
 func (c Config) Validate() error {
 	if c.MinWarm < 0 || c.MaxWarm < 0 || c.MinWarm > c.MaxWarm {
 		return fmt.Errorf("IGNITION_MIN_WARM (%d) and IGNITION_MAX_WARM (%d) must satisfy 0 <= min <= max", c.MinWarm, c.MaxWarm)
+	}
+	if c.AssumedEagerPullMBps <= 0 {
+		return fmt.Errorf("IGNITION_ASSUMED_EAGER_PULL_MBPS (%v) must be > 0", c.AssumedEagerPullMBps)
 	}
 	if c.MinWarmCPU < 0 || c.MaxWarmCPU < 0 || c.MinWarmCPU > c.MaxWarmCPU {
 		return fmt.Errorf("IGNITION_MIN_WARM_CPU (%d) and IGNITION_MAX_WARM_CPU (%d) must satisfy 0 <= min <= max", c.MinWarmCPU, c.MaxWarmCPU)
@@ -321,6 +335,15 @@ func atoiEnv(key string, fallback int) int {
 	if v := os.Getenv(key); v != "" {
 		if n, err := strconv.Atoi(v); err == nil {
 			return n
+		}
+	}
+	return fallback
+}
+
+func floatEnv(key string, fallback float64) float64 {
+	if v := os.Getenv(key); v != "" {
+		if f, err := strconv.ParseFloat(v, 64); err == nil {
+			return f
 		}
 	}
 	return fallback

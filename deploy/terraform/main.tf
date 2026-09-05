@@ -450,6 +450,64 @@ resource "google_container_node_pool" "gpu_sandbox" {
   depends_on = [google_project_iam_member.nodes]
 }
 
+# Cache-epoch generation of the GPU sandbox pool: identical to gpu_sandbox
+# except for its CONTAINER_IMAGE_CACHE secondary boot disk and node-pool
+# label. Ignition's own scheduling does not yet select this pool (see the
+# rollout note in docs/design/ignition-design-images-startup.md's secondary
+# boot-disk section) — it exists so an operator can build and roll a cache
+# epoch by creating a new instance of this resource (a new node-pool
+# generation, blue/green, per the design) without hand-writing Kubernetes
+# YAML. It creates nothing until gpu_cache_epoch_disk_image is set.
+resource "google_container_node_pool" "gpu_sandbox_cache_epoch" {
+  count    = var.gpu_cache_epoch_disk_image != "" ? 1 : 0
+  name     = "gpu-sandbox-l4-cache-epoch"
+  project  = var.project_id
+  location = google_container_cluster.main.location
+  cluster  = google_container_cluster.main.name
+
+  autoscaling {
+    total_min_node_count = 0
+    total_max_node_count = var.gpu_cache_epoch_max_nodes
+  }
+  management {
+    auto_repair  = true
+    auto_upgrade = true
+  }
+  node_config {
+    machine_type    = var.gpu_sandbox_machine_type
+    image_type      = "COS_CONTAINERD"
+    service_account = google_service_account.nodes.email
+    oauth_scopes    = ["https://www.googleapis.com/auth/cloud-platform"]
+    labels          = { "ignition.io/node-pool" = "gpu-sandbox-l4-cache-epoch" }
+    tags            = [var.node_network_tag]
+    disk_type       = "pd-balanced"
+    disk_size_gb    = 100
+    metadata        = { "disable-legacy-endpoints" = "true" }
+    gcfs_config { enabled = true }
+    workload_metadata_config { mode = "GKE_METADATA" }
+    sandbox_config { type = "gvisor" }
+    guest_accelerator {
+      type  = "nvidia-l4"
+      count = 1
+      gpu_driver_installation_config { gpu_driver_version = "DEFAULT" }
+    }
+    secondary_boot_disks {
+      disk_image = var.gpu_cache_epoch_disk_image
+      mode       = "CONTAINER_IMAGE_CACHE"
+    }
+    taint {
+      key    = "ignition.io/gpu-sandbox"
+      value  = "true"
+      effect = "NO_SCHEDULE"
+    }
+    shielded_instance_config {
+      enable_secure_boot          = true
+      enable_integrity_monitoring = true
+    }
+  }
+  depends_on = [google_project_iam_member.nodes]
+}
+
 resource "google_container_node_pool" "cpu_sandbox_internet" {
   name     = "cpu-sandbox-internet"
   project  = var.project_id

@@ -70,7 +70,7 @@ func TestLoadDevAllowsMissingDatabase(t *testing.T) {
 }
 
 func TestValidateProdWithoutDSN(t *testing.T) {
-	err := config.Config{Env: "prod"}.Validate()
+	err := config.Config{Env: "prod", AssumedEagerPullMBps: 50}.Validate()
 	if err == nil || !strings.Contains(err.Error(), "refusing in-memory store") {
 		t.Fatalf("err = %v", err)
 	}
@@ -108,6 +108,37 @@ func TestLoadMaxWarmZeroDisablesPool(t *testing.T) {
 	}
 	if cfg.MinWarm != 0 || cfg.MaxWarm != 0 {
 		t.Fatalf("warm bounds = %d/%d, want 0/0", cfg.MinWarm, cfg.MaxWarm)
+	}
+}
+
+func TestLoadAssumedEagerPullMBpsDefault(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AssumedEagerPullMBps != 50 {
+		t.Fatalf("AssumedEagerPullMBps = %v, want 50", cfg.AssumedEagerPullMBps)
+	}
+}
+
+func TestLoadAssumedEagerPullMBpsOverride(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_ASSUMED_EAGER_PULL_MBPS", "120")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if cfg.AssumedEagerPullMBps != 120 {
+		t.Fatalf("AssumedEagerPullMBps = %v, want 120", cfg.AssumedEagerPullMBps)
+	}
+}
+
+func TestLoadRejectsNonPositiveAssumedEagerPullMBps(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_ASSUMED_EAGER_PULL_MBPS", "0")
+	if _, err := config.Load(); err == nil || !strings.Contains(err.Error(), "IGNITION_ASSUMED_EAGER_PULL_MBPS") {
+		t.Fatalf("err = %v", err)
 	}
 }
 

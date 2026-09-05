@@ -101,8 +101,15 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 		if err := ensureProject(ctx, tx, in.ProjectID); err != nil {
 			return err
 		}
+		// Increment launch_count unconditionally here: the whole transaction
+		// (this UPDATE included) rolls back unless the function returns nil,
+		// so a non-READY image or any later failure (secrets, quota) never
+		// persists a count. Combining the readiness check with the increment
+		// avoids a second round trip.
 		var imgState string
-		err = tx.QueryRow(ctx, `SELECT state FROM images WHERE project_id=$1 AND image_id=$2`, in.ProjectID, in.ImageID).Scan(&imgState)
+		err = tx.QueryRow(ctx,
+			`UPDATE images SET launch_count = launch_count + 1 WHERE project_id=$1 AND image_id=$2 RETURNING state`,
+			in.ProjectID, in.ImageID).Scan(&imgState)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrImageNotReady
