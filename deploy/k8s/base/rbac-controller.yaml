@@ -42,7 +42,11 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [nodes]
-    verbs: [get, list, patch]
+    # update (not just patch) is required by k8s.Cluster.SetGPUReusePending,
+    # which does a read-modify-write Update of spec.taints (a JSON merge
+    # patch would silently drop the infra-set gpu-sandbox taint on that field
+    # instead of just adding/removing the reuse-pending one).
+    verbs: [get, list, patch, update]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

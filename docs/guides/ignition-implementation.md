@@ -202,7 +202,7 @@ Loop: list sandboxes; `BARE_METAL` currently fails with `COMPUTE_ENVIRONMENT_UNA
 
 `ignition-gpu-agent` is a privileged DaemonSet on the `gpu-sandbox-l4` pool (`deploy/k8s/components/gpu-agent`, `IGNITION_NODE_NAME` from `spec.nodeName`, `nvidia-smi` from the hostPath driver mount, no `nvidia.com/gpu`). Each pass: if a sandbox Pod is on its node it inventories the single GPU (`nvidia-smi` NVML) and — when healthy, canonical-UUID, and free of residual compute processes — patches the attestation annotations; otherwise it annotates the Node `ignition.io/gpu-cleanup=ambiguous`. With no sandbox Pod it runs the same check as a reuse gate and sets/clears that Node annotation.
 
-Controller RBAC: Pods in `ignition-sandboxes`; ClusterRole get/list/patch Nodes. No cluster-admin. API KSA has **no** Kubernetes RBAC.
+Controller RBAC: Pods in `ignition-sandboxes`; ClusterRole get/list/patch/update Nodes. No cluster-admin. API KSA has **no** Kubernetes RBAC.
 
 ### `ignitionctl`
 
@@ -599,7 +599,7 @@ The intended IAM boundary is:
 | `ignition-api` GSA | `roles/cloudsql.client`; impersonation only from `ignition-system/ignition-api` | Kubernetes RBAC, Secret Manager, Artifact Registry |
 | `ignition-controller` GSA | `roles/cloudsql.client`, `roles/secretmanager.secretAccessor`; impersonation only from `ignition-system/ignition-controller` | Artifact Registry administration, broad Kubernetes IAM |
 | `ignition-nodes` GSA | `roles/container.defaultNodeServiceAccount`; repository-level Artifact Registry reader | Editor, Cloud SQL, Secret Manager |
-| `ignition-controller` KSA | Namespaced sandbox Pod RBAC; node `get`, `list`, `patch` | Secrets, workloads in other namespaces, cluster-admin |
+| `ignition-controller` KSA | Namespaced sandbox Pod RBAC; node `get`, `list`, `patch`, `update` | Secrets, workloads in other namespaces, cluster-admin |
 | API, gateway, sandbox KSAs | No Kubernetes RBAC | Controller permissions and Google Cloud workload identity for gateway/sandboxes |
 
 Project-level Secret Manager access is currently necessary because the API accepts project-local `secretRefs` dynamically. Use a dedicated Ignition GCP project that contains no unrelated secrets. If deployments use a fixed secret inventory, replace the project binding with `roles/secretmanager.secretAccessor` bindings on only those Secret Manager resources.
@@ -655,6 +655,18 @@ apiVersion: scheduling.k8s.io/v1
 kind: PriorityClass
 metadata: { name: ignition-balloon }
 value: -10
+globalDefault: false
+---
+# ignition-gpu-agent's non-reserved equivalent of system-node-critical: GKE's
+# gcp-critical-pods quota reserves system-node-critical/system-cluster-critical
+# for kube-system/gke-managed-system only, and silently blocks any Pod
+# requesting them elsewhere (DaemonSet desired count stays 0, no scheduling
+# error surfaced). Value is above every sandbox/balloon priority so the
+# attestation agent is never preempted by tenant workloads.
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata: { name: ignition-infra-critical }
+value: 1000000
 globalDefault: false
 EOF
 ```
