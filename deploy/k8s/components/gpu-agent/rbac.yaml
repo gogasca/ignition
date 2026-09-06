@@ -2,7 +2,7 @@
 # GPU attestation annotations onto it, and to annotate its Node after a failed
 # reuse check. Both are scoped as tightly as RBAC allows: pods only in the
 # sandbox namespace, nodes cluster-wide (nodes are not namespaced and cannot be
-# selected by label in RBAC) with get/list/patch only.
+# selected by label in RBAC) with get/list/patch/update only.
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -43,7 +43,11 @@ metadata:
 rules:
   - apiGroups: [""]
     resources: [nodes]
-    verbs: [get, list, patch]
+    # update (not just patch) is required by k8s.Cluster.SetGPUReusePending,
+    # which does a read-modify-write Update of spec.taints (a JSON merge
+    # patch would silently drop the infra-set gpu-sandbox taint on that field
+    # instead of just adding/removing the reuse-pending one).
+    verbs: [get, list, patch, update]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRoleBinding

@@ -26,9 +26,28 @@ spec:
           operator: Equal
           value: "true"
           effect: NoSchedule
+        # GKE automatically taints every GKE Sandbox node with this key, and
+        # every node in a GPU node pool with this one — independent of the
+        # ignition.io/gpu-sandbox taint above. Without both tolerations the
+        # DaemonSet's desired count is silently 0 on this pool: it schedules
+        # nowhere and no GPU sandbox can ever attest.
+        - key: sandbox.gke.io/runtime
+          operator: Equal
+          value: gvisor
+          effect: NoSchedule
+        - key: nvidia.com/gpu
+          operator: Exists
+          effect: NoSchedule
       # hostPID: see the node's CUDA processes for the residual-process check.
       hostPID: true
-      priorityClassName: system-node-critical
+      # system-node-critical and system-cluster-critical are reserved for
+      # kube-system/gke-managed-system; GKE's gcp-critical-pods quota blocks
+      # them (silently, as unschedulable with 0 desired) in any other
+      # namespace, including ignition-system. ignition-infra-critical (see the
+      # implementation guide) is this DaemonSet's own non-reserved equivalent,
+      # set above every sandbox/balloon priority so the attestation agent is
+      # never preempted by tenant workloads.
+      priorityClassName: ignition-infra-critical
       terminationGracePeriodSeconds: 10
       containers:
         - name: agent
