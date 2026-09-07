@@ -21,6 +21,7 @@ var Components = map[string][]string{
 		"internal/store/**",
 		"internal/imagecatalog/**",
 		"internal/id/**",
+		"internal/streamtoken/**",
 		"go.mod",
 		"go.sum",
 		"deploy/docker/ignition-api.Dockerfile",
@@ -47,6 +48,9 @@ var Components = map[string][]string{
 	"gateway": {
 		"cmd/ignition-gateway/**",
 		"internal/gateway/**",
+		"internal/streamtoken/**",
+		"internal/k8s/**",
+		"internal/gpuid/**",
 		"internal/config/**",
 		"internal/store/**",
 		"internal/id/**",
