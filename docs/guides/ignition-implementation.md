@@ -16,7 +16,7 @@ This is the **only** build-and-deploy runbook: one regional GKE **dev** environm
 |---|---|
 | `SandboxService` (lifecycle + process metadata) and `OperationService` | Custom GCE MIG workers |
 | Google OIDC / Cloud IAP auth, SQL project RBAC, Cloud SQL, `ignition-controller` | Digest-pinned images |
-| HTTP/JSON public edge (SSE for watch); `sandbox-init` health/GPU readiness | `ignition-gateway` Dockerfile / Ingress; process exec transport |
+| HTTP/JSON public edge (SSE for watch); `sandbox-init` health/GPU readiness + process supervision; `ignition-gateway` exec byte stream; `ignitionctl` | Public WebSocket Ingress for `ignition-gateway`; PTY allocation |
 | `secretRefs` (Secret Manager → Pod env), binary outbound internet preference | GCP network-profile provisioning for both internet modes |
 
 Public transport is **HTTP/JSON**. Protobuf is the schema; JSON field names follow proto `json_name` (lowerCamelCase). `ignition-api` must **not** call Kubernetes. The controller is the only Pod RBAC identity. They meet in Cloud SQL.
@@ -26,7 +26,7 @@ Public transport is **HTTP/JSON**. Protobuf is the schema; JSON field names foll
 - GCP project with billing. GPU capacity requires both regional **NVIDIA L4 quota** (`NVIDIA_L4_GPUS`) and global all-regions GPU quota (`GPUS_ALL_REGIONS`).
 - Go 1.26.7+, Docker, `gcloud`, `gke-gcloud-auth-plugin`, `kubectl`, `jq`, `curl`, and `openssl`. `buf` is required only if you change protos (`buf lint` works; `buf generate` is not wired — there is no `buf.gen.yaml` yet).
 - This overlay uses `IGNITION_DEV_BEARER`. Staging/prod verify Google ID tokens and (via `deploy/k8s/components/iap`) Cloud IAP assertions instead — see [Auth](#auth).
-- `ignitionctl` is a stub (`not implemented`). Use `curl` against the API.
+- `ignitionctl` is implemented (`internal/cli`); the `curl` examples still document the wire contract.
 
 Start at the repository root and fail on unset variables or failed commands:
 
@@ -206,7 +206,26 @@ Controller RBAC: Pods in `ignition-sandboxes`; ClusterRole get/list/patch/update
 
 ### `ignitionctl`
 
-The binary exists (`cmd/ignitionctl`) but every subcommand returns `not implemented`. Use the `curl` examples below.
+Implemented (`internal/cli`). Dependency-light client over the same HTTP/JSON API; the `curl` examples still document the wire contract.
+
+```bash
+ignitionctl login --server http://127.0.0.1:8080 --token "${IGNITION_DEV_BEARER}" --project prj_dev
+ignitionctl sandbox create --image img_seed --cpu 1000 --memory 2048 --wait
+ignitionctl sandbox list
+ignitionctl exec <sandbox> -- nvidia-smi        # live stdio via ignition-gateway
+ignitionctl exec --no-stream <sandbox> -- true  # poll process state instead
+ignitionctl process list <sandbox>
+ignitionctl operation watch <operation>
+ignitionctl sandbox terminate <sandbox> --wait
+```
+
+Context is stored in `~/.config/ignition/config.json` (`$IGNITION_CONFIG`); `--server`, `--project`, `-o json`, `--timeout` on every subcommand; `IGNITION_SERVER` / `IGNITION_TOKEN` / `IGNITION_PROJECT` override the file. Exit codes are stable: `2` usage, `3` not-found, `4` denied, `5` unauthenticated, and `exec` propagates the guest process exit code. `exec` streams through `ignition-gateway` when the `:attach` response carries a `gatewayUrl`, and polls otherwise (or with `--no-stream`).
+
+### `ignition-gateway`
+
+Implemented (`internal/gateway`, image `deploy/docker/ignition-gateway.Dockerfile`, manifests `deploy/k8s/base/ignition-gateway.yaml` + `rbac-gateway.yaml`). It reads the exec-stream token from `?token=` or `Authorization: Bearer` on `GET /v1/attach`, verifies it with `IGNITION_STREAM_TOKEN_SECRET` + audience `IGNITION_GATEWAY_URL` (**must equal** `ignition-api`'s), resolves the sandbox Pod by the `ignition.io/sandbox-id` label (cluster-wide Pod read), and proxies the WebSocket to `ws://<podIP>:8081/v1/processes/<id>/attach`. It holds no database access. `deploy/k8s/base/networkpolicy-sandbox-supervisor.yaml` is the only gateway↔sandbox path. A public WebSocket Ingress for it is still overlay work; overlays other than `dev` also need an `ignition-gateway` image mapping and a `IGNITION_GATEWAY_URL` ConfigMap patch.
+
+Process execution: the controller writes desired processes to the `ignition.io/process-desired` Pod annotation; a `downwardAPI` volume projects it to `/etc/ignition/pod/process-desired`, which `sandbox-init` reads (no kube credential). `sandbox-init` runs/signals/reaps the processes, serves observed state at `GET :8081/v1/processes` (the controller polls it and advances `processes.state`), and serves the byte stream at `GET :8081/v1/processes/{id}/attach`. PTY is accepted but not yet allocated.
 
 ---
 
@@ -1108,7 +1127,7 @@ Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes
 
 ## Not covered here
 
-Not built: Project/Image/Secret/Event APIs, digest-pinned images, the `ignition-gateway` image and process exec transport, `ignitionctl`, and the custom Compute Engine worker runtime. Designs: [Client API](../design/ignition-design-client-api-identity.md), [Data plane](../design/ignition-design-data-plane-networking.md).
+Not built: Secret/Event APIs, digest-pinned images, a public WebSocket Ingress for `ignition-gateway`, PTY allocation, and the custom Compute Engine worker runtime. Designs: [Client API](../design/ignition-design-client-api-identity.md), [Data plane](../design/ignition-design-data-plane-networking.md).
 
 | Item | Value |
 |---|---|

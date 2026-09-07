@@ -15,7 +15,7 @@ This is the software design for the two control-plane binaries that run on GKE:
 
 Together they implement sandbox lifecycle, process metadata, and operations on GKE Sandbox (gVisor / `nvproxy`) without the custom GCE MIG worker path.
 
-`ignition-gateway` (exec byte stream) is specified in [Data Plane and Networking](ignition-design-data-plane-networking.md). This document covers only the attach-token minting that `ignition-api` performs.
+`ignition-gateway` (exec byte stream) is implemented in `internal/gateway`; see [§6.7](#67-exec-byte-stream-ignition-gateway). The `ignition-ingress` / route-table / spool design in [Data Plane and Networking](ignition-design-data-plane-networking.md) is a future custom-runtime target, not this path.
 
 ## 2. Scope and non-goals
 
@@ -215,7 +215,24 @@ Resolve Secret Manager refs at Pod create using the controller’s Google identi
 
 ### 6.6 Process observation
 
-The controller does not proxy stdio. It publishes desired process argv/signal/cancel as the `ignition.io/process-desired` annotation and advances `processes.state` from `ignition.io/process-observed` (written by the init supervisor). Failed create of the in-sandbox process sets `FAILED` with a typed reason. Signal and cancel remain SQL desired-state until init reports `EXITED`/`FAILED`.
+The controller does not proxy stdio.
+
+- **Desired → supervisor.** The controller writes the `ignition.io/process-desired` annotation (a JSON map of `processId → {command, workingDirectory, environment, pty, signal, cancel}`). A `downwardAPI` projected volume mirrors that annotation to `/etc/ignition/pod/process-desired` inside the sandbox; `sandbox-init` reads the file on a poll loop. The sandbox holds no Kubernetes credentials.
+- **Observed → controller.** `sandbox-init` runs and reaps the tenant processes and serves the observed state at `GET :8081/v1/processes` (`{processes: {processId → {state, exitCode, signal}}}`). The controller polls that endpoint over the Pod network each reconcile, advances `processes.state`, and mirrors the result into `ignition.io/process-observed` for visibility. A NetworkPolicy is the only controller↔sandbox path.
+
+Failed create of the in-sandbox process sets `FAILED` with a typed reason. Signal and cancel remain SQL desired-state until the supervisor reports `EXITED`/`FAILED`. PTY processes are accepted by the API but the supervisor does not allocate a PTY yet.
+
+### 6.7 Exec byte stream (`ignition-gateway`)
+
+`ignition-gateway` is the data plane for stdin/stdout/stderr. It holds no database access and never parses frames.
+
+1. Client calls `Attach` on `ignition-api` (§5.5) and receives `{ streamToken, gatewayUrl }`.
+2. Client opens a WebSocket to `gatewayUrl` + `/v1/attach?token=<streamToken>`.
+3. Gateway verifies the token with the shared `IGNITION_STREAM_TOKEN_SECRET` and audience `gatewayUrl` (`internal/streamtoken`): HS256, `typ=stream+jwt`, issuer `ignition-api`, exact audience, expiry, `action=attach`.
+4. Gateway resolves `sandbox_id` to a Pod by the `ignition.io/sandbox-id` label (cluster-wide Pod read), rejects a Pod that is not `READY` or whose generation ≠ the token's.
+5. Gateway dials `ws://<podIP>:8081/v1/processes/<process_id>/attach` and copies WebSocket messages both ways until either side closes.
+
+`sandbox-init` owns the process end: it fans stdout/stderr to attachers with a small in-memory replay buffer (not a durable spool), writes client stdin to the process, and sends a terminal `{channel:"control",kind:"exit",exitCode,signal}` frame. The frame encoding is `internal/execframe` (JSON; `[]byte` payloads are base64). `deploy/k8s/base/networkpolicy-sandbox-supervisor.yaml` is the only control-plane↔sandbox path.
 
 ## 7. Data model
 
@@ -243,7 +260,7 @@ Database: Cloud SQL for PostgreSQL (regional HA on dev, zonal on staging), priva
 |---|---|---|---|---|
 | `ignition-api` | `ignition-system/ignition-api` | `ignition-api@PROJECT` | none | DML: product + idempotency + quota |
 | `ignition-controller` | `ignition-system/ignition-controller` | `ignition-controller@PROJECT` | Pods in `ignition-sandboxes`; get/list/patch Nodes, cordon only if `ignition.io/node-pool=gpu-sandbox-l4` | DML: sandbox/process/operation/lease (no DDL) |
-| `ignition-gateway` | `ignition-system/ignition-gateway` | `ignition-gateway@PROJECT` | none (or get Pod IP in sandboxes if required) | read routes / process attach metadata |
+| `ignition-gateway` | `ignition-system/ignition-gateway` | `ignition-gateway@PROJECT` | cluster-wide Pod get/list (sandbox lookup by label) | none |
 
 No cluster-admin. No access to `kube-system`. GPU nodes are private. The API records the requested internet-access profile, while GCP projects, VPCs, subnets, firewall policy, and NAT enforce it. The controller does not translate client input into Kubernetes NetworkPolicy rules.
 

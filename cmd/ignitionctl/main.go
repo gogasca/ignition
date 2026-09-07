@@ -8,8 +8,9 @@ import (
 )
 
 func main() {
-	if err := cli.Execute(os.Args[1:]); err != nil {
+	err := cli.Execute(os.Args[1:])
+	if err != nil {
 		fmt.Fprintf(os.Stderr, "ignitionctl: %v\n", err)
-		os.Exit(1)
 	}
+	os.Exit(cli.ExitCode(err))
 }

@@ -63,6 +63,9 @@ type Options struct {
 	// Recorder and Metrics are optional observability sinks; nil in tests.
 	Recorder *adminz.Recorder
 	Metrics  *adminz.ReconcileMetrics
+	// ProcessProber, when set, is polled for observed tenant-process state
+	// instead of relying on the ignition.io/process-observed annotation.
+	ProcessProber ProcessProber
 }
 
 // Controller is the only process allowed to mutate sandbox Pods.
@@ -228,6 +231,7 @@ func Run(cfg config.Config) error {
 	rec := adminz.NewRecorder(200)
 	c := New(st, cluster, cluster, Options{
 		HolderID:          holder,
+		ProcessProber:     NewHTTPProber(),
 		MinWarm:           cfg.MinWarm,
 		MaxWarm:           cfg.MaxWarm,
 		MinWarmCPU:        cfg.MinWarmCPU,

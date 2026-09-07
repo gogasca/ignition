@@ -83,6 +83,16 @@ func toCorev1(p *Pod) (*corev1.Pod, error) {
 			}
 			vol.EmptyDir = ed
 		}
+		if len(v.DownwardAPI) > 0 {
+			src := &corev1.DownwardAPIVolumeSource{}
+			for _, item := range v.DownwardAPI {
+				src.Items = append(src.Items, corev1.DownwardAPIVolumeFile{
+					Path:     item.Path,
+					FieldRef: &corev1.ObjectFieldSelector{FieldPath: item.FieldPath},
+				})
+			}
+			vol.DownwardAPI = src
+		}
 		out.Spec.Volumes = append(out.Spec.Volumes, vol)
 	}
 	return out, nil
@@ -158,6 +168,13 @@ func toContainer(c Container, spec PodSpec) (corev1.Container, error) {
 			MountPath: c.VolumeMountPath,
 		})
 	}
+	for _, m := range c.Mounts {
+		ctr.VolumeMounts = append(ctr.VolumeMounts, corev1.VolumeMount{
+			Name:      m.Name,
+			MountPath: m.MountPath,
+			ReadOnly:  m.ReadOnly,
+		})
+	}
 	return ctr, nil
 }
 
@@ -169,6 +186,7 @@ func fromCorev1(p *corev1.Pod) *Pod {
 		Name:        p.Name,
 		Namespace:   p.Namespace,
 		NodeName:    p.Spec.NodeName,
+		PodIP:       p.Status.PodIP,
 		Labels:      cloneMap(p.Labels),
 		Annotations: cloneMap(p.Annotations),
 		Phase:       string(p.Status.Phase),

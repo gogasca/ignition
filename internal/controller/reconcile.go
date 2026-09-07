@@ -316,8 +316,24 @@ func (c *Controller) syncProcesses(ctx context.Context, sb store.Sandbox, pod *k
 	}
 
 	observed := map[string]processObservedRec{}
-	if s := pod.Annotations[k8s.AnnotProcObserved]; s != "" {
-		_ = json.Unmarshal([]byte(s), &observed)
+	// Preferred source: poll the sandbox-init supervisor over the Pod network
+	// (it holds no Kubernetes credentials, so it cannot write its own
+	// annotation). Mirror the result into ignition.io/process-observed for
+	// visibility and as the fallback path used by tests and older Pods.
+	if c.opts.ProcessProber != nil && pod.PodIP != "" {
+		if got, perr := c.opts.ProcessProber.ObservedProcesses(ctx, pod.PodIP); perr == nil {
+			for id, rec := range got {
+				observed[id] = processObservedRec{State: rec.State, ExitCode: rec.ExitCode}
+			}
+			if mirror, merr := json.Marshal(observed); merr == nil {
+				_ = c.pods.PatchAnnotations(pod.Name, map[string]string{k8s.AnnotProcObserved: string(mirror)})
+			}
+		}
+	}
+	if len(observed) == 0 {
+		if s := pod.Annotations[k8s.AnnotProcObserved]; s != "" {
+			_ = json.Unmarshal([]byte(s), &observed)
+		}
 	}
 	for _, p := range procs {
 		rec, ok := observed[p.ID]

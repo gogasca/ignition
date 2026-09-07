@@ -1,9 +1,7 @@
 # syntax=docker/dockerfile:1
-# Data-plane exec/stream gateway.
+# Exec byte-stream data plane. Validates exec-stream tokens and proxies attach
+# WebSockets to sandbox init supervisors. Needs cluster-wide Pod read only.
 #   docker build -f deploy/docker/ignition-gateway.Dockerfile -t ignition-gateway .
-# NOTE: internal/gateway is currently a stub — the binary builds but exits
-# non-zero at startup ("not implemented"). The image is produced so the pipeline
-# tracks its digest; no Kubernetes Deployment ships it yet.
 
 ARG COMMAND=ignition-gateway
 

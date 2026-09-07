@@ -7,3 +7,6 @@ resources:
   - rbac-controller.yaml
   - ignition-api.yaml
   - ignition-controller.yaml
+  - ignition-gateway.yaml
+  - rbac-gateway.yaml
+  - networkpolicy-sandbox-supervisor.yaml
