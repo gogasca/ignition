@@ -35,12 +35,17 @@ spec:
         - { protocol: UDP, port: 53 }
         - { protocol: TCP, port: 53 }
 ---
-# Future gateway traffic is admitted only from the system namespace and only
-# from Pods carrying the server-owned gateway workload label.
+# sandbox-init's :8081 listener is admitted only from the system namespace and
+# only from the two server-owned control-plane workloads that use it:
+# ignition-controller polls GET /v1/processes for observed tenant-process state,
+# and ignition-gateway proxies the exec byte stream to
+# /v1/processes/{id}/attach. Desired process state reaches the supervisor via a
+# downward-API projected file, so these are the only control-plane->sandbox
+# network paths.
 apiVersion: networking.k8s.io/v1
 kind: NetworkPolicy
 metadata:
-  name: sandbox-gateway-ingress
+  name: sandbox-supervisor-ingress
   namespace: ignition-sandboxes
 spec:
   podSelector:
@@ -53,8 +58,10 @@ spec:
             matchLabels:
               kubernetes.io/metadata.name: ignition-system
           podSelector:
-            matchLabels:
-              app.kubernetes.io/name: ignition-gateway
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [ignition-controller, ignition-gateway]
       ports:
         - { protocol: TCP, port: 8081 }
 ---

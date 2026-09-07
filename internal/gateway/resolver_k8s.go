@@ -12,28 +12,32 @@ import (
 	"ignition.dev/ignition/internal/k8s"
 )
 
-// K8sResolver finds a sandbox Pod by label across all namespaces (sandboxes may
-// live in per-project namespaces). It needs only Pod get/list.
+// K8sResolver finds a sandbox Pod by the ignition.io/sandbox-id label in the
+// sandbox namespace. It needs only namespaced Pod list.
 type K8sResolver struct {
 	client kubernetes.Interface
+	ns     string
 }
 
-func NewK8sResolver(cfg *rest.Config) (*K8sResolver, error) {
+func NewK8sResolver(cfg *rest.Config, namespace string) (*K8sResolver, error) {
 	c, err := kubernetes.NewForConfig(cfg)
 	if err != nil {
 		return nil, err
 	}
-	return &K8sResolver{client: c}, nil
+	return NewK8sResolverWithClient(c, namespace), nil
 }
 
-func NewK8sResolverWithClient(c kubernetes.Interface) *K8sResolver {
-	return &K8sResolver{client: c}
+func NewK8sResolverWithClient(c kubernetes.Interface, namespace string) *K8sResolver {
+	if namespace == "" {
+		namespace = k8s.Namespace
+	}
+	return &K8sResolver{client: c, ns: namespace}
 }
 
 func (k *K8sResolver) Resolve(ctx context.Context, projectID, sandboxID string) (Endpoint, error) {
 	sel := fmt.Sprintf("%s=%s,%s=%s",
 		k8s.LabelSandboxID, sandboxID, k8s.LabelWorkload, k8s.WorkloadSandbox)
-	list, err := k.client.CoreV1().Pods(metav1.NamespaceAll).List(ctx, metav1.ListOptions{LabelSelector: sel})
+	list, err := k.client.CoreV1().Pods(k.ns).List(ctx, metav1.ListOptions{LabelSelector: sel})
 	if err != nil {
 		return Endpoint{}, err
 	}
