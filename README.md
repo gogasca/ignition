@@ -26,7 +26,7 @@ docs/guides/          build and deploy runbook
 | `ignition-api` | Implemented HTTP/JSON API for sandbox, process, and operation state, plus a v0 image admission endpoint (`POST/GET /v1/projects/{project}/images`) that pins a client-given registry reference to a digest. Owns auth, admission, quota, and idempotency; has no Kubernetes RBAC. The image resolver does not yet restrict which registry host it will contact — see [Image Data Layer](docs/design/ignition-design-image-datalayer.md#security-status). |
 | `ignition-controller` | Implements the `STANDARD` GKE reconciliation path and is the only component with Pod/Node RBAC. `BARE_METAL` currently fails closed. |
 | `sandbox-init` | In-sandbox liveness and accelerator readiness on port 8081 (`IGNITION_ACCELERATOR`: single-GPU check for `NVIDIA_L4`, supervisor-up for `NONE`), plus tenant-process supervision: reads desired processes from a projected file, runs/signals/reaps them, reports observed state at `GET :8081/v1/processes`, and serves the exec byte stream at `GET :8081/v1/processes/{id}/attach`. |
-| `ignition-gateway` | Implemented (`internal/gateway`): validates the exec-stream token, resolves the sandbox Pod by label, and proxies the attach WebSocket to `sandbox-init`. No product-database access; cluster-wide Pod read only. |
+| `ignition-gateway` | Implemented (`internal/gateway`): validates the exec-stream token, resolves the sandbox Pod by label, and proxies the attach WebSocket to `sandbox-init`. No product-database access; namespaced Pod read only. |
 | `ignitionctl` | Implemented (`internal/cli`): login/context, sandbox and process lifecycle, operations, and `exec` with live stdio streaming through `ignition-gateway` (polling fallback when no gateway is configured). |
 
 ## Build

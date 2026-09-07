@@ -229,10 +229,10 @@ Failed create of the in-sandbox process sets `FAILED` with a typed reason. Signa
 1. Client calls `Attach` on `ignition-api` (§5.5) and receives `{ streamToken, gatewayUrl }`.
 2. Client opens a WebSocket to `gatewayUrl` + `/v1/attach?token=<streamToken>`.
 3. Gateway verifies the token with the shared `IGNITION_STREAM_TOKEN_SECRET` and audience `gatewayUrl` (`internal/streamtoken`): HS256, `typ=stream+jwt`, issuer `ignition-api`, exact audience, expiry, `action=attach`.
-4. Gateway resolves `sandbox_id` to a Pod by the `ignition.io/sandbox-id` label (cluster-wide Pod read), rejects a Pod that is not `READY` or whose generation ≠ the token's.
+4. Gateway resolves `sandbox_id` to a Pod by the `ignition.io/sandbox-id` label in the sandbox namespace, rejects a Pod that is not `READY` or whose generation ≠ the token's.
 5. Gateway dials `ws://<podIP>:8081/v1/processes/<process_id>/attach` and copies WebSocket messages both ways until either side closes.
 
-`sandbox-init` owns the process end: it fans stdout/stderr to attachers with a small in-memory replay buffer (not a durable spool), writes client stdin to the process, and sends a terminal `{channel:"control",kind:"exit",exitCode,signal}` frame. The frame encoding is `internal/execframe` (JSON; `[]byte` payloads are base64). `deploy/k8s/base/networkpolicy-sandbox-supervisor.yaml` is the only control-plane↔sandbox path.
+`sandbox-init` owns the process end: it fans stdout/stderr to attachers with a small in-memory replay buffer (not a durable spool), writes client stdin to the process, and sends a terminal `{channel:"control",kind:"exit",exitCode,signal}` frame. The frame encoding is `internal/execframe` (JSON; `[]byte` payloads are base64). The `sandbox-supervisor-ingress` policy in `deploy/k8s/base/sandbox-network-policies.yaml` admits `:8081` only from `ignition-controller` and `ignition-gateway`; it is the only control-plane↔sandbox path.
 
 ## 7. Data model
 
@@ -260,7 +260,7 @@ Database: Cloud SQL for PostgreSQL (regional HA on dev, zonal on staging), priva
 |---|---|---|---|---|
 | `ignition-api` | `ignition-system/ignition-api` | `ignition-api@PROJECT` | none | DML: product + idempotency + quota |
 | `ignition-controller` | `ignition-system/ignition-controller` | `ignition-controller@PROJECT` | Pods in `ignition-sandboxes`; get/list/patch Nodes, cordon only if `ignition.io/node-pool=gpu-sandbox-l4` | DML: sandbox/process/operation/lease (no DDL) |
-| `ignition-gateway` | `ignition-system/ignition-gateway` | `ignition-gateway@PROJECT` | cluster-wide Pod get/list (sandbox lookup by label) | none |
+| `ignition-gateway` | `ignition-system/ignition-gateway` | `ignition-gateway@PROJECT` | namespaced Pod get/list in ignition-sandboxes | none |
 
 No cluster-admin. No access to `kube-system`. GPU nodes are private. The API records the requested internet-access profile, while GCP projects, VPCs, subnets, firewall policy, and NAT enforce it. The controller does not translate client input into Kubernetes NetworkPolicy rules.
 

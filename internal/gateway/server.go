@@ -168,7 +168,7 @@ func Run(cfg config.Config) error {
 	if err != nil {
 		return err
 	}
-	resolver, err := NewK8sResolver(restCfg)
+	resolver, err := NewK8sResolver(restCfg, cfg.K8sNamespace)
 	if err != nil {
 		return err
 	}

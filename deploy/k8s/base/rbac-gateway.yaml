@@ -1,11 +1,11 @@
 # ignition-gateway resolves a sandbox to its Pod by the ignition.io/sandbox-id
-# label. Sandboxes may live in per-project namespaces, so this is cluster-wide
-# read-only Pod access and nothing else. The gateway holds no database access
-# and never mutates cluster state.
+# label. Read-only Pod list in the sandbox namespace, nothing else. The gateway
+# holds no database access and never mutates cluster state.
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRole
+kind: Role
 metadata:
   name: ignition-gateway-sandbox-lookup
+  namespace: ignition-sandboxes
   labels:
     app.kubernetes.io/part-of: ignition
     app.kubernetes.io/name: ignition-gateway
@@ -15,15 +15,16 @@ rules:
     verbs: [get, list]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
-kind: ClusterRoleBinding
+kind: RoleBinding
 metadata:
   name: ignition-gateway-sandbox-lookup
+  namespace: ignition-sandboxes
   labels:
     app.kubernetes.io/part-of: ignition
     app.kubernetes.io/name: ignition-gateway
 roleRef:
   apiGroup: rbac.authorization.k8s.io
-  kind: ClusterRole
+  kind: Role
   name: ignition-gateway-sandbox-lookup
 subjects:
   - kind: ServiceAccount
