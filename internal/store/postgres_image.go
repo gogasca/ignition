@@ -75,7 +75,7 @@ func (p *Postgres) GetImage(ctx context.Context, projectID, imageID string) (Ima
 // TopImagesByLaunchCount returns a project's images ordered by measured
 // launch demand, most-launched first. This is the input a secondary
 // boot-disk cache-epoch build selects from (see
-// docs/design/ignition-design-images-startup.md — "cache large, shared,
+// docs/design/ignition-image-delivery.md — "cache large, shared,
 // immutable OCI layers selected by measured launch demand"); nothing in
 // Ignition reads this back for scheduling yet, so it is operator tooling,
 // not part of the Store/ControllerStore interfaces.

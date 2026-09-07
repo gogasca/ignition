@@ -162,10 +162,10 @@ func NewReconcileMetrics(reg prometheus.Registerer, rec *Recorder) *ReconcileMet
 		// stageLatency is CreateTime -> first observation of each stage, one
 		// sample per sandbox per stage (observeWrite only fires on a genuine
 		// rank advance, never a re-observation of an already-reached state).
-		// This is what turns the warm-path startup budget tables in the
-		// design docs (e.g. docs/design/ignition-design-gke-sandbox.md
-		// #startup-budget-on-a-warm-node) into something measured rather
-		// than aspirational — see images-startup.md's "keep the platform
+		// This is what turns the warm-path startup budget table in the
+		// design docs (docs/design/ignition-shipped-architecture.md
+		// #7-warm-node-capacity) into something measured rather than
+		// aspirational — see ignition-image-delivery.md's "keep the platform
 		// stages visible individually" observability requirement.
 		stageLatency: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "ignition_sandbox_stage_latency_seconds",

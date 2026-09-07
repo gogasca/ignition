@@ -120,7 +120,7 @@ variable "sandbox_max_nodes" {
   default = 3
 }
 
-# Secondary boot-disk cache-epoch pool (docs/design/ignition-design-images-startup.md
+# Secondary boot-disk cache-epoch pool (docs/design/ignition-image-delivery.md
 # — "GKE secondary boot-disk cache"). The disk image referenced here is built
 # offline (gcloud compute images create ... from a VM whose containerd has
 # pulled the images.TopImagesByLaunchCount(project, K) result, then following

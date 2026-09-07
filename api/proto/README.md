@@ -1,6 +1,6 @@
 # Ignition v1 protobuf contracts
 
-These files are the machine-readable schema for the public Ignition sandbox API. Canonical behavior is defined by the [Create Sandbox API](../../docs/design/ignition-sandbox-create-api.md) and [client API and identity design](../../docs/design/ignition-design-client-api-identity.md).
+These files are the machine-readable schema for the public Ignition sandbox API. Canonical behavior is defined by the [API contract](../../docs/design/ignition-api-contract.md) and [identity and RBAC](../../docs/design/ignition-api-contract.md).
 
 ## Layout
 

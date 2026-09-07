@@ -5,7 +5,7 @@
 // not copy manifests or blobs into an Ignition-owned same-region registry,
 // does not verify signatures or provenance, and does not run a security scan
 // — all of that is normative in the image data layer design and remains a
-// gap versus it. See docs/design/ignition-design-image-datalayer.md.
+// gap versus it. See docs/design/ignition-image-delivery.md.
 package imagecatalog
 
 import "context"
@@ -24,8 +24,8 @@ type Resolved struct {
 	Entrypoint []string
 	Cmd        []string
 	// StreamingEligible/IneligibleReason are the static, documented GKE image
-	// streaming eligibility check from admission step 7 in
-	// docs/design/ignition-design-images-startup.md — schema v1 manifests and
+	// streaming eligibility check from admission step 6 in
+	// docs/design/ignition-image-delivery.md — schema v1 manifests and
 	// duplicate/empty layers are known-ineligible. This is a static check
 	// only: whether a launch actually streamed is observed separately at
 	// launch time (not yet implemented — GKE exposes no admission-time mount

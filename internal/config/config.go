@@ -70,7 +70,7 @@ type Config struct {
 	// estimatedEagerPullSeconds). It is not a measured value — no launch has
 	// ever been observed in this deployment — and must be replaced by a
 	// real per-region/per-node-class measurement per
-	// docs/design/ignition-design-images-startup.md's adaptive strategy
+	// docs/design/ignition-image-delivery.md's adaptive strategy
 	// selection once that data exists.
 	AssumedEagerPullMBps float64
 	// DefaultRuntime fills any RuntimeSpec field a CreateSandbox request

@@ -89,7 +89,7 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 // cycle and quota only when the image is known (from admission) to be
 // streaming-ineligible and its estimated eager pull time exceeds the
 // request's own startupSeconds — see
-// docs/design/ignition-design-images-startup.md: "If its measured pull
+// docs/design/ignition-image-delivery.md: "If its measured pull
 // cannot fit the sandbox startup deadline, creation fails early... rather
 // than remaining ambiguously stuck." The estimate is not a measurement: no
 // launch has ever been observed in this deployment, so this is a
