@@ -49,7 +49,7 @@ type Image struct {
 	// "READY". v0 resolves synchronously inside CreateImage, so a client never
 	// observes "RESOLVING" for a row it can already GET; the state is kept in
 	// the schema because that is the async delivery contract the design of
-	// record specifies (see docs/design/ignition-design-image-datalayer.md).
+	// record specifies (see docs/design/ignition-image-delivery.md).
 	State       string   `json:"state"`
 	StateReason string   `json:"stateReason,omitempty"`
 	SourceRef   string   `json:"sourceRef,omitempty"`

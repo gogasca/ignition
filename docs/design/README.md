@@ -1,19 +1,37 @@
-# Design documents
+# Ignition design documents
 
-Normative architecture for Ignition. The [implementation guide](../guides/ignition-implementation.md) is the source of truth for what currently runs and how it is built and deployed.
+Normative architecture for Ignition — isolated single-GPU / CPU sandboxes for
+untrusted tenant code on GKE Standard with GKE Sandbox (gVisor / `nvproxy`).
 
-**What is built and running:** `ignition-api` and `ignition-controller` on GKE, backed by Cloud SQL, with real Google OIDC / Cloud IAP authentication and SQL-backed project RBAC. Sandbox lifecycle (create/get/list/terminate/watch), the process control plane (metadata only), and operations are implemented. CPU (`accelerator: NONE`) and `NVIDIA_L4` GPU sandbox profiles run as gVisor Pods on dedicated GKE Sandbox node pools; `ignition-gpu-agent` attests GPU identity and health. A v0 image admission slice (`POST/GET /v1/projects/{project}/images`) resolves a client-given registry reference to an immutable digest with a static GKE streaming-eligibility check — see [Image Data Layer — Security status](ignition-design-image-datalayer.md#security-status) for what it does not yet enforce. Deployed to GCP project `anyscale-demo` in the `dev` and `anyscale-staging` overlays.
+**Is X built?** → [STATUS.md](STATUS.md). One table per area.
 
-**Not built:** the exec byte path (`ignition-gateway` and the `sandbox-init` process supervisor are stubs and not deployed), `ignitionctl` (every subcommand returns `not implemented`), the public Project/Secret/Event APIs, the full image data layer (same-region copy, signature/provenance verification, security scanning — image admission above is a narrower v0 slice of it), and writable Volume / Session snapshot resources. `BARE_METAL` is represented in the contract but fails closed.
+**How do I build and deploy it?** → [implementation guide](../guides/ignition-implementation.md).
+Source of truth for what actually runs.
 
-**Deferred (custom Compute Engine runtime):** the scheduler, fleet, worker-runtime broker chain (`ignitiond`/`ignition-hostd`/`snapshotd`/`ignition-ingress`), checkpoint/restore, golden startup snapshots, and the custom lazy-image path. These module designs are retained as the design of record for a possible future optimization, gated on measured evidence that GKE cannot meet requirements; they are not the deploy path.
+## The documents
 
-Start here:
+| Doc | Covers | Status |
+|---|---|---|
+| [STATUS.md](STATUS.md) | Feature-by-feature: shipped / partial / proposed / deferred | — |
+| [Shipped architecture](ignition-shipped-architecture.md) | `ignition-api`, `ignition-controller`, `ignition-gateway`, `sandbox-init`, `ignition-gpu-agent`; GKE topology, the reconcile loop, the Pod profile, warm capacity, the exec data plane, GPU attestation, the default runtime, storage | **SHIPPED** |
+| [API contract](ignition-api-contract.md) | Public REST surface, Google identity, project RBAC, `CreateSandbox`, state machines, idempotency, errors, `ignitionctl`, SDKs | **SHIPPED** (core); Project/Secret/Event **PROPOSED** |
+| [Image delivery](ignition-image-delivery.md) | GKE image streaming today, the v0 admission slice and its security gap, and the proposed catalog / adaptive delivery / snapshot / stratification work | **PARTIAL** (v0 admission); rest **PROPOSED** |
+| [Production operations](ignition-production-operations.md) | Threat model, service identity, IAM, secrets, audit, metering, SLOs, incident response, DR, release security, launch gates | **PARTIAL** — the bar, not current behavior |
+| [Deferred custom runtime](ignition-deferred-runtime.md) | The custom GCE/MIG worker runtime: scheduler, fleet, worker broker chain, checkpoint/restore, milestone plan. Retained as the design of record; **not** the deploy path | **DEFERRED** |
 
-1. [GKE Sandbox](ignition-design-gke-sandbox.md) — the shipped architecture
-2. [API and Controller](ignition-design-api-controller.md) — `ignition-api` and `ignition-controller`
-3. [Technical design](ignition-technical-design.md) — overview and module index
-4. [Create Sandbox API](ignition-sandbox-create-api.md) — the public create contract
-5. [Implementation guide](../guides/ignition-implementation.md) — binaries, images, and the regional GKE deploy
-6. [Default runtime](ignition-design-default-runtime.md) — system-managed RuntimeSpec; optional CreateSandbox fields; CPU + L4 accelerator profiles
-7. [Client API and Identity](ignition-design-client-api-identity.md) — public API surface, external identity, project RBAC
+## In one paragraph
+
+`ignition-api` and `ignition-controller` run on a GKE CPU node pool backed by
+Cloud SQL. `ignition-api` authenticates Google OIDC / Cloud IAP, authorizes
+against SQL project RBAC, and admits sandboxes in one serializable transaction;
+it never touches Kubernetes. `ignition-controller` — the only component with Pod
+RBAC — reconciles each sandbox into a server-owned gVisor Pod on a GKE Sandbox
+node: one whole GPU per `NVIDIA_L4` sandbox, or a CPU-only sandbox on a shared
+pool. `ignition-gpu-agent` attests GPU identity and health before `READY`.
+Inside the sandbox, `sandbox-init` supervises tenant processes and serves their
+stdio; `ignition-gateway` proxies the exec WebSocket in after checking an
+`ignition-api`-minted stream token. `ignitionctl` and Python/TypeScript SDKs
+wrap the public API. GKE owns VM lifecycle, drivers, scheduling, and
+autoscaling. The custom Compute Engine runtime in
+[deferred-runtime](ignition-deferred-runtime.md) is retained as a design of
+record only, gated on measured evidence that GKE cannot meet a requirement.

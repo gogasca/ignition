@@ -7,7 +7,7 @@ info:
     Process create/get/list/attach/signal/cancel are on SandboxService.
     Exec bytes travel on ignition-gateway after AttachProcess.
     Implemented behavior: docs/guides/ignition-implementation.md
-    Full v1 contract: docs/design/ignition-sandbox-create-api.md
+    Full v1 contract: docs/design/ignition-api-contract.md
 servers:
   - url: https://api.ignition.dev
 security:

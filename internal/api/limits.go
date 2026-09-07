@@ -26,7 +26,7 @@ const (
 // the resolver. It intentionally does not otherwise restrict which registry
 // or reference a project may name — the image data layer design's registry
 // identity/signature/provenance/policy checks are not implemented (see
-// docs/design/ignition-design-image-datalayer.md); admission here is purely
+// docs/design/ignition-image-delivery.md); admission here is purely
 // digest-pinning, not a security gate.
 func checkSourceRef(ref string) error {
 	if ref == "" {

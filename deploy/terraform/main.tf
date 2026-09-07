@@ -453,7 +453,7 @@ resource "google_container_node_pool" "gpu_sandbox" {
 # Cache-epoch generation of the GPU sandbox pool: identical to gpu_sandbox
 # except for its CONTAINER_IMAGE_CACHE secondary boot disk and node-pool
 # label. Ignition's own scheduling does not yet select this pool (see the
-# rollout note in docs/design/ignition-design-images-startup.md's secondary
+# rollout note in docs/design/ignition-image-delivery.md's secondary
 # boot-disk section) — it exists so an operator can build and roll a cache
 # epoch by creating a new instance of this resource (a new node-pool
 # generation, blue/green, per the design) without hand-writing Kubernetes

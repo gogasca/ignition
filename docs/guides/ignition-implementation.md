@@ -2,9 +2,9 @@
 
 **Status:** Matches the current binaries (`cmd/ignition-api`, `cmd/ignition-controller`)  
 **Audience:** engineers building and operating the control plane  
-**Architecture:** [GKE Sandbox](../design/ignition-design-gke-sandbox.md)  
-**API/controller design:** [API and Controller proposal](../design/ignition-design-api-controller.md)  
-**Contract:** [Create Sandbox API](../design/ignition-sandbox-create-api.md), [`api/proto/ignition/v1/`](../../api/proto/ignition/v1/)
+**Architecture:** [shipped architecture](../design/ignition-shipped-architecture.md)  
+**What is built vs not:** [STATUS.md](../design/STATUS.md)  
+**Contract:** [API contract](../design/ignition-api-contract.md), [`api/proto/ignition/v1/`](../../api/proto/ignition/v1/)
 
 This is the **only** build-and-deploy runbook: one regional GKE **dev** environment in one GCP project. Commands are bash and target Cloud Shell or another Linux shell. Run every block in the same shell unless the text says otherwise. Architecture stays in `docs/design/`. Overlay: `deploy/k8s/overlays/dev`.
 
@@ -118,7 +118,7 @@ GET    /v1/projects/{project}/images/{image}
 
 Require `Authorization: Bearer <token>` on every route except `GET /healthz` (Cloud IAP callers send `X-Goog-IAP-JWT-Assertion` instead — see below). Require `Idempotency-Key` (max 128 bytes) on create, terminate, cancel, and process create/attach/signal/cancel — `POST .../images` is the one create route without one; a retry after a successful admission fails closed with `409 IMAGE_ALREADY_EXISTS` (`imageId` is immutable) instead of replaying.
 
-`POST .../images` resolves the request's `sourceRef` synchronously against its source registry (`internal/imagecatalog`, `permission image.create`) — it does not yet restrict which registry host `sourceRef` may name (no allowlist, no private/link-local/metadata-range block) and has no server-side resolve timeout independent of the caller's own connection. Anyone who can already create a sandbox in a project can use it to make `ignition-api` issue an outbound request to a host of their choosing and see the resulting error text. Treat this route as internal-only, or add the destination check described in [Image Data Layer — Security status](../design/ignition-design-image-datalayer.md#security-status), before granting `image.create` to an untrusted project member.
+`POST .../images` resolves the request's `sourceRef` synchronously against its source registry (`internal/imagecatalog`, `permission image.create`) — it does not yet restrict which registry host `sourceRef` may name (no allowlist, no private/link-local/metadata-range block) and has no server-side resolve timeout independent of the caller's own connection. Anyone who can already create a sandbox in a project can use it to make `ignition-api` issue an outbound request to a host of their choosing and see the resulting error text. Treat this route as internal-only, or add the destination check described in [Image delivery — Security status](../design/ignition-image-delivery.md#security-status), before granting `image.create` to an untrusted project member.
 
 ### Auth
 
@@ -1109,7 +1109,7 @@ done
 
 This is the acceptance boundary today. The controller creates and schedules the GPU Pod. `sandbox-init` `/readyz` passes once its local probe (device nodes + `nvidia-smi` + `cuInit()`) succeeds, and `ignition-gpu-agent` independently stamps the canonical `ignition.io/gpu-uuid` + `ignition.io/init-healthy`; the controller advances the sandbox to `READY` only when both hold. If the cold node does not arrive within 600 seconds, inspect the retained events. `FailedScaleUp` with quota exceeded means either the regional L4 or global all-regions GPU quota is insufficient; `CAPACITY_UNAVAILABLE` is the expected public infrastructure failure. Terminating the test sandbox removes the Pod and makes the GPU node eligible for autoscaler scale-down.
 
-Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes token; the GPU attestation annotations come only from `ignition-gpu-agent`, and kubelet PodReady only from probing `sandbox-init`. Process execution and attach verification are not built — they require `ignition-gateway` and `sandbox-init` process supervision, neither of which is shipped.
+Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes token; the GPU attestation annotations come only from `ignition-gpu-agent`, and kubelet PodReady only from probing `sandbox-init`. Process execution and attach run through `sandbox-init` process supervision and `ignition-gateway` (see [`ignition-gateway`](#ignition-gateway) above); `ignition-gateway` is wired only in the `dev` overlay and has no public WebSocket Ingress yet.
 
 ## What not to do
 
@@ -1127,7 +1127,7 @@ Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes
 
 ## Not covered here
 
-Not built: Secret/Event APIs, digest-pinned images, a public WebSocket Ingress for `ignition-gateway`, PTY allocation, and the custom Compute Engine worker runtime. Designs: [Client API](../design/ignition-design-client-api-identity.md), [Data plane](../design/ignition-design-data-plane-networking.md).
+Not built: Secret/Event APIs, digest-pinned images, a public WebSocket Ingress for `ignition-gateway`, PTY allocation, and the custom Compute Engine worker runtime. Designs: [API contract](../design/ignition-api-contract.md), [shipped architecture — exec data plane](../design/ignition-shipped-architecture.md#8-exec-data-plane), [deferred runtime](../design/ignition-deferred-runtime.md). Full status: [STATUS.md](../design/STATUS.md).
 
 | Item | Value |
 |---|---|

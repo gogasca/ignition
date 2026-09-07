@@ -1,8 +1,8 @@
 # Ignition
 
-Ignition is an early implementation of isolated sandboxes on GKE Standard with GKE Sandbox (`gvisor`/`nvproxy`). A sandbox is CPU-only or one whole NVIDIA L4; the L4 path schedules one tenant sandbox per `g2-standard-8` node. `CreateSandbox` needs only an `imageId` — compute, timeouts, and networking default to a system-managed [default runtime](docs/design/ignition-design-default-runtime.md) (CPU-only) and can be overridden per request.
+Ignition is an early implementation of isolated sandboxes on GKE Standard with GKE Sandbox (`gvisor`/`nvproxy`). A sandbox is CPU-only or one whole NVIDIA L4; the L4 path schedules one tenant sandbox per `g2-standard-8` node. `CreateSandbox` needs only an `imageId` — compute, timeouts, and networking default to a system-managed [default runtime](docs/design/ignition-shipped-architecture.md#6-default-runtime) (CPU-only) and can be overridden per request.
 
-Architecture and public API contracts live in [`docs/design/`](docs/design/). Start with [`docs/design/ignition-design-gke-sandbox.md`](docs/design/ignition-design-gke-sandbox.md). Software design for the API and controller: [`docs/design/ignition-design-api-controller.md`](docs/design/ignition-design-api-controller.md). Build images, create the cluster, and deploy: [`docs/guides/ignition-implementation.md`](docs/guides/ignition-implementation.md).
+Architecture and public API contracts live in [`docs/design/`](docs/design/). **What is built vs not:** [`docs/design/STATUS.md`](docs/design/STATUS.md). The shipped system: [`docs/design/ignition-shipped-architecture.md`](docs/design/ignition-shipped-architecture.md). The public API: [`docs/design/ignition-api-contract.md`](docs/design/ignition-api-contract.md). Build images, create the cluster, and deploy: [`docs/guides/ignition-implementation.md`](docs/guides/ignition-implementation.md).
 
 ## Layout
 
@@ -15,7 +15,7 @@ internal/store/schema.sql  complete Cloud SQL schema (embedded by the API)
 deploy/               GKE manifests and Terraform
 images/sandbox-init/  container image for the in-sandbox supervisor
 sdks/                 Python and TypeScript clients
-docs/design/          architecture documents
+docs/design/          architecture documents (start with STATUS.md)
 docs/guides/          build and deploy runbook
 ```
 
@@ -23,7 +23,7 @@ docs/guides/          build and deploy runbook
 
 | Binary | Current status |
 |---|---|
-| `ignition-api` | Implemented HTTP/JSON API for sandbox, process, and operation state, plus a v0 image admission endpoint (`POST/GET /v1/projects/{project}/images`) that pins a client-given registry reference to a digest. Owns auth, admission, quota, and idempotency; has no Kubernetes RBAC. The image resolver does not yet restrict which registry host it will contact — see [Image Data Layer](docs/design/ignition-design-image-datalayer.md#security-status). |
+| `ignition-api` | Implemented HTTP/JSON API for sandbox, process, and operation state, plus a v0 image admission endpoint (`POST/GET /v1/projects/{project}/images`) that pins a client-given registry reference to a digest. Owns auth, admission, quota, and idempotency; has no Kubernetes RBAC. The image resolver does not yet restrict which registry host it will contact — see [Image delivery — Security status](docs/design/ignition-image-delivery.md#security-status). |
 | `ignition-controller` | Implements the `STANDARD` GKE reconciliation path and is the only component with Pod/Node RBAC. `BARE_METAL` currently fails closed. |
 | `sandbox-init` | In-sandbox liveness and accelerator readiness on port 8081 (`IGNITION_ACCELERATOR`: single-GPU check for `NVIDIA_L4`, supervisor-up for `NONE`), plus tenant-process supervision: reads desired processes from a projected file, runs/signals/reaps them, reports observed state at `GET :8081/v1/processes`, and serves the exec byte stream at `GET :8081/v1/processes/{id}/attach`. |
 | `ignition-gateway` | Implemented (`internal/gateway`): validates the exec-stream token, resolves the sandbox Pod by label, and proxies the attach WebSocket to `sandbox-init`. No product-database access; namespaced Pod read only. |
