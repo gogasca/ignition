@@ -271,6 +271,14 @@ func (f *Fake) SetReady(name, gpuUUID string) {
 	p.Annotations[AnnotGPUUUID] = gpuUUID
 }
 
+func (f *Fake) SetPodIP(name, ip string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if p := f.pods[name]; p != nil {
+		p.PodIP = ip
+	}
+}
+
 func (f *Fake) SetKubeReady(name string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

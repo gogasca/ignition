@@ -1,0 +1,110 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-gateway
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-gateway
+data:
+  IGNITION_LISTEN_ADDR: ":8080"
+  # Must equal the token audience ignition-api mints (IGNITION_GATEWAY_URL).
+  IGNITION_GATEWAY_URL: "https://gateway.us-central1.ignition.dev"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ignition-gateway
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-gateway
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ignition-gateway
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/part-of: ignition
+        app.kubernetes.io/name: ignition-gateway
+        app: ignition-gateway
+    spec:
+      serviceAccountName: ignition-gateway
+      automountServiceAccountToken: true
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      topologySpreadConstraints:
+        - maxSkew: 1
+          topologyKey: topology.kubernetes.io/zone
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              app.kubernetes.io/name: ignition-gateway
+      containers:
+        - name: gateway
+          image: ignition-gateway
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http
+              containerPort: 8080
+          envFrom:
+            - configMapRef:
+                name: ignition-gateway
+          env:
+            - name: IGNITION_STREAM_TOKEN_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: ignition-control-plane
+                  key: STREAM_TOKEN_SECRET
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: 8080
+          resources:
+            requests:
+              cpu: 100m
+              memory: 128Mi
+            limits:
+              cpu: "1"
+              memory: 256Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            readOnlyRootFilesystem: true
+            capabilities:
+              drop: ["ALL"]
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ignition-gateway
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-gateway
+spec:
+  selector:
+    app.kubernetes.io/name: ignition-gateway
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+---
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: ignition-gateway
+  namespace: ignition-system
+  labels:
+    app.kubernetes.io/part-of: ignition
+    app.kubernetes.io/name: ignition-gateway
+spec:
+  minAvailable: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: ignition-gateway

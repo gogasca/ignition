@@ -7,6 +7,7 @@ toolchain go1.26.7
 require (
 	github.com/golang-jwt/jwt/v5 v5.3.1
 	github.com/google/go-containerregistry v0.22.1
+	github.com/gorilla/websocket v1.5.4-0.20250319132907-e064f32e3674
 	github.com/jackc/pgx/v5 v5.10.0
 	github.com/prometheus/client_golang v1.20.5
 	github.com/testcontainers/testcontainers-go/modules/postgres v0.44.0

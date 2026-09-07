@@ -80,7 +80,15 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 		RunAsNonRoot:                 true,
 		SeccompRuntimeDefault:        true,
 		Containers:                   []Container{sandboxContainer(sb, imageRef, profile, cpu, mem, env)},
-		Volumes:                      []Volume{{Name: "scratch", EmptyDir: true, SizeLimit: "20Gi"}},
+		Volumes: []Volume{
+			{Name: "scratch", EmptyDir: true, SizeLimit: "20Gi"},
+			// Projects the controller's desired-process annotation as a
+			// read-only file; sandbox-init has no Kubernetes credentials.
+			{Name: "ignition-pod", DownwardAPI: []DownwardAPIItem{{
+				Path:      "process-desired",
+				FieldPath: "metadata.annotations['" + AnnotProcDesired + "']",
+			}}},
+		},
 	}
 	if profile.TaintKey != "" {
 		spec.Tolerations = []Toleration{{
@@ -136,6 +144,9 @@ func sandboxContainer(sb store.Sandbox, imageRef string, profile Profile, cpu, m
 	c.Port = 8081
 	c.LivenessPath = "/healthz"
 	c.ReadinessPath = "/readyz"
+	// The controller's desired-process annotation, projected read-only for the
+	// supervisor (it holds no Kubernetes credentials).
+	c.Mounts = []Mount{{Name: "ignition-pod", MountPath: "/etc/ignition/pod", ReadOnly: true}}
 	return c
 }
 

@@ -1,0 +1,36 @@
+# Allow the Ignition control plane to reach each sandbox's init supervisor on
+# :8081: ignition-controller polls GET /v1/processes for observed tenant-process
+# state, and ignition-gateway proxies the exec byte stream to
+# /v1/processes/{id}/attach. Desired process state reaches the supervisor via a
+# downward-API projected file, so these are the only control-plane<->sandbox
+# network paths.
+#
+# Sandbox Pods run with no Kubernetes credentials; this policy grants them
+# nothing. If sandboxes are placed in per-project namespaces
+# (ignition.io/project-namespace=true), apply the same policy there.
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: allow-controller-to-sandbox-supervisor
+  namespace: ignition-sandboxes
+  labels:
+    app.kubernetes.io/part-of: ignition
+spec:
+  podSelector:
+    matchLabels:
+      ignition.io/workload: gpu-sandbox
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              kubernetes.io/metadata.name: ignition-system
+          podSelector:
+            matchExpressions:
+              - key: app.kubernetes.io/name
+                operator: In
+                values: [ignition-controller, ignition-gateway]
+      ports:
+        - protocol: TCP
+          port: 8081

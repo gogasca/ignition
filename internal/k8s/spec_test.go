@@ -75,6 +75,31 @@ func TestSandboxPodProfile(t *testing.T) {
 			t.Fatal("hostPath forbidden")
 		}
 	}
+	// The desired-process annotation is projected read-only for sandbox-init,
+	// which has no Kubernetes credentials.
+	var projected *k8s.Volume
+	for i := range spec.Volumes {
+		if len(spec.Volumes[i].DownwardAPI) > 0 {
+			projected = &spec.Volumes[i]
+		}
+	}
+	if projected == nil || projected.DownwardAPI[0].Path != "process-desired" ||
+		!strings.Contains(projected.DownwardAPI[0].FieldPath, k8s.AnnotProcDesired) {
+		t.Fatalf("missing process-desired downward-API projection: %+v", spec.Volumes)
+	}
+	var mounted bool
+	for _, mnt := range c.Mounts {
+		if mnt.Name == projected.Name && mnt.ReadOnly && mnt.MountPath == "/etc/ignition/pod" {
+			mounted = true
+		}
+	}
+	if !mounted {
+		t.Fatalf("projected volume not mounted read-only: %+v", c.Mounts)
+	}
+	// Rendering to core/v1 must succeed with the new volume/mount.
+	if _, err := k8s.ToCorev1(p); err != nil {
+		t.Fatalf("ToCorev1: %v", err)
+	}
 	if p.Annotations[k8s.AnnotCommand] == "" || !strings.Contains(p.Annotations[k8s.AnnotCommand], "python") {
 		t.Fatal("tenant command must be annotation, not container command")
 	}

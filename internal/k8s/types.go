@@ -74,6 +74,7 @@ type Pod struct {
 	Name        string
 	Namespace   string
 	NodeName    string
+	PodIP       string
 	Labels      map[string]string
 	Annotations map[string]string
 	Spec        PodSpec
@@ -119,9 +120,16 @@ type Container struct {
 	DropAllCaps     bool
 	ReadOnlyRootFS  bool
 	VolumeMountPath string
+	Mounts          []Mount
 	Port            int
 	LivenessPath    string
 	ReadinessPath   string
+}
+
+type Mount struct {
+	Name      string
+	MountPath string
+	ReadOnly  bool
 }
 
 type Volume struct {
@@ -129,6 +137,16 @@ type Volume struct {
 	EmptyDir  bool
 	SizeLimit string
 	HostPath  string
+	// DownwardAPI projects selected Pod fields/annotations as read-only files.
+	DownwardAPI []DownwardAPIItem
+}
+
+// DownwardAPIItem projects one Pod annotation to a file named Path within the
+// volume. FieldPath uses the downward-API selector, e.g.
+// metadata.annotations['ignition.io/process-desired'].
+type DownwardAPIItem struct {
+	Path      string
+	FieldPath string
 }
 
 // Pods is the controller-only Kubernetes surface. Tests use Fake.
