@@ -248,7 +248,14 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 	}
 
 	if pod.Phase == "Failed" {
-		return c.failSandbox(ctx, sb, "WORKER_LOST")
+		// kubelet fails the Pod with reason "DeadlineExceeded" when
+		// activeDeadlineSeconds (timeouts.maximumRuntimeSeconds) is hit — that
+		// is a runtime-limit stop, not a lost worker.
+		reason := "WORKER_LOST"
+		if pod.Reason == "DeadlineExceeded" {
+			reason = "RUNTIME_LIMIT_EXCEEDED"
+		}
+		return c.failSandbox(ctx, sb, reason)
 	}
 
 	if !now.Before(deadline) && observe(pod, gpu) != "READY" {

@@ -140,6 +140,28 @@ func TestIdleTimeoutSkippedWhenOptedOut(t *testing.T) {
 	}
 }
 
+func TestRuntimeLimitExceeded(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	res := admit(t, m, store.TimeoutSpec{})
+	ctx := context.Background()
+	_ = c.Reconcile(ctx)
+	name := k8s.PodName(res.Sandbox.ID)
+	fake.SetReady(name, "GPU-1")
+	_ = c.Reconcile(ctx)
+
+	// kubelet fails the Pod with DeadlineExceeded when activeDeadlineSeconds hits.
+	fake.SetFailed(name, "DeadlineExceeded")
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sb := mustGet(t, m, res.Sandbox.ID)
+	if sb.State != "FAILED" || sb.StateReason != "RUNTIME_LIMIT_EXCEEDED" {
+		t.Fatalf("state = %s/%s, want FAILED/RUNTIME_LIMIT_EXCEEDED", sb.State, sb.StateReason)
+	}
+}
+
 func TestHTTPProberParsesResponse(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path != "/v1/processes" {

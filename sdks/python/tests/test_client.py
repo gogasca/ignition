@@ -59,7 +59,13 @@ class FakeAPI(BaseHTTPRequestHandler):
             return self._watch_sandbox(p[len("/v1/sandboxes/"):-len(":watch")])
         if p.startswith("/v1/sandboxes/") and "/processes/" in p:
             pid = p.rsplit("/", 1)[1]
-            return self._json(200, self.procs.get(pid, {})) if pid in self.procs else self._err(404, "NOT_FOUND")
+            if pid not in self.procs:
+                return self._err(404, "NOT_FOUND")
+            self.hits[pid] = self.hits.get(pid, 0) + 1
+            if self.hits[pid] >= 2:
+                self.procs[pid]["state"] = "EXITED"
+                self.procs[pid]["exitCode"] = 0
+            return self._json(200, self.procs[pid])
         if p.startswith("/v1/sandboxes/") and p.endswith("/processes"):
             return self._json(200, {"processes": list(self.procs.values())})
         if p.startswith("/v1/sandboxes/"):
@@ -178,6 +184,24 @@ class SDKTest(unittest.TestCase):
         proc.cancel()
         self.assertTrue(proc.is_terminal)
         self.assertEqual(proc.exit_code, 0)
+
+    def test_run_polls_when_no_gateway(self):
+        # gateway_url is "" → run() skips streaming and polls to terminal.
+        c = self.client()
+        sb = c.sandboxes.create("img_seed")
+        result = sb.run(["echo", "hi"], timeout=5)
+        self.assertEqual(result.exit_code, 0)
+        self.assertTrue(result.ok)
+
+    def test_run_falls_back_when_gateway_unreachable(self):
+        FakeAPI.gateway_url = "http://127.0.0.1:1"  # nothing listening
+        try:
+            c = self.client()
+            sb = c.sandboxes.create("img_seed")
+            result = sb.run(["echo", "hi"], timeout=5)
+            self.assertEqual(result.exit_code, 0)
+        finally:
+            FakeAPI.gateway_url = ""
 
 
 if __name__ == "__main__":
