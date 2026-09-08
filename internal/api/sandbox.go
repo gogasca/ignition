@@ -18,6 +18,7 @@ type createSandboxBody struct {
 	Name             string               `json:"name"`
 	ImageID          string               `json:"imageId"`
 	Command          []string             `json:"command"`
+	Args             []string             `json:"args"`
 	WorkingDirectory string               `json:"workingDirectory"`
 	NativeEntrypoint bool                 `json:"nativeEntrypoint"`
 	Resources        *store.ResourceSpec  `json:"resources"`
@@ -61,6 +62,8 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 		Name:             in.Name,
 		ImageID:          in.ImageID,
 		Command:          in.Command,
+		Args:             in.Args,
+		MainCommand:      in.MainCommand,
 		WorkingDir:       in.WorkingDir,
 		NativeEntrypoint: in.NativeEntrypoint,
 		Resources:        in.Resources,
@@ -134,6 +137,9 @@ func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 	if err := checkCommand(body.Command); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
+	if err := checkCommand(body.Args); err != nil {
+		return store.CreateSandboxInput{}, fmt.Errorf("args: %w", err)
+	}
 	if err := checkLabels(body.Labels); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
@@ -177,10 +183,24 @@ func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 		return store.CreateSandboxInput{}, fmt.Errorf("accelerator.type %q is not allowed", rt.Resources.Accelerator.Type)
 	}
 
+	// Managed (nativeEntrypoint=false): append(command, args...) is the argv of
+	// the sandbox's main supervised process, which CreateSandbox inserts as a
+	// processes row. Native: command/args pass straight to the container spec
+	// (internal/k8s) with Kubernetes command/args semantics.
+	var mainCommand []string
+	if !body.NativeEntrypoint && (len(body.Command) > 0 || len(body.Args) > 0) {
+		mainCommand = append(append([]string{}, body.Command...), body.Args...)
+		if err := checkCommand(mainCommand); err != nil {
+			return store.CreateSandboxInput{}, fmt.Errorf("command + args: %w", err)
+		}
+	}
+
 	return store.CreateSandboxInput{
 		Name:             body.Name,
 		ImageID:          body.ImageID,
 		Command:          body.Command,
+		Args:             body.Args,
+		MainCommand:      mainCommand,
 		WorkingDir:       body.WorkingDirectory,
 		NativeEntrypoint: body.NativeEntrypoint,
 		Resources:        rt.Resources,

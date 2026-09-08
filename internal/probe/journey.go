@@ -34,7 +34,15 @@ type Journey struct {
 	Name string
 	// Lifecycle journeys create a real sandbox (cost + blast radius).
 	Lifecycle bool
-	Run       func(ctx context.Context, c *Client, env Env) ([]Step, error)
+	// NoAuth journeys send no bearer and are the only ones valid under
+	// IGNITION_PROBE_AUTH=none (health, auth-guard). Every other journey calls an
+	// authenticated route and 401s without a token.
+	NoAuth bool
+	// Gateway journeys dial ignition-gateway and stream real bytes through
+	// sandbox-init. They need a reachable gatewayUrl and a live data plane, so
+	// the in-process fake-cluster tests skip them.
+	Gateway bool
+	Run     func(ctx context.Context, c *Client, env Env) ([]Step, error)
 }
 
 // stepper accumulates timed steps for a journey body.

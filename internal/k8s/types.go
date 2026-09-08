@@ -20,7 +20,6 @@ const (
 	AnnotGPUHealth    = "ignition.io/gpu-health"
 	AnnotGPUCleanup   = "ignition.io/gpu-cleanup"
 	AnnotImageID      = "ignition.io/image-id"
-	AnnotCommand      = "ignition.io/tenant-command"
 	AnnotProcDesired  = "ignition.io/process-desired"
 	AnnotProcObserved = "ignition.io/process-observed"
 	// AnnotGeneration records the sandbox's store generation on its Pod so
@@ -128,6 +127,7 @@ type Container struct {
 	Name            string
 	Image           string
 	Command         []string
+	Args            []string
 	Env             map[string]string
 	WorkingDir      string
 	CPUMilli        int

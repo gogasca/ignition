@@ -82,6 +82,7 @@ class Sandboxes:
         image: str,
         *,
         command: list[str] | None = None,
+        args: list[str] | None = None,
         working_directory: str | None = None,
         native_entrypoint: bool = False,
         accelerator: str | None = None,
@@ -107,6 +108,8 @@ class Sandboxes:
             body["name"] = name
         if command is not None:
             body["command"] = command
+        if args is not None:
+            body["args"] = args
         if working_directory:
             body["workingDirectory"] = working_directory
         if native_entrypoint:

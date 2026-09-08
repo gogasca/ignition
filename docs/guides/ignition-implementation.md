@@ -162,7 +162,10 @@ Process APIs require `READY`. `attach` is idempotent (same key replays `streamEp
 
 Tables (`internal/store/schema.sql`, embedded by the API): `projects`, `role_bindings`, `images`, `sandboxes`, `processes`, `operations`, `idempotency_keys`, `project_quota`, `controller_leases`. This is a complete baseline schema, not a migration chain. `store.Open` (API) applies it idempotently; `store.OpenWithoutSchema` (controller) is DML only. It also installs the `ignition_notify_watch` trigger on `sandboxes`/`operations` that backs the `:watch` push path.
 
-Because it is not a migration chain, a **new column on an existing dev/staging database** is not added by a redeploy — recreate the database, or add the column by hand. Columns added since the first cut: `processes.pty_rows` / `processes.pty_cols` — `ALTER TABLE processes ADD COLUMN IF NOT EXISTS pty_rows INT NOT NULL DEFAULT 0;` (and `pty_cols` likewise).
+Because it is not a migration chain, a **new column on an existing dev/staging database** is not added by a redeploy — recreate the database, or add the column by hand. Columns added since the first cut:
+
+- `processes.pty_rows` / `processes.pty_cols` — `ALTER TABLE processes ADD COLUMN IF NOT EXISTS pty_rows INT NOT NULL DEFAULT 0;` (and `pty_cols` likewise).
+- `sandboxes.args` — `ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS args JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(args) = 'array');`
 
 ### Environment variables
 

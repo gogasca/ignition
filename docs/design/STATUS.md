@@ -42,7 +42,8 @@ is authoritative for exactly what is deployed and how.
 | System-managed default runtime (`RuntimeSpec`, optional `CreateSandbox` fields) | **SHIPPED** | `GET /v1/projects/{project}/runtimes/default`. |
 | Timeouts: `startupSeconds`, `maximumRuntimeSeconds`, `idleSeconds` | **SHIPPED** | Startup deadline in the controller; max runtime via Pod `activeDeadlineSeconds`; idle via `sandbox-init` `idleSeconds` + controller (`FINISHED`/`IDLE_TIMEOUT`). No idle enforcement for `nativeEntrypoint` (no supervisor). |
 | Warm-node capacity via balloon Pods | **PARTIAL** | Implemented; `IGNITION_MIN_WARM=0` in every overlay so no standing warm pool. The 9s p95 API-to-`READY` SLO is unmeasured — needs `MIN_WARM>0` + a load run against real capacity (the `ignition_sandbox_stage_latency_seconds` per-stage metric is already emitted). |
-| `nativeEntrypoint` (run the image's own entrypoint as PID 1) | **PARTIAL** | Works; weaker readiness, no exec/idle-tracking, same security context. |
+| `nativeEntrypoint` (run the image's own entrypoint as PID 1) | **PARTIAL** | Works; weaker readiness, no exec/idle-tracking, same security context. `command`/`args` override the image `ENTRYPOINT`/`CMD` Kubernetes-style. |
+| Managed `command`/`args` → supervised main process | **SHIPPED** | `CreateSandbox` with `command`/`args` (and `nativeEntrypoint: false`) creates a `Process` row for the argv in the same transaction; `exec`/PTY/idle apply to it. |
 | Ephemeral `/scratch` emptyDir | **SHIPPED** | Lost on node loss — part of the public contract. |
 | Read-only dataset / artifact mounts, content caches | **PROPOSED** | |
 | Writable persistent Volumes, SESSION memory snapshots | **out of scope** | Not on any roadmap. |
