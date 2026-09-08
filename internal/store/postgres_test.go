@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -534,5 +535,63 @@ func waitChange(t *testing.T, ch <-chan store.Change, kind, id string) bool {
 		case <-deadline:
 			return false
 		}
+	}
+}
+
+func TestPostgresSandboxCommandArgsAndMainProcess(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	p.SeedImage(project, "img_a")
+
+	res, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
+		ProjectID: project, Principal: "alice", IdemKey: "k1", IdemHash: "k1",
+		ImageID:     "img_a",
+		Command:     []string{"python", "-m", "server"},
+		Args:        []string{"--port", "9000"},
+		MainCommand: []string{"python", "-m", "server", "--port", "9000"},
+		WorkingDir:  "/app",
+		Resources:   spec(), MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// command/args survive the round trip.
+	got, err := p.GetSandbox(ctx, project, res.Sandbox.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Join(got.Command, " ") != "python -m server" || strings.Join(got.Args, " ") != "--port 9000" {
+		t.Fatalf("command=%v args=%v", got.Command, got.Args)
+	}
+	if got.WorkingDir != "/app" {
+		t.Fatalf("workingDir = %q", got.WorkingDir)
+	}
+
+	// The main process was inserted in the same transaction.
+	procs, err := p.ListProcessesBySandbox(ctx, project, res.Sandbox.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(procs) != 1 || strings.Join(procs[0].Command, " ") != "python -m server --port 9000" {
+		t.Fatalf("main process = %+v", procs)
+	}
+	if procs[0].WorkingDirectory != "/app" {
+		t.Fatalf("main process workingDir = %q", procs[0].WorkingDirectory)
+	}
+
+	// Native mode never seeds a process even with MainCommand set defensively.
+	nres, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
+		ProjectID: project, Principal: "alice", IdemKey: "k2", IdemHash: "k2",
+		ImageID: "img_a", NativeEntrypoint: true,
+		Command: []string{"/bin/app"}, MainCommand: []string{"/bin/app"},
+		Resources: spec(), MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if procs, _ := p.ListProcessesBySandbox(ctx, project, nres.Sandbox.ID); len(procs) != 0 {
+		t.Fatalf("native sandbox seeded %d processes", len(procs))
 	}
 }

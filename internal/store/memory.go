@@ -305,6 +305,7 @@ func (m *Memory) CreateSandbox(_ context.Context, in CreateSandboxInput) (Create
 		CreateTime:       now,
 		CreatedBy:        in.Principal,
 		Command:          in.Command,
+		Args:             in.Args,
 		WorkingDir:       in.WorkingDir,
 		NativeEntrypoint: in.NativeEntrypoint,
 		Resources:        in.Resources,
@@ -330,6 +331,19 @@ func (m *Memory) CreateSandbox(_ context.Context, in CreateSandboxInput) (Create
 	m.sandboxes[sbID] = sb
 	m.operations[opID] = op
 	m.quotaActive[in.ProjectID]++
+	if len(in.MainCommand) > 0 && !in.NativeEntrypoint {
+		mp := Process{
+			ID:               id.New("prc"),
+			ProjectID:        in.ProjectID,
+			SandboxID:        sbID,
+			State:            "CREATING",
+			Command:          in.MainCommand,
+			WorkingDirectory: in.WorkingDir,
+			CreateTime:       now,
+			CreatedBy:        in.Principal,
+		}
+		m.processes[mp.ID] = mp
+	}
 
 	body, _ := json.Marshal(map[string]any{"sandbox": sb, "operation": op})
 	m.finishIdem(slot, in.IdemHash, 202, body)

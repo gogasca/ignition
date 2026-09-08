@@ -101,8 +101,11 @@ func TestSandboxPodProfile(t *testing.T) {
 	if _, err := k8s.ToCorev1(p); err != nil {
 		t.Fatalf("ToCorev1: %v", err)
 	}
-	if p.Annotations[k8s.AnnotCommand] == "" || !strings.Contains(p.Annotations[k8s.AnnotCommand], "python") {
-		t.Fatal("tenant command must be annotation, not container command")
+	// Managed mode: the container command stays the supervisor; the sandbox's
+	// command becomes a supervised main process (a processes row the API
+	// creates), not a Pod annotation and not the container command.
+	if got := c.Command; len(got) != 1 || got[0] != "/ignition/init" {
+		t.Fatalf("managed container command = %v, want [/ignition/init]", got)
 	}
 	if p.Spec.Containers[0].Env["IGNITION_SANDBOX_ID"] != sb.ID {
 		t.Fatal("sandbox id env")
@@ -176,11 +179,30 @@ func TestSandboxPodNativeEntrypoint(t *testing.T) {
 		Timeouts:         store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
 	}
 	c := k8s.SandboxPod(sb, "docker.io/library/nginx@sha256:abc").Spec.Containers[0]
-	if len(c.Command) != 0 {
-		t.Fatalf("native entrypoint must not override Command, got %v", c.Command)
+	// No command/args set: the image's own ENTRYPOINT/CMD must stand (nil, not []).
+	if c.Command != nil || c.Args != nil {
+		t.Fatalf("native entrypoint with no overrides: command %v args %v, want nil/nil", c.Command, c.Args)
 	}
 	if c.Port != 0 || c.LivenessPath != "" || c.ReadinessPath != "" {
 		t.Fatalf("native entrypoint must not probe a supervisor: port %d liveness %q readiness %q", c.Port, c.LivenessPath, c.ReadinessPath)
+	}
+
+	// With overrides: Kubernetes command/args semantics straight through.
+	sb.Command = []string{"/bin/myserver"}
+	sb.Args = []string{"--port", "9000"}
+	oc := k8s.SandboxPod(sb, "docker.io/library/nginx@sha256:abc").Spec.Containers[0]
+	if len(oc.Command) != 1 || oc.Command[0] != "/bin/myserver" {
+		t.Fatalf("native command = %v", oc.Command)
+	}
+	if len(oc.Args) != 2 || oc.Args[0] != "--port" || oc.Args[1] != "9000" {
+		t.Fatalf("native args = %v", oc.Args)
+	}
+	core, err := k8s.ToCorev1(k8s.SandboxPod(sb, "docker.io/library/nginx@sha256:abc"))
+	if err != nil {
+		t.Fatalf("ToCorev1: %v", err)
+	}
+	if got := core.Spec.Containers[0]; len(got.Command) != 1 || len(got.Args) != 2 {
+		t.Fatalf("corev1 command %v args %v", got.Command, got.Args)
 	}
 	p := k8s.SandboxPod(sb, "docker.io/library/nginx@sha256:abc")
 	if p.Annotations[k8s.AnnotNativeEntrypoint] != "true" {

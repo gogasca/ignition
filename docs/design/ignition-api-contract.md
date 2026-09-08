@@ -155,6 +155,7 @@ Content-Type: application/json
   "name": "model-runner",
   "imageId": "img_01J...",
   "command": ["python", "-m", "server"],
+  "args": ["--port", "9000"],
   "workingDirectory": "/workspace",
   "nativeEntrypoint": false,
   "secretRefs": [{ "secretId": "sec_01J...", "version": "latest", "environmentName": "MODEL_TOKEN" }],
@@ -169,8 +170,8 @@ Content-Type: application/json
 | Field | Rule |
 |---|---|
 | `imageId` | **required**; `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`; resolved under the Artifact Registry sandbox prefix (digest pinning is future work) |
-| `command` | optional argv, never shell-evaluated; when omitted, `sandbox-init` waits for `exec`; ignored (not rejected) when `nativeEntrypoint` is `true` |
-| `nativeEntrypoint` | default `false`; `true` runs the image's own `Entrypoint`/`Cmd` as PID 1 — weaker readiness, no exec/idle-tracking, same security context (see [shipped architecture §5](ignition-shipped-architecture.md#isolation-invariants)) |
+| `command` / `args` | Kubernetes `container.command` / `container.args` semantics, never shell-evaluated (≤32 words / 16 KiB each). **Managed** (`nativeEntrypoint: false`): `command` + `args` is the argv of the sandbox's main supervised process — created as a `Process` on the same request, so `exec` / PTY / idle-tracking apply to it — run verbatim; omit both and `sandbox-init` idles for `exec`. When the main process exits the sandbox stays up (reachable for `exec`) until idle/terminate/max-runtime. **Native** (`nativeEntrypoint: true`): `command` overrides the image `ENTRYPOINT`, `args` overrides the image `CMD`; either unset falls back to the image's own value. |
+| `nativeEntrypoint` | default `false`; `true` runs the image's own `Entrypoint`/`Cmd` (with `command`/`args` overriding them, Kubernetes-style) as PID 1 instead of `sandbox-init` — weaker readiness, no exec/idle-tracking, same security context (see [shipped architecture §5](ignition-shipped-architecture.md#isolation-invariants)) |
 | `secretRefs` | stored on create; resolved from Secret Manager and injected as env at Pod create; values never enter SQL |
 | `resources` / `placement` / `timeouts` / `network` | **optional** — unset fields come from the [default runtime](ignition-shipped-architecture.md#6-default-runtime) (CPU-only); the resolved `RuntimeSpec` is snapshotted onto the sandbox |
 | `accelerator.type` | `NVIDIA_L4` or `NONE`; `IGNITION_ALLOWED_ACCELERATORS` default `NONE,NVIDIA_L4`; no profile → `WORKLOAD_NOT_SUPPORTED`, no Pod |

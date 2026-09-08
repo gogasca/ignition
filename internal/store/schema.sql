@@ -64,6 +64,7 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     finish_time   TIMESTAMPTZ,
     created_by    TEXT NOT NULL DEFAULT '',
     command       JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(command) = 'array'),
+    args          JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(args) = 'array'),
     working_dir   TEXT NOT NULL DEFAULT '',
     native_entrypoint BOOLEAN NOT NULL DEFAULT FALSE,
     resources     JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(resources) = 'object'),
