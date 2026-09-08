@@ -65,6 +65,8 @@ func sandboxCreate(e *env, args []string) error {
 		envs        kvSlice
 		labels      kvSlice
 		cmdArgs     strSlice
+		argv        strSlice
+		nativeEP    bool
 	)
 	fs.StringVar(&image, "image", "", "image ID (required)")
 	fs.StringVar(&name, "name", "", "friendly name")
@@ -77,7 +79,9 @@ func sandboxCreate(e *env, args []string) error {
 	fs.IntVar(&waitTimeout, "wait-timeout", 300, "seconds to wait when --wait is set")
 	fs.Var(&envs, "env", "environment variable KEY=VALUE (repeatable)")
 	fs.Var(&labels, "label", "label KEY=VALUE (repeatable)")
-	fs.Var(&cmdArgs, "command", "command argument (repeatable); or pass after --")
+	fs.Var(&cmdArgs, "command", "command word, k8s container.command (repeatable); or pass after --")
+	fs.Var(&argv, "args", "args word, k8s container.args (repeatable)")
+	fs.BoolVar(&nativeEP, "native-entrypoint", false, "run the image's own entrypoint (command/args override it) instead of the sandbox-init supervisor")
 	pos, err := e.parse(fs, g, args)
 	if err != nil {
 		return err
@@ -113,6 +117,12 @@ func sandboxCreate(e *env, args []string) error {
 	}
 	if len(command) > 0 {
 		body["command"] = command
+	}
+	if len(argv) > 0 {
+		body["args"] = []string(argv)
+	}
+	if nativeEP {
+		body["nativeEntrypoint"] = true
 	}
 	if len(labels) > 0 {
 		body["labels"] = map[string]string(labels)

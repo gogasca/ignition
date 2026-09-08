@@ -9,7 +9,11 @@ const enc = new TextEncoder();
 const dec = new TextDecoder();
 
 export interface CreateSandboxOptions {
+  /** Kubernetes container.command semantics (overrides image ENTRYPOINT in
+   *  nativeEntrypoint mode; the main process argv in managed mode). */
   command?: string[];
+  /** Kubernetes container.args semantics. */
+  args?: string[];
   workingDirectory?: string;
   nativeEntrypoint?: boolean;
   accelerator?: "NONE" | "NVIDIA_L4" | string;
@@ -91,6 +95,7 @@ class Sandboxes {
     const body: Record<string, unknown> = { imageId: image };
     if (o.name) body.name = o.name;
     if (o.command) body.command = o.command;
+    if (o.args) body.args = o.args;
     if (o.workingDirectory) body.workingDirectory = o.workingDirectory;
     if (o.nativeEntrypoint) body.nativeEntrypoint = true;
     if (o.env) body.environment = o.env;

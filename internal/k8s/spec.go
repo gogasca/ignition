@@ -1,7 +1,6 @@
 package k8s
 
 import (
-	"encoding/json"
 	"strconv"
 
 	"ignition.dev/ignition/internal/store"
@@ -52,7 +51,6 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 	if mem > 32768 {
 		mem = 32768
 	}
-	cmdJSON, _ := json.Marshal(sb.Command)
 	accel := sb.Resources.Accelerator.Type
 	if accel == "" {
 		accel = store.AcceleratorNVIDIAL4
@@ -109,7 +107,6 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 		},
 		Annotations: map[string]string{
 			AnnotImageID:          sb.ImageID,
-			AnnotCommand:          string(cmdJSON),
 			AnnotGPUType:          accel,
 			AnnotGeneration:       strconv.FormatInt(sb.Generation, 10),
 			AnnotNativeEntrypoint: boolStr(sb.NativeEntrypoint),
@@ -121,12 +118,14 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 
 // sandboxContainer builds the sandbox's single container. Managed mode (the
 // default) runs Ignition's sandbox-init supervisor as PID 1 and gates public
-// readiness on its /readyz probe. NativeEntrypoint mode runs the admitted
-// image's own OCI Entrypoint/Cmd unchanged — required for any image that does
-// not embed sandbox-init — and drops the HTTP probes, since a generic image
-// serves neither /healthz nor /readyz: kubelet then reports the container
-// Ready as soon as it is Running, and command/exec/idle-tracking are
-// unavailable for the sandbox (no supervisor to relay them to).
+// readiness on its /readyz probe; the sandbox's command/args become a
+// supervised main process (a processes row) rather than the container command.
+// NativeEntrypoint mode runs the admitted image's own OCI Entrypoint/Cmd —
+// required for any image that does not embed sandbox-init — with Kubernetes
+// command/args semantics: sb.Command overrides ENTRYPOINT, sb.Args overrides
+// CMD, either unset falls back to the image. It drops the HTTP probes (a
+// generic image serves neither /healthz nor /readyz), so kubelet reports Ready
+// as soon as the container is Running and exec/idle-tracking are unavailable.
 func sandboxContainer(sb store.Sandbox, imageRef string, profile Profile, cpu, mem int, env map[string]string) Container {
 	c := Container{
 		Name:            "sandbox",
@@ -142,6 +141,8 @@ func sandboxContainer(sb store.Sandbox, imageRef string, profile Profile, cpu, m
 		VolumeMountPath: "/scratch",
 	}
 	if sb.NativeEntrypoint {
+		c.Command = sb.Command
+		c.Args = sb.Args
 		return c
 	}
 	c.Command = []string{"/ignition/init"}

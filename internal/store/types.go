@@ -15,14 +15,23 @@ type Sandbox struct {
 	ReadyTime   *time.Time `json:"readyTime,omitempty"`
 	FinishTime  *time.Time `json:"finishTime,omitempty"`
 	CreatedBy   string     `json:"-"`
-	Command     []string   `json:"-"`
-	WorkingDir  string     `json:"-"`
+	// Command and Args follow Kubernetes container semantics.
+	//   nativeEntrypoint=true : Command -> container.command (overrides the
+	//     image ENTRYPOINT), Args -> container.args (overrides the image CMD);
+	//     either unset falls back to the image's own value.
+	//   nativeEntrypoint=false (managed): append(Command, Args...) is the argv
+	//     of the sandbox's main supervised process, run verbatim by
+	//     sandbox-init; unset means no main process (the supervisor idles for
+	//     exec).
+	Command    []string `json:"command,omitempty"`
+	Args       []string `json:"args,omitempty"`
+	WorkingDir string   `json:"workingDirectory,omitempty"`
 	// NativeEntrypoint runs the admitted image's own OCI Entrypoint/Cmd as
 	// PID 1 instead of Ignition's managed init supervisor. Set this for an
 	// arbitrary/generic image that does not embed sandbox-init: readiness
 	// then relies on kubelet's default (container Running, since there is no
-	// /readyz to probe), and command/exec/idle-tracking are unavailable for
-	// the sandbox.
+	// /readyz to probe), and exec/idle-tracking are unavailable for the
+	// sandbox.
 	NativeEntrypoint bool              `json:"nativeEntrypoint,omitempty"`
 	Resources        ResourceSpec      `json:"resources"`
 	Placement        PlacementSpec     `json:"placement"`
@@ -172,16 +181,23 @@ type CreateSandboxInput struct {
 	Name             string
 	ImageID          string
 	Command          []string
+	Args             []string
 	WorkingDir       string
 	NativeEntrypoint bool
-	Resources        ResourceSpec
-	Placement        PlacementSpec
-	Timeouts         TimeoutSpec
-	Network          NetworkSpec
-	Labels           map[string]string
-	SecretRefs       []SecretRef
-	TraceID          string
-	MaxActive        int
+	// MainCommand, when non-empty, is the resolved argv of the sandbox's main
+	// process for a managed (nativeEntrypoint=false) sandbox. CreateSandbox
+	// inserts it as a processes row in the same transaction so it flows
+	// through the normal supervisor path. The API resolves it from
+	// Command/Args; the store does not look at the image.
+	MainCommand []string
+	Resources   ResourceSpec
+	Placement   PlacementSpec
+	Timeouts    TimeoutSpec
+	Network     NetworkSpec
+	Labels      map[string]string
+	SecretRefs  []SecretRef
+	TraceID     string
+	MaxActive   int
 }
 
 type CreateProcessInput struct {

@@ -37,8 +37,17 @@ message Sandbox {
   // Entrypoint/Cmd unchanged instead of Ignition's sandbox-init supervisor.
   // Set on CreateSandbox for any image that does not embed sandbox-init;
   // readiness then relies on the container's Running state (no /readyz to
-  // gate on), and command/exec/idle-tracking are unavailable.
+  // gate on), and exec/idle-tracking are unavailable.
   bool native_entrypoint = 17;
+  // command and args follow Kubernetes container semantics.
+  //   native_entrypoint=true : command overrides the image ENTRYPOINT, args
+  //     overrides the image CMD; either unset falls back to the image.
+  //   native_entrypoint=false (managed): append(command, args) is the argv of
+  //     the sandbox's main supervised process (surfaced as a Process), run
+  //     verbatim; unset means the supervisor idles waiting for CreateProcess.
+  repeated string command = 18;
+  repeated string args = 19;
+  string working_directory = 20;
 }
 
 enum SandboxState {
@@ -125,7 +134,9 @@ message CreateSandboxRequest {
   string project_id = 1;
   string name = 2;
   string image_id = 3;
+  // See Sandbox.command / Sandbox.args for the Kubernetes-style semantics.
   repeated string command = 4;
+  repeated string args = 13;
   string working_directory = 5;
   repeated SecretRef secret_refs = 6;
   // resources, placement, timeouts, and network are optional. Any field left

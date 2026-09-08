@@ -302,9 +302,12 @@ spec:
   only writable path. Security context is identical for `nativeEntrypoint`.
 - **Server-owned images and init.** The controller resolves `imageId` under the
   Artifact Registry sandbox prefix (digest pinning is future work). Default
-  entrypoint is `sandbox-init`. `CreateSandbox.nativeEntrypoint` (opt-in) runs
-  the image's own `Entrypoint`/`Cmd` as PID 1 instead — no `/readyz` gate (public
-  `READY` falls back to kubelet's `Running ⇒ Ready`), no exec, no idle tracking;
+  entrypoint is `sandbox-init`; a managed sandbox's `command`/`args` become a
+  supervised main process (a `Process` row), not the container command.
+  `CreateSandbox.nativeEntrypoint` (opt-in) runs the image's own
+  `Entrypoint`/`Cmd` as PID 1 instead, with `command`/`args` overriding them
+  Kubernetes-style — no `/readyz` gate (public `READY` falls back to kubelet's
+  `Running ⇒ Ready`), no exec, no idle tracking;
   the security context is not relaxed, so an image that runs as root or writes
   outside `/scratch` fails to start.
 

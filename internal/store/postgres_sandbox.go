@@ -13,21 +13,22 @@ import (
 )
 
 const sandboxCols = `id, project_id, name, state, state_reason, image_id, operation_id, generation,
-	create_time, ready_time, finish_time, created_by, command, working_dir, native_entrypoint,
+	create_time, ready_time, finish_time, created_by, command, args, working_dir, native_entrypoint,
 	resources, placement, timeouts, network, labels, secret_refs`
 
 func scanSandbox(scan func(dest ...any) error) (Sandbox, error) {
 	var sb Sandbox
-	var command, resources, placement, timeouts, network, labels, secretRefs []byte
+	var command, args, resources, placement, timeouts, network, labels, secretRefs []byte
 	err := scan(
 		&sb.ID, &sb.ProjectID, &sb.Name, &sb.State, &sb.StateReason, &sb.ImageID, &sb.OperationID, &sb.Generation,
-		&sb.CreateTime, &sb.ReadyTime, &sb.FinishTime, &sb.CreatedBy, &command, &sb.WorkingDir, &sb.NativeEntrypoint,
+		&sb.CreateTime, &sb.ReadyTime, &sb.FinishTime, &sb.CreatedBy, &command, &args, &sb.WorkingDir, &sb.NativeEntrypoint,
 		&resources, &placement, &timeouts, &network, &labels, &secretRefs,
 	)
 	if err != nil {
 		return Sandbox{}, mapErr(err)
 	}
 	unmarshalJSON(command, &sb.Command)
+	unmarshalJSON(args, &sb.Args)
 	unmarshalJSON(resources, &sb.Resources)
 	unmarshalJSON(placement, &sb.Placement)
 	unmarshalJSON(timeouts, &sb.Timeouts)
@@ -151,6 +152,7 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 			CreateTime:       now,
 			CreatedBy:        in.Principal,
 			Command:          in.Command,
+			Args:             in.Args,
 			WorkingDir:       in.WorkingDir,
 			NativeEntrypoint: in.NativeEntrypoint,
 			Resources:        in.Resources,
@@ -176,13 +178,13 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 		_, err = tx.Exec(ctx, `
 			INSERT INTO sandboxes (
 				id, project_id, name, state, state_reason, image_id, operation_id, generation,
-				create_time, created_by, command, working_dir, native_entrypoint,
+				create_time, created_by, command, args, working_dir, native_entrypoint,
 				resources, placement, timeouts, network, labels, secret_refs
 			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19
+				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
 			)`,
 			sb.ID, sb.ProjectID, sb.Name, sb.State, sb.StateReason, sb.ImageID, sb.OperationID, sb.Generation,
-			sb.CreateTime, sb.CreatedBy, jsonSlice(sb.Command), sb.WorkingDir, sb.NativeEntrypoint,
+			sb.CreateTime, sb.CreatedBy, jsonSlice(sb.Command), jsonSlice(sb.Args), sb.WorkingDir, sb.NativeEntrypoint,
 			jsonVal(sb.Resources), jsonVal(sb.Placement), jsonVal(sb.Timeouts), jsonVal(sb.Network), jsonMap(sb.Labels),
 			jsonVal(sb.SecretRefs),
 		)
@@ -191,6 +193,18 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 		}
 		if err := insertOperation(ctx, tx, op); err != nil {
 			return err
+		}
+		if len(in.MainCommand) > 0 && !in.NativeEntrypoint {
+			if _, err := tx.Exec(ctx, `
+				INSERT INTO processes (
+					id, project_id, sandbox_id, state, command, working_directory,
+					environment, pty, pty_rows, pty_cols, create_time, created_by
+				) VALUES ($1,$2,$3,'CREATING',$4,$5,'{}',false,0,0,$6,$7)`,
+				id.New("prc"), in.ProjectID, sbID, jsonSlice(in.MainCommand), in.WorkingDir,
+				now, in.Principal,
+			); err != nil {
+				return err
+			}
 		}
 		if err := bumpQuota(ctx, tx, in.ProjectID, 1); err != nil {
 			return err

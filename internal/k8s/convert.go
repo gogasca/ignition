@@ -105,7 +105,8 @@ func toContainer(c Container, spec PodSpec) (corev1.Container, error) {
 	ctr := corev1.Container{
 		Name:       c.Name,
 		Image:      c.Image,
-		Command:    append([]string{}, c.Command...),
+		Command:    cloneOrNil(c.Command),
+		Args:       cloneOrNil(c.Args),
 		WorkingDir: c.WorkingDir,
 		Resources: corev1.ResourceRequirements{
 			Requests: corev1.ResourceList{
@@ -224,6 +225,16 @@ func fromCorev1(p *corev1.Pod) *Pod {
 func ToCorev1(p *Pod) (*corev1.Pod, error) { return toCorev1(p) }
 
 func FromCorev1(p *corev1.Pod) *Pod { return fromCorev1(p) }
+
+// cloneOrNil copies a string slice, preserving nil. An empty (non-nil) slice on
+// corev1.Container.Command/Args is not the same as "unset": nil lets the image's
+// own ENTRYPOINT/CMD stand.
+func cloneOrNil(in []string) []string {
+	if in == nil {
+		return nil
+	}
+	return append([]string{}, in...)
+}
 
 func cloneMap(in map[string]string) map[string]string {
 	if in == nil {
