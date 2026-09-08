@@ -38,6 +38,15 @@ spec:
         - key: nvidia.com/gpu
           operator: Exists
           effect: NoSchedule
+        # The agent sets ignition.io/gpu-reuse-pending itself (fail-closed at the
+        # start of every reuse check) and is the ONLY thing that clears it after
+        # a clean verdict. It must therefore tolerate its own fence taint — a
+        # sandbox Pod deliberately does not, but an agent that cannot land on a
+        # fenced node can never unfence it (DaemonSet desired count goes to 0).
+        - key: ignition.io/gpu-reuse-pending
+          operator: Equal
+          value: "true"
+          effect: NoSchedule
       # hostPID: see the node's CUDA processes for the residual-process check.
       hostPID: true
       # system-node-critical and system-cluster-critical are reserved for
