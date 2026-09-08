@@ -15,7 +15,7 @@ This is the **only** build-and-deploy runbook: one regional GKE **dev** environm
 | In scope | Not built |
 |---|---|
 | `SandboxService` (lifecycle + process metadata) and `OperationService` | Custom GCE MIG workers |
-| Google OIDC / Cloud IAP auth, SQL project RBAC, Cloud SQL, `ignition-controller` | Digest-pinned images |
+| Google OIDC auth, SQL project RBAC, Cloud SQL, `ignition-controller` | Digest-pinned images; Cloud IAP (verifier + component built, not enabled in any overlay) |
 | HTTP/JSON public edge (SSE for watch, `LISTEN/NOTIFY` push); `sandbox-init` health/GPU readiness + process supervision + PTY + idle timeout; `ignition-gateway` exec byte stream + public `Ingress` (`staging`/`prod`); `ignitionctl`; Python + TypeScript SDKs | Mid-session PTY resize |
 | `secretRefs` (Secret Manager → Pod env), binary outbound internet preference | GCP network-profile provisioning for both internet modes |
 
@@ -180,7 +180,7 @@ Because it is not a migration chain, a **new column on an existing dev/staging d
 | `IGNITION_BOOTSTRAP_PROJECT` / `IGNITION_BOOTSTRAP_ADMIN` | API | seed one owner binding when the project has none |
 | `IGNITION_STREAM_TOKEN_SECRET` | API | attach tokens; required non-default in staging/prod |
 | `IGNITION_DEV_BEARER` | API | dev overlay only; forbidden in staging/prod |
-| `IGNITION_GATEWAY_URL` | API | stream token audience |
+| `IGNITION_GATEWAY_URL` | API + gateway | exec-stream token audience; **must be identical** on both. Absolute HTTPS, or `http://127.0.0.1[:port]` for a port-forwarded deployment |
 | `IGNITION_ALLOWED_ACCELERATORS` | API | AcceleratorType allowlist; default `NONE,NVIDIA_L4` (alias: `IGNITION_ALLOWED_GPU_TYPES`) |
 | `IGNITION_DEFAULT_RUNTIME` | API | JSON `RuntimeSpec` merged over the built-in CPU default; validated at startup |
 | `IGNITION_MAX_ACTIVE_SANDBOXES` | API | per-project quota |
@@ -212,6 +212,7 @@ Implemented (`internal/cli`). Dependency-light client over the same HTTP/JSON AP
 
 ```bash
 ignitionctl login --server http://127.0.0.1:8080 --token "${IGNITION_DEV_BEARER}" --project prj_dev
+ignitionctl whoami                              # GET /v1/me — confirms the token
 ignitionctl sandbox create --image img_seed --cpu 1000 --memory 2048 --wait
 ignitionctl sandbox list
 ignitionctl exec <sandbox> -- nvidia-smi        # live stdio via ignition-gateway
@@ -221,7 +222,18 @@ ignitionctl operation watch <operation>
 ignitionctl sandbox terminate <sandbox> --wait
 ```
 
-Context is stored in `~/.config/ignition/config.json` (`$IGNITION_CONFIG`); `--server`, `--project`, `-o json`, `--timeout` on every subcommand; `IGNITION_SERVER` / `IGNITION_TOKEN` / `IGNITION_PROJECT` override the file. Exit codes are stable: `2` usage, `3` not-found, `4` denied, `5` unauthenticated, and `exec` propagates the guest process exit code. `exec` streams through `ignition-gateway` when the `:attach` response carries a `gatewayUrl`, and polls otherwise (or with `--no-stream`).
+Every route is project-scoped (`/v1/projects/{project}/...`), so the commands
+above need a project from `--project`, `IGNITION_PROJECT`, or `ignitionctl config
+set-project`. Context is stored in `~/.config/ignition/config.json`
+(`$IGNITION_CONFIG`); `--server`, `--project`, `-o json`, `--timeout` on every
+subcommand; `IGNITION_SERVER` / `IGNITION_TOKEN` / `IGNITION_PROJECT` override the
+file. Exit codes are stable: `2` usage, `3` not-found, `4` denied, `5`
+unauthenticated, and `exec` propagates the guest process exit code. `exec`
+streams through `ignition-gateway` when the `:attach` response carries a
+`gatewayUrl`, and polls otherwise (or with `--no-stream`). For `dev` /
+`anyscale-staging`, run `kubectl port-forward -n ignition-system
+svc/ignition-gateway 8443:8080` first so the returned `gatewayUrl`
+(`http://127.0.0.1:8443`) resolves.
 
 ### `ignition-gateway`
 
@@ -793,15 +805,17 @@ When Terraform owns the instance, it already creates the `ignition` user. Before
 
 Dockerfiles: `deploy/docker/ignition-api.Dockerfile`, `ignition-controller.Dockerfile`. Do not put the sandbox GPU image in the same Dockerfile.
 
-`make push-images` also builds `ignition-gateway`, `ignition-prober`, and `ignition-gpu-agent` (the last needs CGO for `cuda-check`). The dev overlay only deploys `ignition-api` and `ignition-controller`; for a CPU-only bring-up build just those two:
+`make push-images` also builds `ignition-gateway`, `ignition-prober`, and `ignition-gpu-agent` (the last needs CGO for `cuda-check`). Every overlay deploys `ignition-api`, `ignition-controller`, and `ignition-gateway`; for a CPU-only bring-up without exec you can build just `ignition-api` + `ignition-controller` and scale the gateway Deployment to 0:
 
 ```bash
 export AR="${REGION}-docker.pkg.dev/${PROJECT}/${AR_REPO}"
-for c in ignition-api ignition-controller; do
+for c in ignition-api ignition-controller ignition-gateway; do
   docker build -f "deploy/docker/${c}.Dockerfile" -t "${AR}/${c}:dev" .
   docker push "${AR}/${c}:dev"
 done
 # or the full set: make push-images IMAGE_REGISTRY="${AR}" IMAGE_TAG=dev
+# To skip exec on a CPU quick check, drop ignition-gateway from the loop and
+# `kubectl -n ignition-system scale deploy/ignition-gateway --replicas=0`.
 
 # Sandbox seed image. The dev bearer seeds exactly one image id -- `img_seed` --
 # and the controller resolves it to ${SANDBOX_REPO}/img_seed (implicit :latest).
@@ -1139,7 +1153,7 @@ Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes
 
 ## Not covered here
 
-Not built: Secret/Event APIs, digest-pinned images, mid-session PTY resize, and the custom Compute Engine worker runtime. Designs: [API contract](../design/ignition-api-contract.md), [shipped architecture — exec data plane](../design/ignition-shipped-architecture.md#8-exec-data-plane), [deferred runtime](../design/ignition-deferred-runtime.md). Full status: [STATUS.md](../design/STATUS.md).
+Not built: the Project / Secret / Event public APIs, digest-pinned images and the rest of the image data layer, mid-session PTY resize, Cloud IAP enablement in an overlay, and the custom Compute Engine worker runtime. Designs: [API contract](../design/ignition-api-contract.md), [shipped architecture — exec data plane](../design/ignition-shipped-architecture.md#8-exec-data-plane), [deferred runtime](../design/ignition-deferred-runtime.md). Full status: [STATUS.md](../design/STATUS.md).
 
 | Item | Value |
 |---|---|

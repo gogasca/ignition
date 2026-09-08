@@ -21,10 +21,12 @@ var schemaSQL string
 
 // Postgres implements Store and ControllerStore against Cloud SQL PostgreSQL.
 type Postgres struct {
-	pool    *pgxpool.Pool
-	dsn     string
-	hubOnce sync.Once
-	hub     *watchHub // lazily started LISTEN fan-out; nil until first Subscribe
+	pool *pgxpool.Pool
+	dsn  string
+
+	hubMu  sync.Mutex
+	hub    *watchHub // lazily started LISTEN fan-out; nil until first Subscribe
+	closed bool
 }
 
 func OpenPostgres(ctx context.Context, dsn string) (*Postgres, error) {
@@ -82,9 +84,13 @@ func (p *Postgres) Close() error {
 	if p == nil || p.pool == nil {
 		return nil
 	}
+	p.hubMu.Lock()
+	p.closed = true
 	if p.hub != nil {
 		p.hub.stop()
+		p.hub = nil
 	}
+	p.hubMu.Unlock()
 	p.pool.Close()
 	return nil
 }

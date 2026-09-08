@@ -240,7 +240,12 @@ export class Sandbox {
       }
     }
     if (attach?.gatewayUrl && attach?.streamToken) {
-      return streamExec(attach.gatewayUrl, attach.streamToken, proc.id, o);
+      try {
+        return await streamExec(attach.gatewayUrl, attach.streamToken, proc.id, o);
+      } catch (e) {
+        if (!(e instanceof StreamError)) throw e;
+        // Gateway not reachable from here — fall through to polling.
+      }
     }
     await proc.wait({ timeoutMs: o.timeoutMs });
     return {

@@ -22,8 +22,9 @@ Source of truth for what actually runs.
 ## In one paragraph
 
 `ignition-api` and `ignition-controller` run on a GKE CPU node pool backed by
-Cloud SQL. `ignition-api` authenticates Google OIDC / Cloud IAP, authorizes
-against SQL project RBAC, and admits sandboxes in one serializable transaction;
+Cloud SQL. `ignition-api` authenticates Google OIDC (a Cloud IAP verifier is
+built but not enabled in any overlay), authorizes against SQL project RBAC, and
+admits sandboxes in one serializable transaction;
 it never touches Kubernetes. `ignition-controller` — the only component with Pod
 RBAC — reconciles each sandbox into a server-owned gVisor Pod on a GKE Sandbox
 node: one whole GPU per `NVIDIA_L4` sandbox, or a CPU-only sandbox on a shared

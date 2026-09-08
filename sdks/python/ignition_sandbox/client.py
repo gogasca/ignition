@@ -267,17 +267,20 @@ class Sandbox(SandboxModel):
         out = stdout if stdout is not None else sys.stdout.buffer
         err = stderr if stderr is not None else sys.stderr.buffer
 
-        attach = None
         if stream:
             attach = self._t.post(proc._path(":attach"), {}, idempotent=True)
-        if attach and attach.get("gatewayUrl") and attach.get("streamToken"):
-            code, sig = _stream_exec(
-                attach["gatewayUrl"], attach["streamToken"], proc.id, stdin, out, err
-            )
-            return ExecResult(proc.id, code, sig)
+            if attach.get("gatewayUrl") and attach.get("streamToken"):
+                try:
+                    code, sig = _stream_exec(
+                        attach["gatewayUrl"], attach["streamToken"], proc.id, stdin, out, err
+                    )
+                    return ExecResult(proc.id, code, sig)
+                except StreamError:
+                    # Gateway not reachable from here — fall through to polling.
+                    pass
 
-        # Polling fallback: wait for terminal state, then drain captured output
-        # is not exposed by the API, so return the exit status only.
+        # Polling fallback: wait for terminal state. Captured output is not
+        # exposed by the API outside the gateway stream, so return status only.
         proc.wait(timeout=timeout)
         return ExecResult(proc.id, proc.exit_code, proc.signal)
 

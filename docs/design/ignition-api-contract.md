@@ -128,6 +128,7 @@ POST   /v1/projects/{project}/images                 -- v0 slice; see Image deli
 GET    /v1/projects/{project}/images/{image}
 
 GET    /v1/projects/{project}/roleBindings
+GET    /v1/projects/{project}/roleBindings/{subject}
 PUT    /v1/projects/{project}/roleBindings/{subject} -- {subject} = email or domain:<fqdn>; owner/admin, last-owner guard, audit line
 DELETE /v1/projects/{project}/roleBindings/{subject}
 ```
@@ -213,6 +214,12 @@ Process:  CREATING → STARTING → RUNNING → EXITED
   canonical GPU UUID + `init-healthy` annotation. There is no user-configured
   readiness probe; application health is the application's responsibility. A
   `READY` sandbox serves exec.
+- `FINISHED` is reached from `TERMINATING` (client `:terminate`) or directly from
+  `READY` when `timeouts.idleSeconds > 0` and the sandbox has had no running
+  process and no attached exec stream for that long (`stateReason:
+  IDLE_TIMEOUT`). `timeouts.maximumRuntimeSeconds` expiry is a hard kill and
+  surfaces as `FAILED` / `RUNTIME_LIMIT_EXCEEDED`. A `nativeEntrypoint` sandbox
+  has no supervisor, so idle is not enforced for it.
 - `EXITED` carries an exit code or terminating signal and immutable exit time.
   `FAILED` carries a typed reason. Client disconnect never changes process state.
   Cancellation sends a graceful signal, waits the grace period, then kills;

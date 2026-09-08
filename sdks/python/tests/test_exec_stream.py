@@ -25,6 +25,7 @@ class FakeGateway:
         self.loop = asyncio.new_event_loop()
         self.port = None
         self._ready = threading.Event()
+        self._server = None
         self._thread = threading.Thread(target=self._run, daemon=True)
 
     def start(self):
@@ -33,13 +34,13 @@ class FakeGateway:
 
     def stop(self):
         async def _shutdown():
-            for task in asyncio.all_tasks(self.loop):
-                if task is not asyncio.current_task():
-                    task.cancel()
+            if self._server is not None:
+                self._server.close()
+                await self._server.wait_closed()
             self.loop.stop()
 
         self.loop.call_soon_threadsafe(lambda: self.loop.create_task(_shutdown()))
-        self._thread.join(timeout=2)
+        self._thread.join(timeout=3)
 
     def _run(self):
         asyncio.set_event_loop(self.loop)
@@ -60,14 +61,14 @@ class FakeGateway:
             await ws.close()
 
         async def main():
-            server = await websockets.serve(handler, "127.0.0.1", 0)
-            self.port = server.sockets[0].getsockname()[1]
+            self._server = await websockets.serve(handler, "127.0.0.1", 0)
+            self.port = self._server.sockets[0].getsockname()[1]
             self._ready.set()
             await asyncio.Future()
 
         try:
             self.loop.run_until_complete(main())
-        except RuntimeError:
+        except (RuntimeError, asyncio.CancelledError):
             pass
 
 

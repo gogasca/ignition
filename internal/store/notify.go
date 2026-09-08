@@ -123,9 +123,20 @@ func (h *watchHub) listen(ctx context.Context, dsn string) error {
 	}
 }
 
-// Subscribe implements ChangeNotifier for Postgres. The LISTEN connection is
-// started on first use and torn down by Close.
+// Subscribe implements ChangeNotifier for Postgres. The dedicated LISTEN
+// connection is started on first use and torn down by Close. After Close it
+// returns an inert (already-closed) channel so callers degrade to polling
+// rather than panic.
 func (p *Postgres) Subscribe() (<-chan Change, func()) {
-	p.hubOnce.Do(func() { p.hub = newWatchHub(p.dsn) })
+	p.hubMu.Lock()
+	defer p.hubMu.Unlock()
+	if p.closed {
+		ch := make(chan Change)
+		close(ch)
+		return ch, func() {}
+	}
+	if p.hub == nil {
+		p.hub = newWatchHub(p.dsn)
+	}
 	return p.hub.Subscribe()
 }
