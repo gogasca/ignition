@@ -266,21 +266,87 @@ func (s *Server) watchSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	sandboxID := r.PathValue("sandbox")
-	writeSSE(w, r, s.requestID(r.Context()), func() (any, error) {
-		return s.store.GetSandbox(r.Context(), project, sandboxID)
-	}, func(v any) bool {
-		sb := v.(store.Sandbox)
-		return sb.State == "FINISHED" || sb.State == "FAILED"
+	wake, stop := s.watchWake("sandboxes", sandboxID)
+	defer stop()
+	writeSSE(w, r, sseOpts{
+		requestID: s.requestID(r.Context()),
+		fetch:     func() (any, error) { return s.store.GetSandbox(r.Context(), project, sandboxID) },
+		terminal: func(v any) bool {
+			sb := v.(store.Sandbox)
+			return sb.State == "FINISHED" || sb.State == "FAILED"
+		},
+		wake: wake,
 	})
+}
+
+// watchWake subscribes to store change notifications (when the store supports
+// them) and returns a channel that fires when the named resource changes, plus
+// a cleanup func. When the store has no notifier, wake is nil and writeSSE
+// falls back to a fast poll.
+func (s *Server) watchWake(kind, id string) (<-chan struct{}, func()) {
+	n, ok := s.store.(store.ChangeNotifier)
+	if !ok {
+		return nil, func() {}
+	}
+	changes, cancel := n.Subscribe()
+	wake := make(chan struct{}, 1)
+	done := make(chan struct{})
+	go func() {
+		for {
+			select {
+			case <-done:
+				return
+			case c, open := <-changes:
+				if !open {
+					return
+				}
+				if c.Kind == kind && c.ID == id {
+					select {
+					case wake <- struct{}{}:
+					default:
+					}
+				}
+			}
+		}
+	}()
+	return wake, func() { close(done); cancel() }
+}
+
+type sseOpts struct {
+	requestID string
+	fetch     func() (any, error)
+	terminal  func(any) bool
+	// wake, when non-nil, triggers an immediate re-fetch; the poll interval
+	// then only serves as a slow backstop.
+	wake <-chan struct{}
+	// poll and maxAge default to production values when zero; tests set them
+	// short.
+	poll   time.Duration
+	maxAge time.Duration
 }
 
 // writeSSE emits a new snapshot whenever fetch observes a different resource.
 // Event IDs are content-derived and therefore stable across API replicas and
 // reconnects. A matching Last-Event-ID suppresses replay of the same snapshot.
-func writeSSE(w http.ResponseWriter, r *http.Request, requestID string, fetch func() (any, error), terminal func(any) bool) {
-	v, err := fetch()
+// The stream stays open until the resource is terminal, the client disconnects,
+// or maxAge elapses — it is no longer force-closed after a minute.
+func writeSSE(w http.ResponseWriter, r *http.Request, o sseOpts) {
+	poll := o.poll
+	if poll <= 0 {
+		if o.wake != nil {
+			poll = 10 * time.Second // backstop only; changes arrive via wake
+		} else {
+			poll = time.Second
+		}
+	}
+	maxAge := o.maxAge
+	if maxAge <= 0 {
+		maxAge = 30 * time.Minute
+	}
+
+	v, err := o.fetch()
 	if err != nil {
-		writeStoreError(w, requestID, err)
+		writeStoreError(w, o.requestID, err)
 		return
 	}
 	w.Header().Set("Content-Type", "text/event-stream")
@@ -308,7 +374,7 @@ func writeSSE(w http.ResponseWriter, r *http.Request, requestID string, fetch fu
 		return id, nil
 	}
 	lastID, err = emit(v)
-	if err != nil || terminal(v) {
+	if err != nil || o.terminal(v) {
 		return
 	}
 	// Ensure a resumed stream is established even when its current snapshot was
@@ -316,11 +382,24 @@ func writeSSE(w http.ResponseWriter, r *http.Request, requestID string, fetch fu
 	write(": connected\n\n")
 	flush()
 
-	poll := time.NewTicker(time.Second)
-	defer poll.Stop()
-	ticker := time.NewTicker(15 * time.Second)
-	defer ticker.Stop()
-	deadline := time.NewTimer(60 * time.Second)
+	refresh := func() bool {
+		v, err := o.fetch()
+		if err != nil {
+			return true
+		}
+		id, err := emit(v)
+		if err != nil {
+			return true
+		}
+		lastID = id
+		return o.terminal(v)
+	}
+
+	pollT := time.NewTicker(poll)
+	defer pollT.Stop()
+	beat := time.NewTicker(15 * time.Second)
+	defer beat.Stop()
+	deadline := time.NewTimer(maxAge)
 	defer deadline.Stop()
 	for {
 		select {
@@ -328,20 +407,15 @@ func writeSSE(w http.ResponseWriter, r *http.Request, requestID string, fetch fu
 			return
 		case <-deadline.C:
 			return
-		case <-poll.C:
-			v, err := fetch()
-			if err != nil {
+		case <-o.wake:
+			if refresh() {
 				return
 			}
-			id, err := emit(v)
-			if err != nil {
+		case <-pollT.C:
+			if refresh() {
 				return
 			}
-			lastID = id
-			if terminal(v) {
-				return
-			}
-		case <-ticker.C:
+		case <-beat.C:
 			write(": heartbeat\n\n")
 			flush()
 		}

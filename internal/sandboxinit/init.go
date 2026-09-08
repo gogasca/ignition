@@ -78,10 +78,16 @@ func (s *Supervisor) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/processes", func(w http.ResponseWriter, _ *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		out := map[string]observed{}
+		body := map[string]any{"processes": out}
 		if s.procs != nil {
-			out = s.procs.Observed()
+			body["processes"] = s.procs.Observed()
+			// idleSeconds lets ignition-controller enforce timeouts.idleSeconds:
+			// the sandbox holds no Kubernetes credential, so it cannot terminate
+			// itself, and the supervisor is the only component that sees both
+			// process state and live exec streams.
+			body["idleSeconds"] = s.procs.IdleSeconds()
 		}
-		_ = json.NewEncoder(w).Encode(map[string]any{"processes": out})
+		_ = json.NewEncoder(w).Encode(body)
 	})
 	// Exec byte stream. ignition-gateway proxies a client WebSocket here after
 	// validating the exec-stream token.

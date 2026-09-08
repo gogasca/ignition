@@ -24,6 +24,10 @@ message Process {
   string working_directory = 6;
   map<string, string> environment = 7;
   bool pty = 8;
+  // Initial PTY window size; 0 means the server default (24x80). Only
+  // meaningful when pty is true.
+  int32 pty_rows = 15;
+  int32 pty_cols = 16;
   google.protobuf.Timestamp create_time = 9;
   google.protobuf.Timestamp start_time = 10;
   google.protobuf.Timestamp exit_time = 11;
@@ -51,6 +55,9 @@ message CreateProcessRequest {
   string working_directory = 5;
   map<string, string> environment = 6;
   bool pty = 7;
+  // Initial PTY window size (0-1000). Requires pty = true.
+  int32 pty_rows = 8;
+  int32 pty_cols = 9;
 }
 
 message GetProcessRequest {

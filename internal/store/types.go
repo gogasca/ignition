@@ -154,6 +154,8 @@ type Process struct {
 	WorkingDirectory  string            `json:"workingDirectory,omitempty"`
 	Environment       map[string]string `json:"environment,omitempty"`
 	PTY               bool              `json:"pty"`
+	PTYRows           int               `json:"ptyRows,omitempty"`
+	PTYCols           int               `json:"ptyCols,omitempty"`
 	CreateTime        time.Time         `json:"createTime"`
 	StartTime         *time.Time        `json:"startTime,omitempty"`
 	ExitTime          *time.Time        `json:"exitTime,omitempty"`
@@ -192,6 +194,8 @@ type CreateProcessInput struct {
 	WorkingDir  string
 	Environment map[string]string
 	PTY         bool
+	PTYRows     int
+	PTYCols     int
 }
 
 type IdempotencyReplay struct {

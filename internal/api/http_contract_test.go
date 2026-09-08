@@ -1,6 +1,7 @@
 package api_test
 
 import (
+	"bufio"
 	"context"
 	"encoding/json"
 	"io"
@@ -381,6 +382,59 @@ func TestWatchOperationSSE(t *testing.T) {
 	raw, _ := io.ReadAll(resp.Body)
 	if !strings.Contains(string(raw), "event: snapshot") {
 		t.Fatalf("watch body = %s", raw)
+	}
+}
+
+func TestWatchSandboxWakesOnChange(t *testing.T) {
+	h := newHarness(t)
+	created := decode(t, h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "w-wake", createBody))
+	sbx := created["sandbox"].(map[string]any)["id"].(string)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	req, _ := http.NewRequestWithContext(ctx, http.MethodGet, h.ts.URL+"/v1/projects/prj_dev/sandboxes/"+sbx+":watch", nil)
+	req.Header.Set("Authorization", "Bearer alice")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+
+	snaps := make(chan string, 8)
+	go func() {
+		sc := bufio.NewScanner(resp.Body)
+		for sc.Scan() {
+			if line := sc.Text(); strings.HasPrefix(line, "data: ") {
+				snaps <- line
+			}
+		}
+		close(snaps)
+	}()
+
+	// First snapshot: CREATING.
+	select {
+	case s := <-snaps:
+		if !strings.Contains(s, `"state":"CREATING"`) {
+			t.Fatalf("first snapshot = %s", s)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("no initial snapshot")
+	}
+
+	// Change state out of band; the notifier must wake the stream well before
+	// the 10s poll backstop.
+	if err := h.mem.UpdateObserved(context.Background(), store.ObservedUpdate{
+		ProjectID: "prj_dev", SandboxID: sbx, State: "SCHEDULED", Reason: "SCHEDULED",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case s := <-snaps:
+		if !strings.Contains(s, `"state":"SCHEDULED"`) {
+			t.Fatalf("second snapshot = %s", s)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("stream did not wake on change within 3s (poll backstop is 10s)")
 	}
 }
 

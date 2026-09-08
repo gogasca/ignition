@@ -19,9 +19,10 @@ is authoritative for exactly what is deployed and how.
 |---|---|---|
 | `ignition-api` — HTTP/JSON public API, auth, admission, quota, idempotency | **SHIPPED** | No Kubernetes access. |
 | `ignition-controller` — reconciles sandboxes into GKE Pods | **SHIPPED** | Sole holder of Pod RBAC. CPU lifecycle verified end to end. |
-| Google OIDC / Cloud IAP authentication | **SHIPPED** | Verified end to end on staging. IAP rollout needs a public Ingress + Workspace domain. |
+| Google OIDC authentication | **SHIPPED** | Verified end to end on staging. |
+| Cloud IAP authentication | **PARTIAL** | Verifier + `deploy/k8s/components/iap` component are built and tested. Turning it on is an operator step: include the component, deploy so the backend service exists, set `IGNITION_IAP_AUDIENCE` to its resource path, grant `roles/iap.httpsResourceAccessor`. Not enabled in any overlay. |
 | SQL-backed project RBAC (`roleBindings`, last-owner guard, audit line) | **SHIPPED** | |
-| Sandbox lifecycle: create / get / list / terminate / watch (SSE) | **SHIPPED** | |
+| Sandbox lifecycle: create / get / list / terminate / watch (SSE) | **SHIPPED** | `:watch` pushes on change via Postgres `LISTEN/NOTIFY` (10s poll backstop), stays open to terminal / disconnect / 30-min cap. |
 | Process control plane: create / get / list / attach / signal / cancel | **SHIPPED** | |
 | Operations: get / list / watch / cancel | **SHIPPED** | |
 | Idempotency (`Idempotency-Key`, 24h replay) | **SHIPPED** | |
@@ -34,12 +35,13 @@ is authoritative for exactly what is deployed and how.
 | Capability | Status | Notes |
 |---|---|---|
 | CPU sandbox (`accelerator: NONE`) as a gVisor Pod on `cpu-sandbox` | **SHIPPED** | Verified end to end on dev. |
-| `NVIDIA_L4` GPU sandbox, one whole GPU, one sandbox per node | **PARTIAL** | Code complete; a real L4 sandbox reaching `READY` is not yet exercised (dev L4 quota). |
+| `NVIDIA_L4` GPU sandbox, one whole GPU, one sandbox per node | **PARTIAL** | Code + profile + `ignition-gpu-agent` complete; a real L4 sandbox reaching `READY` has never been run (needs regional `NVIDIA_L4_GPUS` + `GPUS_ALL_REGIONS` quota — nothing in code left to do). |
 | `ignition-gpu-agent` — GPU identity + health attestation, node-reuse gating | **SHIPPED** | Privileged DaemonSet on the GPU pool. |
 | `sandbox-init` — readiness probe + tenant-process supervision | **SHIPPED** | |
 | Server-owned Pod spec (gVisor, read-only root, dropped caps, no SA token) | **SHIPPED** | No client field maps to hooks/devices/mounts/scheduling. |
 | System-managed default runtime (`RuntimeSpec`, optional `CreateSandbox` fields) | **SHIPPED** | `GET /v1/projects/{project}/runtimes/default`. |
-| Warm-node capacity via balloon Pods | **PARTIAL** | Implemented; dev runs `IGNITION_MIN_WARM=0`, not measured. CPU warm pool opt-in. |
+| Timeouts: `startupSeconds`, `maximumRuntimeSeconds`, `idleSeconds` | **SHIPPED** | Startup deadline in the controller; max runtime via Pod `activeDeadlineSeconds`; idle via `sandbox-init` `idleSeconds` + controller (`FINISHED`/`IDLE_TIMEOUT`). No idle enforcement for `nativeEntrypoint` (no supervisor). |
+| Warm-node capacity via balloon Pods | **PARTIAL** | Implemented; `IGNITION_MIN_WARM=0` in every overlay so no standing warm pool. The 9s p95 API-to-`READY` SLO is unmeasured — needs `MIN_WARM>0` + a load run against real capacity (the `ignition_sandbox_stage_latency_seconds` per-stage metric is already emitted). |
 | `nativeEntrypoint` (run the image's own entrypoint as PID 1) | **PARTIAL** | Works; weaker readiness, no exec/idle-tracking, same security context. |
 | Ephemeral `/scratch` emptyDir | **SHIPPED** | Lost on node loss — part of the public contract. |
 | Read-only dataset / artifact mounts, content caches | **PROPOSED** | |
@@ -52,9 +54,9 @@ is authoritative for exactly what is deployed and how.
 |---|---|---|
 | `ignition-api` mints an HS256 exec stream token | **SHIPPED** | Separate audience from access JWTs. |
 | `sandbox-init` process supervision (`downwardAPI` desired file, `:8081` observed + stdio) | **SHIPPED** | Controller polls observed state; no Kubernetes credential in the sandbox. |
-| `ignition-gateway` — validates the token, resolves the Pod by label, proxies the attach WebSocket | **PARTIAL** | Built (`internal/gateway`). Deployed only in the `dev` overlay. |
-| Public WebSocket Ingress for `ignition-gateway` | **not built** | Non-`dev` overlays also need an image mapping + `IGNITION_GATEWAY_URL`. |
-| PTY allocation for exec | **not built** | Accepted in the contract, not honored. |
+| `ignition-gateway` — validates the token, resolves the Pod by label, proxies the attach WebSocket | **SHIPPED** | `internal/gateway`. Deployed by every overlay. |
+| Public WebSocket `Ingress` for `ignition-gateway` | **SHIPPED** | `staging`/`prod`: `Ingress` + `ManagedCertificate` (`gateway-ingress.yaml`), backend `timeoutSec: 3600`. `dev`/`anyscale-staging`: no DNS → `kubectl port-forward svc/ignition-gateway 8443:8080`. |
+| PTY allocation for exec | **SHIPPED** | `pty: true` (+ optional `ptyRows`/`ptyCols`) allocates a real PTY in `sandbox-init`; output is merged on the stdout channel. Mid-session resize is not wired. |
 | Durable exec spool / offset-based reconnect (`ignition-ingress`, route table) | **DEFERRED** | Shipped path uses a small in-memory replay buffer. |
 
 ## CLI and SDKs
@@ -62,9 +64,9 @@ is authoritative for exactly what is deployed and how.
 | Capability | Status | Notes |
 |---|---|---|
 | `ignitionctl` (`internal/cli`) — login/context, sandbox + process + operation lifecycle, `exec` with streaming | **SHIPPED** | `-o json`, stable exit codes, polling fallback when no gateway. |
-| Python `ignition-sandbox` — sync/async, bounded batch | **SHIPPED** | Control-plane lifecycle. |
-| TypeScript `@ignition/sandbox` — bounded batch | **SHIPPED** | Control-plane lifecycle. |
-| Richer SDK streaming (text wrappers, backpressure, reconnect credentials) | **PROPOSED** | Target contract in [api-contract](ignition-api-contract.md). |
+| Python `ignition-sandbox` — sync client, no deps | **SHIPPED** | `sdks/python`. Sandbox/process/operation lifecycle, `:watch`, exec streaming (built-in WS client) + polling fallback. |
+| TypeScript `@ignition/sandbox` — async client, no deps | **SHIPPED** | `sdks/typescript`. Same surface; global `fetch`/`WebSocket` (Node 22+). |
+| Native `async` Python client; PTY resize; text wrappers / backpressure helpers | **PROPOSED** | Target contract in [api-contract](ignition-api-contract.md). |
 
 ## Images
 

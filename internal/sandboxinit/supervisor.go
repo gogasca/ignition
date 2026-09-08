@@ -26,6 +26,8 @@ type desired struct {
 	WorkingDirectory string            `json:"workingDirectory,omitempty"`
 	Environment      map[string]string `json:"environment,omitempty"`
 	PTY              bool              `json:"pty,omitempty"`
+	PTYRows          int               `json:"ptyRows,omitempty"`
+	PTYCols          int               `json:"ptyCols,omitempty"`
 	Signal           string            `json:"signal,omitempty"`
 	Cancel           bool              `json:"cancel,omitempty"`
 }
@@ -50,6 +52,7 @@ type procState struct {
 	done     chan struct{}
 	io       *procIO
 	stdin    io.WriteCloser
+	ptmx     *os.File // PTY master, when d.PTY; nil otherwise
 }
 
 // lookup returns the tracked process for id, if any.
@@ -71,6 +74,12 @@ type ProcessManager struct {
 
 	mu   sync.Mutex
 	proc map[string]*procState
+	// idle tracking: the sandbox is "active" while any process is
+	// STARTING/RUNNING or any exec stream is attached. lastActiveAt is the
+	// instant the sandbox last stopped being active (or the manager's start
+	// time before anything ran). attachN counts live attach WebSockets.
+	lastActiveAt time.Time
+	attachN      int
 }
 
 func NewProcessManager(desiredFile, workRoot string) *ProcessManager {
@@ -81,12 +90,56 @@ func NewProcessManager(desiredFile, workRoot string) *ProcessManager {
 		workRoot = DefaultWorkRoot
 	}
 	return &ProcessManager{
-		desiredFile: desiredFile,
-		workRoot:    workRoot,
-		gracePeriod: 10 * time.Second,
-		now:         time.Now,
-		proc:        map[string]*procState{},
+		desiredFile:  desiredFile,
+		workRoot:     workRoot,
+		gracePeriod:  10 * time.Second,
+		now:          time.Now,
+		proc:         map[string]*procState{},
+		lastActiveAt: time.Now(),
 	}
+}
+
+// attachBegin/attachEnd bracket a live exec stream so an attached-but-quiet
+// session still counts as activity.
+func (m *ProcessManager) attachBegin() {
+	m.mu.Lock()
+	m.attachN++
+	m.mu.Unlock()
+}
+
+func (m *ProcessManager) attachEnd() {
+	m.mu.Lock()
+	if m.attachN > 0 {
+		m.attachN--
+	}
+	m.lastActiveAt = m.now()
+	m.mu.Unlock()
+}
+
+// IdleSeconds reports how long the sandbox has had no running process and no
+// attached exec stream. It is 0 while the sandbox is active. The controller
+// compares this against timeouts.idleSeconds and terminates the sandbox when it
+// is exceeded.
+func (m *ProcessManager) IdleSeconds() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.attachN > 0 {
+		return 0
+	}
+	for _, p := range m.proc {
+		if p.state == "STARTING" || p.state == "RUNNING" {
+			return 0
+		}
+	}
+	base := m.lastActiveAt
+	if base.IsZero() {
+		return 0
+	}
+	d := m.now().Sub(base)
+	if d < 0 {
+		return 0
+	}
+	return int(d.Seconds())
 }
 
 // Observed returns the current observed state of every process the manager
@@ -176,14 +229,42 @@ func (m *ProcessManager) start(id string, d desired) {
 	if f, err := os.Create(filepath.Join(dir, "stderr")); err == nil {
 		stderrW = append(stderrW, f)
 	}
-	cmd.Stdout = io.MultiWriter(stdoutW...)
-	cmd.Stderr = io.MultiWriter(stderrW...)
-	stdin, _ := cmd.StdinPipe()
 
-	// New process group so cancel can signal the whole tree.
-	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+	var stdin io.WriteCloser
+	var ptmx *os.File
+	if d.PTY {
+		// Allocate a real PTY: the child gets the slave as its controlling
+		// terminal (Setsid + Setctty), and the master is the single
+		// bidirectional endpoint for the attach stream. Output is inherently
+		// merged, so it all flows on the stdout channel. Setsid already makes
+		// the child a session/process-group leader (pgid == pid), so the
+		// cancel path's `kill(-pgid)` still reaches the whole tree.
+		var tty *os.File
+		var err error
+		ptmx, tty, err = openPTY(d.PTYRows, d.PTYCols)
+		if err == nil {
+			cmd.Stdin, cmd.Stdout, cmd.Stderr = tty, tty, tty
+			cmd.SysProcAttr = &syscall.SysProcAttr{Setsid: true, Setctty: true}
+			stdin = ptmx
+			out := io.MultiWriter(stdoutW...)
+			go func() {
+				_, _ = io.Copy(out, ptmx)
+			}()
+			defer func() { _ = tty.Close() }()
+		} else {
+			// Fall back to pipes rather than failing the process outright.
+			d.PTY = false
+		}
+	}
+	if !d.PTY {
+		// New process group so cancel can signal the whole tree.
+		cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
+		cmd.Stdout = io.MultiWriter(stdoutW...)
+		cmd.Stderr = io.MultiWriter(stderrW...)
+		stdin, _ = cmd.StdinPipe()
+	}
 
-	p := &procState{id: id, cmd: cmd, state: "STARTING", done: make(chan struct{}), io: pio, stdin: stdin}
+	p := &procState{id: id, cmd: cmd, state: "STARTING", done: make(chan struct{}), io: pio, stdin: stdin, ptmx: ptmx}
 	m.mu.Lock()
 	m.proc[id] = p
 	m.mu.Unlock()
@@ -191,8 +272,12 @@ func (m *ProcessManager) start(id string, d desired) {
 	if err := cmd.Start(); err != nil {
 		m.mu.Lock()
 		p.state = "FAILED"
+		m.lastActiveAt = m.now()
 		close(p.done)
 		m.mu.Unlock()
+		if ptmx != nil {
+			_ = ptmx.Close()
+		}
 		pio.close()
 		return
 	}
@@ -223,12 +308,18 @@ func (m *ProcessManager) wait(p *procState) {
 		code = 1
 	}
 	p.exitCode = &code
+	m.lastActiveAt = m.now()
 	pio := p.io
 	stdin := p.stdin
+	ptmx := p.ptmx
 	close(p.done)
 	m.mu.Unlock()
 
-	if stdin != nil {
+	if ptmx != nil {
+		// PTY: stdin and the master are the same fd. Closing it unblocks the
+		// io.Copy draining the master into procIO.
+		_ = ptmx.Close()
+	} else if stdin != nil {
 		_ = stdin.Close()
 	}
 	if pio != nil {

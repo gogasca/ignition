@@ -119,9 +119,6 @@ func (c *client) do(ctx context.Context, method, path string, body any, out any,
 	if c.token != "" {
 		req.Header.Set("Authorization", "Bearer "+c.token)
 	}
-	if c.project != "" {
-		req.Header.Set("X-Ignition-Project", c.project)
-	}
 	if opts.idempotent {
 		key := opts.idempotencyKey
 		if key == "" {
@@ -167,11 +164,14 @@ func newIdempotencyKey() string {
 	return "ictl-" + hex.EncodeToString(b[:])
 }
 
-// resource-path helpers. Every route also exists unscoped with the project
-// supplied via the X-Ignition-Project header, which is what the client sets.
-func sandboxesPath() string            { return "/v1/sandboxes" }
-func sandboxPath(id string) string     { return "/v1/sandboxes/" + id }
-func processesPath(sbx string) string  { return "/v1/sandboxes/" + sbx + "/processes" }
-func processPath(sbx, p string) string { return "/v1/sandboxes/" + sbx + "/processes/" + p }
-func operationsPath() string           { return "/v1/operations" }
-func operationPath(id string) string   { return "/v1/operations/" + id }
+// resource-path helpers. The public API is project-scoped:
+// /v1/projects/{project}/... — the client's configured project fills {project}.
+// Project-scoped commands construct their client with env.projectClient, which
+// guarantees c.project is set.
+func (c *client) base() string                     { return "/v1/projects/" + c.project }
+func (c *client) sandboxesPath() string            { return c.base() + "/sandboxes" }
+func (c *client) sandboxPath(id string) string     { return c.base() + "/sandboxes/" + id }
+func (c *client) processesPath(sbx string) string  { return c.base() + "/sandboxes/" + sbx + "/processes" }
+func (c *client) processPath(sbx, p string) string { return c.base() + "/sandboxes/" + sbx + "/processes/" + p }
+func (c *client) operationsPath() string           { return c.base() + "/operations" }
+func (c *client) operationPath(id string) string   { return c.base() + "/operations/" + id }

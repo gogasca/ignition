@@ -127,6 +127,8 @@ CREATE TABLE IF NOT EXISTS processes (
     working_directory   TEXT NOT NULL DEFAULT '',
     environment         JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(environment) = 'object'),
     pty                 BOOLEAN NOT NULL DEFAULT FALSE,
+    pty_rows            INT NOT NULL DEFAULT 0,
+    pty_cols            INT NOT NULL DEFAULT 0,
     create_time         TIMESTAMPTZ NOT NULL,
     start_time          TIMESTAMPTZ,
     exit_time           TIMESTAMPTZ,
@@ -162,3 +164,26 @@ CREATE TABLE IF NOT EXISTS controller_leases (
     holder     TEXT NOT NULL,
     until_time TIMESTAMPTZ NOT NULL
 );
+
+-- Change notification for the :watch SSE streams. ignition-api LISTENs on
+-- 'ignition_watch' and wakes the matching watchers immediately; the payload is
+-- '<table>:<id>'. Both ignition-api (desired state) and ignition-controller
+-- (observed state) write these tables, so a trigger catches every writer
+-- without app-code coupling. Watchers still read authoritative state — a
+-- missed or duplicate notification only affects latency.
+CREATE OR REPLACE FUNCTION ignition_notify_watch() RETURNS trigger AS $$
+BEGIN
+    PERFORM pg_notify('ignition_watch', TG_TABLE_NAME || ':' || NEW.id);
+    RETURN NEW;
+END;
+$$ LANGUAGE plpgsql;
+
+DROP TRIGGER IF EXISTS sandboxes_notify_watch ON sandboxes;
+CREATE TRIGGER sandboxes_notify_watch
+    AFTER INSERT OR UPDATE ON sandboxes
+    FOR EACH ROW EXECUTE FUNCTION ignition_notify_watch();
+
+DROP TRIGGER IF EXISTS operations_notify_watch ON operations;
+CREATE TRIGGER operations_notify_watch
+    AFTER INSERT OR UPDATE ON operations
+    FOR EACH ROW EXECUTE FUNCTION ignition_notify_watch();

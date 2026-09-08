@@ -114,7 +114,10 @@ routing on `placement.region`. Do not run a globally writable Postgres.
 - `Authorization: Bearer` on every route. `Idempotency-Key` required on create,
   terminate, operation-cancel, and process create/attach/signal/cancel.
 - Watch is **SSE** — content-addressed snapshot on change, `Last-Event-ID`,
-  heartbeats, closes on terminal state or ~60s.
+  15s heartbeats. A Postgres `LISTEN/NOTIFY` trigger on `sandboxes`/`operations`
+  wakes the stream on any write (from `ignition-api` or `ignition-controller`),
+  so changes push in <1s; a 10s poll is only a backstop. Stays open until the
+  resource is terminal, the client disconnects, or a 30-minute cap.
 
 ### Authentication and authorization
 
@@ -173,7 +176,8 @@ One serializable Cloud SQL transaction; the API never creates a Pod:
   expireTime, streamEpoch }`; signal/cancel are idempotent row updates. Bytes
   never enter `ignition-api`.
 - **List:** cursor pagination, order `(create_time, id)`, project filter, SQL
-  `LIMIT`. **Watch:** snapshot then heartbeats then close (~60s).
+  `LIMIT`. **Watch:** snapshot, then push-on-change via `LISTEN/NOTIFY` (10s poll
+  backstop), heartbeats, open until terminal / disconnect / 30-minute cap.
 
 API crash after commit is safe: the operation is durable, the controller
 proceeds, clients reconnect with watch/`GET`. No cross-replica lock — the
@@ -195,6 +199,7 @@ for each sandbox in SQL:
   PodReady (+ GPU: init-healthy + gpu-uuid annotations) → SQL READY
   desired TERMINATING               → delete Pod; on gone → FINISHED
   CREATE cancelled                  → SQL already FAILED; do not create
+  READY + idle > timeouts.idleSeconds → delete Pod; FINISHED / IDLE_TIMEOUT
   startup deadline exceeded         → FAILED CAPACITY_UNAVAILABLE / STARTUP_TIMEOUT
   Pod gone unexpectedly             → FAILED WORKER_LOST; release quota; restore balloon
   GPU cleanup ambiguous             → GET node; cordon only if gpu-sandbox-l4
@@ -417,12 +422,23 @@ runtime](ignition-deferred-runtime.md).
   `sandbox-init` polls. The sandbox holds no Kubernetes credential.
 - **Observed → controller.** `sandbox-init` runs/signals/reaps the processes and
   serves `GET :8081/v1/processes` (`{processes: {processId → {state, exitCode,
-  signal}}}`). The controller polls it each reconcile, advances `processes.state`,
-  and mirrors the result into `ignition.io/process-observed`.
+  signal}}, idleSeconds}`). The controller polls it each reconcile, advances
+  `processes.state`, and mirrors the process map into `ignition.io/process-observed`.
 
 Failed in-sandbox create → `FAILED` with a typed reason. Signal/cancel stay SQL
-desired-state until the supervisor reports `EXITED`/`FAILED`. PTY is accepted but
-not yet allocated.
+desired-state until the supervisor reports `EXITED`/`FAILED`. When `pty: true`
+(with optional `ptyRows`/`ptyCols`), `sandbox-init` allocates a real PTY —
+`Setsid` + `Setctty`, initial `TIOCSWINSZ` — and the master is the single
+bidirectional stream endpoint; output is merged on the stdout channel. Mid-session
+resize is not wired.
+
+**Idle timeout.** `sandbox-init` reports `idleSeconds` — time with no process in
+`STARTING`/`RUNNING` and no attached exec stream (0 while active). When a `READY`
+sandbox's `idleSeconds` reaches `timeouts.idleSeconds` (and that value is > 0),
+the controller deletes the Pod and finalizes the sandbox `FINISHED` /
+`IDLE_TIMEOUT`, releasing quota. `nativeEntrypoint` sandboxes have no supervisor
+and so no idle enforcement. `timeouts.maximumRuntimeSeconds` is enforced
+separately by the Pod's `activeDeadlineSeconds`.
 
 ### Byte stream (`ignition-gateway`)
 
@@ -445,8 +461,11 @@ only from `ignition-controller` and `ignition-gateway` — the only
 control-plane↔sandbox path.
 
 `gatewayUrl` is the **regional** gateway hostname; a token is invalid on any
-other region's gateway. `ignition-gateway` is deployed in the `dev` overlay
-only; a public WebSocket Ingress and non-`dev` overlay wiring are open.
+other region's gateway. Every overlay deploys `ignition-gateway`: `staging` and
+`prod` front it with a public `Ingress` + `ManagedCertificate` (backend
+`timeoutSec: 3600` for the long-lived WebSocket); `dev` and `anyscale-staging`
+have no public DNS, so exec goes through `kubectl port-forward svc/ignition-gateway
+8443:8080` and `IGNITION_GATEWAY_URL` is `http://127.0.0.1:8443`.
 
 ## 9. Data model
 
@@ -455,6 +474,10 @@ projects           role_bindings      images            -- images: seed rows; Im
 sandboxes          processes          operations
 idempotency_keys   project_quota      controller_leases  -- project_quota is a count, not a ledger
 ```
+
+An `AFTER INSERT OR UPDATE` trigger on `sandboxes` and `operations`
+(`ignition_notify_watch`) issues `pg_notify('ignition_watch', …)`, which
+`ignition-api` `LISTEN`s on to push `:watch` streams.
 
 Complete baseline schema (`internal/store/schema.sql`, embedded), not a migration
 chain. Every customer row has non-null `project_id`. Indexes `(project_id, id)`,

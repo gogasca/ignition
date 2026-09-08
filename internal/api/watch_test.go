@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"ignition.dev/ignition/internal/store"
 )
@@ -23,7 +24,7 @@ func TestWriteSSEEmitsChangedSnapshots(t *testing.T) {
 
 	w := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/watch", nil).WithContext(context.Background())
-	writeSSE(w, r, "req_test", fetch, terminal)
+	writeSSE(w, r, sseOpts{requestID: "req_test", fetch: fetch, terminal: terminal, poll: time.Millisecond})
 
 	body := w.Body.String()
 	if got := strings.Count(body, "event: snapshot"); got != 2 {
@@ -44,7 +45,7 @@ func TestWriteSSEResumesAfterLastEventID(t *testing.T) {
 	terminal := func(any) bool { return true }
 
 	first := httptest.NewRecorder()
-	writeSSE(first, httptest.NewRequest("GET", "/watch", nil), "req_test", fetch, terminal)
+	writeSSE(first, httptest.NewRequest("GET", "/watch", nil), sseOpts{requestID: "req_test", fetch: fetch, terminal: terminal})
 	ids := eventIDs(first.Body.String())
 	if len(ids) != 1 {
 		t.Fatalf("initial event IDs = %v", ids)
@@ -53,7 +54,7 @@ func TestWriteSSEResumesAfterLastEventID(t *testing.T) {
 	resumed := httptest.NewRecorder()
 	r := httptest.NewRequest("GET", "/watch", nil)
 	r.Header.Set("Last-Event-ID", ids[0])
-	writeSSE(resumed, r, "req_test", fetch, terminal)
+	writeSSE(resumed, r, sseOpts{requestID: "req_test", fetch: fetch, terminal: terminal})
 	if strings.Contains(resumed.Body.String(), "event: snapshot") {
 		t.Fatalf("resumed stream replayed an acknowledged snapshot: %s", resumed.Body.String())
 	}

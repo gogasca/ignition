@@ -15,7 +15,11 @@ data:
   # (OIDC discovery) is not on that path; www.googleapis.com is. Pin JWKS
   # directly so the verifier never needs the discovery document.
   IGNITION_OIDC_JWKS_URL: "https://www.googleapis.com/oauth2/v3/certs"
-  IGNITION_GATEWAY_URL: "https://gateway.anyscale-demo.ignition.dev"
+  # No public DNS, so the exec attach stream is reached through a port-forward:
+  #   kubectl port-forward -n ignition-system svc/ignition-gateway 8443:8080
+  # The value below is the exec-stream token audience AND the URL `ignitionctl
+  # exec` / the SDKs dial, so it must match the local port above exactly.
+  IGNITION_GATEWAY_URL: "http://127.0.0.1:8443"
   IGNITION_MAX_ACTIVE_SANDBOXES: "5"
   # Seed the first owner on startup (idempotent once an owner exists).
   IGNITION_BOOTSTRAP_PROJECT: "prj_dev"
@@ -45,3 +49,14 @@ data:
   # exercise the full OIDC verification + RBAC without needing a sandbox
   # node pool or a seeded image. Switch to "full" once img_seed is pushed.
   IGNITION_PROBE_JOURNEYS: "lite"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-gateway
+  namespace: ignition-system
+data:
+  IGNITION_ENV: "staging"
+  # No public DNS: reached via `kubectl port-forward svc/ignition-gateway
+  # 8443:8080`. Must equal ignition-api's IGNITION_GATEWAY_URL.
+  IGNITION_GATEWAY_URL: "http://127.0.0.1:8443"

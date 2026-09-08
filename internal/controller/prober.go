@@ -18,11 +18,22 @@ type ProcObserved struct {
 	Signal   string `json:"signal,omitempty"`
 }
 
-// ProcessProber fetches observed tenant-process state from a sandbox's
-// init supervisor. The controller is the only caller (it holds the Pod-network
-// path); sandbox-init exposes GET /v1/processes on port 8081.
+// ProbeResult is one poll of a sandbox's init supervisor.
+type ProbeResult struct {
+	Processes map[string]ProcObserved
+	// IdleSeconds is how long the sandbox has had no running process and no
+	// attached exec stream; 0 while active. IdleReported is false for an older
+	// supervisor that does not send the field (then idle-timeout enforcement is
+	// skipped for that sandbox).
+	IdleSeconds  int
+	IdleReported bool
+}
+
+// ProcessProber fetches observed tenant-process state (and idle time) from a
+// sandbox's init supervisor. The controller is the only caller (it holds the
+// Pod-network path); sandbox-init exposes GET /v1/processes on port 8081.
 type ProcessProber interface {
-	ObservedProcesses(ctx context.Context, podIP string) (map[string]ProcObserved, error)
+	Probe(ctx context.Context, podIP string) (ProbeResult, error)
 }
 
 // HTTPProber talks to sandbox-init over the Pod network.
@@ -40,7 +51,7 @@ func NewHTTPProber() *HTTPProber {
 	}
 }
 
-func (p *HTTPProber) ObservedProcesses(ctx context.Context, podIP string) (map[string]ProcObserved, error) {
+func (p *HTTPProber) Probe(ctx context.Context, podIP string) (ProbeResult, error) {
 	port := p.Port
 	if port == 0 {
 		port = 8081
@@ -48,7 +59,7 @@ func (p *HTTPProber) ObservedProcesses(ctx context.Context, podIP string) (map[s
 	url := fmt.Sprintf("http://%s/v1/processes", net.JoinHostPort(podIP, fmt.Sprint(port)))
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
-		return nil, err
+		return ProbeResult{}, err
 	}
 	client := p.Client
 	if client == nil {
@@ -56,21 +67,27 @@ func (p *HTTPProber) ObservedProcesses(ctx context.Context, podIP string) (map[s
 	}
 	resp, err := client.Do(req)
 	if err != nil {
-		return nil, err
+		return ProbeResult{}, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sandbox-init %s: %s", url, resp.Status)
+		return ProbeResult{}, fmt.Errorf("sandbox-init %s: %s", url, resp.Status)
 	}
 	var out struct {
-		Processes map[string]ProcObserved `json:"processes"`
+		Processes   map[string]ProcObserved `json:"processes"`
+		IdleSeconds *int                    `json:"idleSeconds"`
 	}
 	if err := json.Unmarshal(body, &out); err != nil {
-		return nil, err
+		return ProbeResult{}, err
 	}
-	if out.Processes == nil {
-		out.Processes = map[string]ProcObserved{}
+	res := ProbeResult{Processes: out.Processes}
+	if res.Processes == nil {
+		res.Processes = map[string]ProcObserved{}
 	}
-	return out.Processes, nil
+	if out.IdleSeconds != nil {
+		res.IdleSeconds = *out.IdleSeconds
+		res.IdleReported = true
+	}
+	return res, nil
 }

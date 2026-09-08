@@ -248,7 +248,6 @@ func (c Config) Validate() error {
 	httpsURLs := map[string]string{
 		"IGNITION_OIDC_ISSUER":   c.OIDCIssuer,
 		"IGNITION_OIDC_JWKS_URL": c.OIDCJWKSURL,
-		"IGNITION_GATEWAY_URL":   c.GatewayURL,
 	}
 	if c.IAPEnabled {
 		httpsURLs["IGNITION_IAP_ISSUER"] = c.IAPIssuer
@@ -261,6 +260,18 @@ func (c Config) Validate() error {
 		u, err := url.Parse(raw)
 		if err != nil || u.Scheme != "https" || u.Host == "" || u.User != nil {
 			return fmt.Errorf("%s must be an absolute HTTPS URL without user info", name)
+		}
+	}
+	// IGNITION_GATEWAY_URL is HTTPS in a public deployment, but a
+	// no-public-DNS environment reaches the gateway through a `kubectl
+	// port-forward` to a loopback address, which is not a security downgrade
+	// (it never leaves the operator's machine and the token audience still
+	// binds the stream).
+	if raw := c.GatewayURL; raw != "" {
+		u, err := url.Parse(raw)
+		loopback := u != nil && u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1")
+		if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "https" && !loopback) {
+			return fmt.Errorf("IGNITION_GATEWAY_URL must be an absolute HTTPS URL (or http://127.0.0.1[:port] for a port-forwarded deployment)")
 		}
 	}
 	if strings.TrimSpace(c.SandboxImagePrefix) == "" && strings.TrimSpace(c.GCPProject) == "" {

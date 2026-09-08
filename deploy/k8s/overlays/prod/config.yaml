@@ -21,3 +21,13 @@ data:
   IGNITION_ENV: "prod"
   IGNITION_GCP_PROJECT: "ignition-prod"
   IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/ignition-prod/sandboxes"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-gateway
+  namespace: ignition-system
+data:
+  IGNITION_ENV: "prod"
+  # Must equal ignition-api's IGNITION_GATEWAY_URL (the exec-stream audience).
+  IGNITION_GATEWAY_URL: "https://gateway.us-central1.ignition.dev"

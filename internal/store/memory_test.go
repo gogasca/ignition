@@ -260,3 +260,57 @@ func TestUpdateObservedReleasesQuotaOnFail(t *testing.T) {
 		t.Fatalf("quota = %d", m.QuotaActive("prj"))
 	}
 }
+
+func TestMemoryChangeNotifier(t *testing.T) {
+	ctx := context.Background()
+	m := store.NewMemory()
+	m.SeedImage("prj_dev", "img")
+
+	changes, cancel := m.Subscribe()
+	defer cancel()
+
+	res, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
+		ProjectID: "prj_dev", Principal: "alice", IdemKey: "k1", IdemHash: "k1",
+		ImageID: "img", Resources: spec(), MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	assertChange(t, changes, "sandboxes", res.Sandbox.ID)
+
+	if err := m.UpdateObserved(ctx, store.ObservedUpdate{
+		ProjectID: "prj_dev", SandboxID: res.Sandbox.ID, State: "READY", Reason: "READY",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	assertChange(t, changes, "sandboxes", res.Sandbox.ID)
+
+	// After cancel, the channel is closed: buffered items drain, then it is done.
+	cancel()
+	drained := time.After(2 * time.Second)
+	for {
+		select {
+		case _, open := <-changes:
+			if !open {
+				return
+			}
+		case <-drained:
+			t.Fatal("channel not closed after cancel")
+		}
+	}
+}
+
+func assertChange(t *testing.T, ch <-chan store.Change, kind, id string) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case c := <-ch:
+			if c.Kind == kind && c.ID == id {
+				return
+			}
+		case <-deadline:
+			t.Fatalf("no %s change for %s", kind, id)
+		}
+	}
+}

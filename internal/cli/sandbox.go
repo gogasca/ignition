@@ -118,7 +118,7 @@ func sandboxCreate(e *env, args []string) error {
 		body["labels"] = map[string]string(labels)
 	}
 
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
@@ -132,7 +132,7 @@ func sandboxCreate(e *env, args []string) error {
 		Sandbox   sandboxJSON    `json:"sandbox"`
 		Operation map[string]any `json:"operation"`
 	}
-	if err := c.do(ctx, "POST", sandboxesPath(), body, &created, requestOptions{idempotent: true}); err != nil {
+	if err := c.do(ctx, "POST", c.sandboxesPath(), body, &created, requestOptions{idempotent: true}); err != nil {
 		return err
 	}
 	sb := created.Sandbox
@@ -163,7 +163,7 @@ func sandboxList(e *env, args []string) error {
 	if _, err := e.parse(fs, g, args); err != nil {
 		return err
 	}
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
@@ -178,7 +178,7 @@ func sandboxList(e *env, args []string) error {
 		Sandboxes     []sandboxJSON `json:"sandboxes"`
 		NextPageToken string        `json:"nextPageToken"`
 	}
-	if err := c.do(ctx, "GET", sandboxesPath(), nil, &resp, requestOptions{query: q}); err != nil {
+	if err := c.do(ctx, "GET", c.sandboxesPath(), nil, &resp, requestOptions{query: q}); err != nil {
 		return err
 	}
 	if e.emit(resp) {
@@ -209,14 +209,14 @@ func sandboxGet(e *env, args []string) error {
 	if len(pos) != 1 {
 		return usageErrorf("usage: ignitionctl sandbox get <sandbox>")
 	}
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := signalContext()
 	defer cancel()
 	var sb sandboxJSON
-	if err := c.do(ctx, "GET", sandboxPath(pos[0]), nil, &sb, requestOptions{}); err != nil {
+	if err := c.do(ctx, "GET", c.sandboxPath(pos[0]), nil, &sb, requestOptions{}); err != nil {
 		return err
 	}
 	if e.emit(sb) {
@@ -241,7 +241,7 @@ func sandboxTerminate(e *env, args []string) error {
 		return usageErrorf("usage: ignitionctl sandbox terminate <sandbox>")
 	}
 	id := pos[0]
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
@@ -252,7 +252,7 @@ func sandboxTerminate(e *env, args []string) error {
 		Sandbox   sandboxJSON    `json:"sandbox"`
 		Operation map[string]any `json:"operation"`
 	}
-	if err := c.do(ctx, "POST", sandboxPath(id)+":terminate", map[string]any{}, &resp, requestOptions{idempotent: true}); err != nil {
+	if err := c.do(ctx, "POST", c.sandboxPath(id)+":terminate", map[string]any{}, &resp, requestOptions{idempotent: true}); err != nil {
 		return err
 	}
 	sb := resp.Sandbox
@@ -299,7 +299,7 @@ func pollSandbox(ctx context.Context, c *client, id string, timeout time.Duratio
 	var last sandboxJSON
 	for {
 		var sb sandboxJSON
-		if err := c.do(ctx, "GET", sandboxPath(id), nil, &sb, requestOptions{}); err != nil {
+		if err := c.do(ctx, "GET", c.sandboxPath(id), nil, &sb, requestOptions{}); err != nil {
 			return last, err
 		}
 		last = sb

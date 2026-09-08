@@ -25,6 +25,7 @@ type Memory struct {
 	quotaActive map[string]int
 	leaseHolder string
 	leaseUntil  time.Time
+	hub         *subHub
 }
 
 type idemRecord struct {
@@ -45,6 +46,7 @@ func NewMemory() *Memory {
 		processes:   map[string]Process{},
 		idem:        map[string]idemRecord{},
 		quotaActive: map[string]int{},
+		hub:         newSubHub(),
 	}
 }
 
@@ -331,6 +333,8 @@ func (m *Memory) CreateSandbox(_ context.Context, in CreateSandboxInput) (Create
 
 	body, _ := json.Marshal(map[string]any{"sandbox": sb, "operation": op})
 	m.finishIdem(slot, in.IdemHash, 202, body)
+	m.notify("sandboxes", sbID)
+	m.notify("operations", opID)
 	return CreateSandboxResult{Sandbox: sb, Operation: op}, nil
 }
 
@@ -411,6 +415,8 @@ func (m *Memory) TerminateSandbox(_ context.Context, projectID, sandboxID, princ
 	m.operations[op.ID] = op
 	body, _ := json.Marshal(map[string]any{"sandbox": sb, "operation": op})
 	m.finishIdem(slot, idemHash, 202, body)
+	m.notify("sandboxes", sandboxID)
+	m.notify("operations", op.ID)
 	return TerminateResult{Sandbox: sb, Operation: op}, nil
 }
 
@@ -464,12 +470,14 @@ func (m *Memory) CancelOperation(_ context.Context, projectID, operationID, prin
 		op.State = "CANCELLED"
 		op.EndTime = &now
 		m.operations[operationID] = op
+		m.notify("operations", operationID)
 		if op.Kind == "CREATE_SANDBOX" {
 			if sb, ok := m.sandboxes[op.ResourceID]; ok && sb.ProjectID == projectID && countsQuota(sb.State) {
 				sb.State = "FAILED"
 				sb.StateReason = "CANCELLED"
 				sb.FinishTime = &now
 				m.sandboxes[sb.ID] = sb
+				m.notify("sandboxes", sb.ID)
 				m.quotaActive[projectID]--
 				if m.quotaActive[projectID] < 0 {
 					m.quotaActive[projectID] = 0
@@ -508,6 +516,8 @@ func (m *Memory) CreateProcess(_ context.Context, in CreateProcessInput) (Proces
 		WorkingDirectory: in.WorkingDir,
 		Environment:      in.Environment,
 		PTY:              in.PTY,
+		PTYRows:          in.PTYRows,
+		PTYCols:          in.PTYCols,
 		CreateTime:       now,
 		CreatedBy:        in.Principal,
 	}
@@ -654,10 +664,18 @@ func (m *Memory) UpdateObserved(_ context.Context, in ObservedUpdate) error {
 	if !ok || sb.ProjectID != in.ProjectID {
 		return ErrNotFound
 	}
+	var opID string
+	defer func() {
+		m.notify("sandboxes", in.SandboxID)
+		if opID != "" {
+			m.notify("operations", opID)
+		}
+	}()
 	prev := sb.State
 	if prev == "FINISHED" || prev == "FAILED" {
 		return nil
 	}
+	opID = sb.OperationID
 	now := time.Now().UTC()
 	sb.State = in.State
 	sb.StateReason = in.Reason

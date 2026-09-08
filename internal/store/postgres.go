@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/jackc/pgx/v5"
@@ -20,7 +21,10 @@ var schemaSQL string
 
 // Postgres implements Store and ControllerStore against Cloud SQL PostgreSQL.
 type Postgres struct {
-	pool *pgxpool.Pool
+	pool    *pgxpool.Pool
+	dsn     string
+	hubOnce sync.Once
+	hub     *watchHub // lazily started LISTEN fan-out; nil until first Subscribe
 }
 
 func OpenPostgres(ctx context.Context, dsn string) (*Postgres, error) {
@@ -64,7 +68,7 @@ func openPostgres(ctx context.Context, dsn string, initializeSchema bool) (*Post
 		}
 	}
 
-	p := &Postgres{pool: pool}
+	p := &Postgres{pool: pool, dsn: dsn}
 	if initializeSchema {
 		if err := p.applySchema(ctx); err != nil {
 			pool.Close()
@@ -77,6 +81,9 @@ func openPostgres(ctx context.Context, dsn string, initializeSchema bool) (*Post
 func (p *Postgres) Close() error {
 	if p == nil || p.pool == nil {
 		return nil
+	}
+	if p.hub != nil {
+		p.hub.stop()
 	}
 	p.pool.Close()
 	return nil
@@ -102,14 +109,21 @@ func (p *Postgres) applySchema(ctx context.Context) error {
 func splitSQL(script string) []string {
 	var out []string
 	var b strings.Builder
+	inDollar := false
 	for _, line := range strings.Split(script, "\n") {
 		trim := strings.TrimSpace(line)
-		if strings.HasPrefix(trim, "--") {
+		if !inDollar && strings.HasPrefix(trim, "--") {
 			continue
+		}
+		// Track `$$` dollar-quoted bodies (plpgsql functions) so a `;` inside
+		// one is not mistaken for a statement terminator. Bodies here use a
+		// bare `$$`; an even count on the line leaves the state unchanged.
+		if strings.Count(line, "$$")%2 == 1 {
+			inDollar = !inDollar
 		}
 		b.WriteString(line)
 		b.WriteByte('\n')
-		if strings.HasSuffix(trim, ";") {
+		if !inDollar && strings.HasSuffix(trim, ";") {
 			stmt := strings.TrimSpace(b.String())
 			b.Reset()
 			if stmt != "" {

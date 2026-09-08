@@ -283,6 +283,8 @@ type processDesired struct {
 	WorkingDirectory string            `json:"workingDirectory,omitempty"`
 	Environment      map[string]string `json:"environment,omitempty"`
 	PTY              bool              `json:"pty,omitempty"`
+	PTYRows          int               `json:"ptyRows,omitempty"`
+	PTYCols          int               `json:"ptyCols,omitempty"`
 	Signal           string            `json:"signal,omitempty"`
 	Cancel           bool              `json:"cancel,omitempty"`
 }
@@ -304,6 +306,8 @@ func (c *Controller) syncProcesses(ctx context.Context, sb store.Sandbox, pod *k
 			WorkingDirectory: p.WorkingDirectory,
 			Environment:      p.Environment,
 			PTY:              p.PTY,
+			PTYRows:          p.PTYRows,
+			PTYCols:          p.PTYCols,
 			Signal:           p.TerminatingSignal,
 			Cancel:           p.State == "CANCELLING",
 		}
@@ -316,13 +320,15 @@ func (c *Controller) syncProcesses(ctx context.Context, sb store.Sandbox, pod *k
 	}
 
 	observed := map[string]processObservedRec{}
+	var probe ProbeResult
 	// Preferred source: poll the sandbox-init supervisor over the Pod network
 	// (it holds no Kubernetes credentials, so it cannot write its own
 	// annotation). Mirror the result into ignition.io/process-observed for
 	// visibility and as the fallback path used by tests and older Pods.
 	if c.opts.ProcessProber != nil && pod.PodIP != "" {
-		if got, perr := c.opts.ProcessProber.ObservedProcesses(ctx, pod.PodIP); perr == nil {
-			for id, rec := range got {
+		if got, perr := c.opts.ProcessProber.Probe(ctx, pod.PodIP); perr == nil {
+			probe = got
+			for id, rec := range got.Processes {
 				observed[id] = processObservedRec{State: rec.State, ExitCode: rec.ExitCode}
 			}
 			if mirror, merr := json.Marshal(observed); merr == nil {
@@ -370,7 +376,45 @@ func (c *Controller) syncProcesses(ctx context.Context, sb store.Sandbox, pod *k
 			}
 		}
 	}
+
+	if c.idleExceeded(sb, probe) {
+		return c.terminateSandbox(ctx, sb, pod, "IDLE_TIMEOUT")
+	}
 	return nil
+}
+
+// idleExceeded reports whether a READY sandbox has been inactive longer than
+// its timeouts.idleSeconds. Enforcement needs the supervisor's idleSeconds
+// (only the in-sandbox supervisor sees both process state and live exec
+// streams), so it is skipped when the sandbox opted out (idleSeconds <= 0) or
+// the probe did not report the field.
+func (c *Controller) idleExceeded(sb store.Sandbox, probe ProbeResult) bool {
+	return sb.Timeouts.IdleSeconds > 0 &&
+		probe.IdleReported &&
+		probe.IdleSeconds >= sb.Timeouts.IdleSeconds
+}
+
+// terminateSandbox deletes a running sandbox Pod and finalizes the sandbox as
+// FINISHED (releasing quota). It is the controller-driven path for idle and
+// max-runtime expiry; a client-requested terminate goes through the desired
+// TERMINATING state instead.
+func (c *Controller) terminateSandbox(ctx context.Context, sb store.Sandbox, pod *k8s.Pod, reason string) error {
+	if err := c.failProcesses(ctx, sb); err != nil {
+		return err
+	}
+	if pod != nil && pod.Name != "" {
+		gpu := k8s.IsGPUProfile(sb.Resources.Accelerator.Type)
+		c.taintReusePending(pod, gpu)
+		if err := c.pods.Delete(pod.Name); err != nil && !errors.Is(err, k8s.ErrNotFound) {
+			return err
+		}
+	}
+	return c.store.UpdateObserved(ctx, store.ObservedUpdate{
+		ProjectID: sb.ProjectID,
+		SandboxID: sb.ID,
+		State:     "FINISHED",
+		Reason:    reason,
+	})
 }
 
 func (c *Controller) failProcesses(ctx context.Context, sb store.Sandbox) error {

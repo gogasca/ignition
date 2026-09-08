@@ -1,0 +1,34 @@
+# Public WebSocket edge for ignition-gateway (the exec attach stream).
+# The host MUST equal ignition-api's IGNITION_GATEWAY_URL (the exec-stream token
+# audience) — here https://gateway.staging.ignition.dev.
+apiVersion: networking.gke.io/v1
+kind: ManagedCertificate
+metadata:
+  name: ignition-gateway
+  namespace: ignition-system
+spec:
+  domains:
+    - gateway.staging.ignition.dev
+---
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: ignition-gateway
+  namespace: ignition-system
+  annotations:
+    kubernetes.io/ingress.class: gce
+    kubernetes.io/ingress.global-static-ip-name: ignition-gateway-staging
+    networking.gke.io/managed-certificates: ignition-gateway
+    kubernetes.io/ingress.allow-http: "false"
+spec:
+  rules:
+    - host: gateway.staging.ignition.dev
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: ignition-gateway
+                port:
+                  number: 8080

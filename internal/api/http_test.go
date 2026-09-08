@@ -101,6 +101,19 @@ func TestHealthzUnauthenticated(t *testing.T) {
 	}
 }
 
+func TestMeEchoesPrincipal(t *testing.T) {
+	h := newHarness(t)
+	got := decode(t, h.do(t, http.MethodGet, "/v1/me", "alice", "", ""))
+	if got["subject"] != "alice" {
+		t.Fatalf("me = %v", got)
+	}
+	resp := h.do(t, http.MethodGet, "/v1/me", "", "", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated /v1/me = %d, want 401", resp.StatusCode)
+	}
+}
+
 func TestMissingBearerIs401(t *testing.T) {
 	h := newHarness(t)
 	resp := h.do(t, http.MethodGet, "/v1/projects/prj_dev/sandboxes", "", "", "")
@@ -429,6 +442,33 @@ func TestProcessRequiresReadySandbox(t *testing.T) {
 	out := decode(t, resp)
 	if resp.StatusCode != http.StatusBadRequest || out["code"] != "FAILED_PRECONDITION" {
 		t.Fatalf("status=%d code=%v", resp.StatusCode, out["code"])
+	}
+}
+
+func TestProcessAcceptsPTYDimensions(t *testing.T) {
+	h := newHarness(t)
+	created := decode(t, h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "prc-pty", createBody))
+	sbx := created["sandbox"].(map[string]any)["id"].(string)
+	h.mem.SetSandboxState("prj_dev", sbx, "READY")
+
+	// pty: true with dimensions is now accepted and echoed back.
+	proc := decode(t, h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes/"+sbx+"/processes", "alice", "p-pty",
+		`{"command":["bash"],"pty":true,"ptyRows":40,"ptyCols":100}`))
+	if proc["pty"] != true || proc["ptyRows"].(float64) != 40 || proc["ptyCols"].(float64) != 100 {
+		t.Fatalf("process = %v", proc)
+	}
+
+	// Dimensions without pty:true are rejected.
+	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes/"+sbx+"/processes", "alice", "p-pty2",
+		`{"command":["bash"],"ptyRows":40}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("dims without pty = %d, want 400", resp.StatusCode)
+	}
+	// Out-of-range dimensions are rejected.
+	resp = h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes/"+sbx+"/processes", "alice", "p-pty3",
+		`{"command":["bash"],"pty":true,"ptyCols":99999}`)
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("oversized dims = %d, want 400", resp.StatusCode)
 	}
 }
 

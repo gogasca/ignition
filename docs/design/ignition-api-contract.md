@@ -1,9 +1,9 @@
 # Ignition API contract
 
 **Status: SHIPPED** for identity, project RBAC, the sandbox / process / operation
-API, the exec byte stream, `ignitionctl`, and the first Python/TypeScript SDK
-slice. **PROPOSED:** Project / Image (full) / Secret / Event resources, richer SDK
-streaming. Volumes and SESSION snapshots are out of scope.
+API, the exec byte stream, `ignitionctl`, and the Python/TypeScript SDKs.
+**PROPOSED:** Project / Image (full) / Secret / Event resources, a native async
+Python client. Volumes and SESSION snapshots are out of scope.
 
 The request/response schema, state machines, idempotency, and error model here
 are the canonical public contract and are runtime-agnostic. Provisioning behind
@@ -102,6 +102,8 @@ checks are authoritative.
 the default-runtime read):
 
 ```text
+GET    /v1/me                                        -- echo the authenticated principal
+
 POST   /v1/projects/{project}/sandboxes
 GET    /v1/projects/{project}/sandboxes
 GET    /v1/projects/{project}/sandboxes/{sandbox}
@@ -226,7 +228,13 @@ reuse → non-retryable `409 IDEMPOTENCY_KEY_REUSED`. Retry after expiry may cre
 a new side effect; SDKs warn.
 
 Watch endpoints use authenticated SSE — content-addressed snapshot on change,
-`Last-Event-ID`, heartbeats, close on terminal state or ~60s.
+`Last-Event-ID`, 15s heartbeat comments. A Postgres `LISTEN/NOTIFY` trigger on
+`sandboxes`/`operations` wakes the stream the moment either `ignition-api`
+(desired state) or `ignition-controller` (observed state) writes, so a change is
+delivered in well under a second; a 10s poll is only a backstop. The stream
+stays open until the resource is terminal, the client disconnects, or a 30-minute
+safety cap — it is no longer force-closed after a minute. (In-memory dev mode
+uses an in-process notifier with the same behavior.)
 
 ## 6. Errors and quotas
 
@@ -259,8 +267,13 @@ Client-facing protocol (mechanism in [shipped architecture §8](ignition-shipped
    payloads are base64. A terminal `control`/`exit` frame carries the exit code
    or signal.
 4. Reconnect is available for **10 minutes** after process exit against the
-   in-memory replay buffer. PTY is accepted but not yet allocated. Durable
-   offset/ACK reconnect is [deferred](ignition-deferred-runtime.md).
+   in-memory replay buffer. Durable offset/ACK reconnect is
+   [deferred](ignition-deferred-runtime.md).
+
+`CreateProcess` accepts `pty: true` with optional `ptyRows` / `ptyCols` (0–1000;
+dimensions require `pty: true`). The supervisor allocates a real PTY; stdout and
+stderr are then merged on the `stdout` channel. Mid-session resize is not yet
+part of the contract.
 
 For a `READY` sandbox, successful attach has **p95 latency ≤ 1s** from the
 gateway receiving an authenticated request to the client receiving the stream
@@ -298,36 +311,49 @@ ignitionctl operation {list|get|watch|cancel} ...
 
 ## 9. SDKs
 
-- **Python `ignition-sandbox`** — sync + native async clients, bounded batch.
-- **TypeScript `@ignition/sandbox`** — native promises + async iterators, bounded
-  batch.
-
 Both are implemented for the shipped control-plane lifecycle (`Sandbox` +
-`Process` + `Operation`).
+`Process` + `Operation`), with **no runtime dependencies** — each ships a
+minimal WebSocket client for exec streaming and falls back to polling when no
+gateway is configured.
+
+- **Python `ignition-sandbox`** (`sdks/python`) — synchronous. `Client`,
+  `client.sandboxes.create/get/list`, `Sandbox.wait_ready/watch/terminate/exec/run`,
+  `Sandbox.processes`, `Process.signal/cancel/wait/stream`,
+  `client.operations`, `Operation.watch/wait/cancel`. Typed errors
+  (`APIError` + 401/403/404/409 subclasses, `TimeoutError`, `StreamError`).
+- **TypeScript `@ignition/sandbox`** (`sdks/typescript`) — async, same surface;
+  uses the global `fetch` and `WebSocket` (Node 22+). Runs on Node directly as
+  `.ts`; `tsc` build emits `dist/`.
 
 ```python
-with Client() as client:
-    sandbox = client.sandboxes.create(
-        project="prj_...", image="img_...", command=["python", "-m", "server"],
-        resources=Resources(accelerator=Accelerator(type="NVIDIA_L4", count=1)),  # omit for CPU
+from ignition_sandbox import Client
+
+with Client() as ignition:                       # server/token/project from IGNITION_* env
+    sb = ignition.sandboxes.create(
+        "img_seed", accelerator="NONE", cpu_milli=1000, memory_mib=2048, wait=True,
     )
-    sandbox.wait_ready(timeout=120)
-    process = sandbox.exec(["nvidia-smi"])
-    for chunk in process.stdout.iter_bytes():
-        consume(chunk)
-    code = process.wait()
-    sandbox.terminate(wait=True)
+    result = sb.run(["echo", "hello"])           # streams stdio via ignition-gateway
+    assert result.exit_code == 0
+    sb.terminate(wait=True)
 ```
 
-**PROPOSED** target contract: `Project` / `Image` / `Secret` / `Event` /
-`StreamReader` / `StreamWriter` handles; text wrappers with an incremental
-decoder across frame boundaries; `iter_lines()` that preserves partial final
-lines; bounded writer flow control; cancellation that does not implicitly cancel
-a remote Process; a fresh Google ID token before control calls and a new stream
-credential for reconnect (never one class refreshed as another); context managers
-where exiting an attachment closes only the local stream and exiting a sandbox
-terminates only if it created the sandbox with `terminate_on_exit=True`. No
-`Volume` or session-snapshot handle exists.
+```ts
+import { Client } from "@ignition/sandbox";
+
+const ignition = new Client();
+const sb = await ignition.sandboxes.create("img_seed", { accelerator: "NONE", wait: true });
+const result = await sb.run(["echo", "hello"]);
+await sb.terminate({ wait: true });
+```
+
+Every mutation sends an `Idempotency-Key` automatically; pass an explicit key to
+pin it across retries.
+
+**PROPOSED** target contract, not yet built: a native `async` Python client;
+`Project` / `Image` / `Secret` / `Event` handles; text wrappers with an
+incremental decoder across frame boundaries and `iter_lines()` that preserves
+partial final lines; bounded writer flow control; PTY resize. No `Volume` or
+session-snapshot handle exists.
 
 ## 10. Security invariants
 

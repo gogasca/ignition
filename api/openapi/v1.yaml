@@ -13,6 +13,13 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /v1/me:
+    get:
+      operationId: getMe
+      summary: Echo the authenticated principal (subject, email, kind, domain).
+      responses:
+        "200": { description: The caller's identity. }
+        "401": { description: Missing or invalid credential. }
   /v1/projects/{project}/sandboxes:
     get:
       operationId: listSandboxes
@@ -441,6 +448,8 @@ components:
           items: { type: string }
         workingDirectory: { type: string }
         pty: { type: boolean }
+        ptyRows: { type: integer }
+        ptyCols: { type: integer }
         exitCode: { type: integer }
         terminatingSignal: { type: string }
     CreateProcessRequest:
@@ -455,6 +464,8 @@ components:
           type: object
           additionalProperties: { type: string }
         pty: { type: boolean }
+        ptyRows: { type: integer, minimum: 0, maximum: 1000, description: "Initial PTY rows; requires pty: true." }
+        ptyCols: { type: integer, minimum: 0, maximum: 1000, description: "Initial PTY columns; requires pty: true." }
     AttachProcessResponse:
       type: object
       required: [streamToken, gatewayUrl]

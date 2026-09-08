@@ -12,6 +12,9 @@ images:
   - name: ignition-controller
     newName: us-central1-docker.pkg.dev/PROJECT/ignition/ignition-controller
     newTag: sample
+  - name: ignition-gateway
+    newName: us-central1-docker.pkg.dev/PROJECT/ignition/ignition-gateway
+    newTag: sample
 patches:
   - path: replicas.yaml
   - path: config.yaml

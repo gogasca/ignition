@@ -12,14 +12,14 @@ import (
 )
 
 const processCols = `id, project_id, sandbox_id, state, command, working_directory, environment,
-	pty, create_time, start_time, exit_time, exit_code, terminating_signal, created_by`
+	pty, pty_rows, pty_cols, create_time, start_time, exit_time, exit_code, terminating_signal, created_by`
 
 func scanProcess(scan func(dest ...any) error) (Process, error) {
 	var p Process
 	var command, env []byte
 	err := scan(
 		&p.ID, &p.ProjectID, &p.SandboxID, &p.State, &command, &p.WorkingDirectory, &env,
-		&p.PTY, &p.CreateTime, &p.StartTime, &p.ExitTime, &p.ExitCode, &p.TerminatingSignal, &p.CreatedBy,
+		&p.PTY, &p.PTYRows, &p.PTYCols, &p.CreateTime, &p.StartTime, &p.ExitTime, &p.ExitCode, &p.TerminatingSignal, &p.CreatedBy,
 	)
 	if err != nil {
 		return Process{}, mapErr(err)
@@ -68,16 +68,18 @@ func (p *Postgres) CreateProcess(ctx context.Context, in CreateProcessInput) (Pr
 			WorkingDirectory: in.WorkingDir,
 			Environment:      in.Environment,
 			PTY:              in.PTY,
+			PTYRows:          in.PTYRows,
+			PTYCols:          in.PTYCols,
 			CreateTime:       now,
 			CreatedBy:        in.Principal,
 		}
 		_, err = tx.Exec(ctx, `
 			INSERT INTO processes (
 				id, project_id, sandbox_id, state, command, working_directory, environment,
-				pty, create_time, created_by
-			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+				pty, pty_rows, pty_cols, create_time, created_by
+			) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
 			proc.ID, proc.ProjectID, proc.SandboxID, proc.State, jsonSlice(proc.Command),
-			proc.WorkingDirectory, jsonMap(proc.Environment), proc.PTY, proc.CreateTime, proc.CreatedBy)
+			proc.WorkingDirectory, jsonMap(proc.Environment), proc.PTY, proc.PTYRows, proc.PTYCols, proc.CreateTime, proc.CreatedBy)
 		if err != nil {
 			return err
 		}

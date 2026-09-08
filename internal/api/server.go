@@ -83,6 +83,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("GET /v1/projects/{project}/operations", s.listOperations)
 	mux.HandleFunc("GET /v1/projects/{project}/operations/{operation}", s.getOrWatchOperation)
 	mux.HandleFunc("POST /v1/projects/{project}/operations/{operation}", s.postOperation)
+	mux.HandleFunc("GET /v1/me", s.getMe)
 	mux.HandleFunc("GET /healthz", s.healthz)
 	// authMiddleware (outer) → metrics middleware (records the matched route) → mux.
 	return s.authMiddleware(s.metrics.Middleware(mux))

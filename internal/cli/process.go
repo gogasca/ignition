@@ -74,7 +74,7 @@ func cmdExec(e *env, args []string) error {
 		return usageErrorf("a command is required after the sandbox")
 	}
 
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
@@ -89,13 +89,13 @@ func cmdExec(e *env, args []string) error {
 		body["environment"] = map[string]string(envs)
 	}
 	var proc processJSON
-	if err := c.do(ctx, "POST", processesPath(sandboxID), body, &proc, requestOptions{idempotent: true}); err != nil {
+	if err := c.do(ctx, "POST", c.processesPath(sandboxID), body, &proc, requestOptions{idempotent: true}); err != nil {
 		return err
 	}
 
 	if showTok {
 		var at attachJSON
-		if err := c.do(ctx, "POST", processPath(sandboxID, proc.ID)+":attach", map[string]any{}, &at, requestOptions{idempotent: true}); err != nil {
+		if err := c.do(ctx, "POST", c.processPath(sandboxID, proc.ID)+":attach", map[string]any{}, &at, requestOptions{idempotent: true}); err != nil {
 			return err
 		}
 		if e.g.json() {
@@ -121,7 +121,7 @@ func cmdExec(e *env, args []string) error {
 	// polling when the deployment has no gateway or --no-stream is set.
 	if !noStream && !e.g.json() {
 		var at attachJSON
-		aerr := c.do(ctx, "POST", processPath(sandboxID, proc.ID)+":attach", map[string]any{}, &at, requestOptions{idempotent: true})
+		aerr := c.do(ctx, "POST", c.processPath(sandboxID, proc.ID)+":attach", map[string]any{}, &at, requestOptions{idempotent: true})
 		if aerr == nil && at.GatewayURL != "" && at.StreamToken != "" {
 			code, serr := streamExec(ctx, at.GatewayURL, at.StreamToken, proc.ID, e.stdin(), e.stdout, e.stderr)
 			if serr == nil {
@@ -160,7 +160,7 @@ func followProcess(ctx context.Context, c *client, sandboxID, processID string, 
 	var last processJSON
 	for {
 		var p processJSON
-		if err := c.do(ctx, "GET", processPath(sandboxID, processID), nil, &p, requestOptions{}); err != nil {
+		if err := c.do(ctx, "GET", c.processPath(sandboxID, processID), nil, &p, requestOptions{}); err != nil {
 			return last, err
 		}
 		last = p
@@ -205,7 +205,7 @@ func processList(e *env, args []string) error {
 	if len(pos) != 1 {
 		return usageErrorf("usage: ignitionctl process list <sandbox>")
 	}
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
@@ -215,7 +215,7 @@ func processList(e *env, args []string) error {
 		Processes     []processJSON `json:"processes"`
 		NextPageToken string        `json:"nextPageToken"`
 	}
-	if err := c.do(ctx, "GET", processesPath(pos[0]), nil, &resp, requestOptions{}); err != nil {
+	if err := c.do(ctx, "GET", c.processesPath(pos[0]), nil, &resp, requestOptions{}); err != nil {
 		return err
 	}
 	if e.emit(resp) {
@@ -243,14 +243,14 @@ func processGet(e *env, args []string) error {
 	if len(pos) != 2 {
 		return usageErrorf("usage: ignitionctl process get <sandbox> <process>")
 	}
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := signalContext()
 	defer cancel()
 	var p processJSON
-	if err := c.do(ctx, "GET", processPath(pos[0], pos[1]), nil, &p, requestOptions{}); err != nil {
+	if err := c.do(ctx, "GET", c.processPath(pos[0], pos[1]), nil, &p, requestOptions{}); err != nil {
 		return err
 	}
 	if e.emit(p) {
@@ -272,14 +272,14 @@ func processSignal(e *env, args []string) error {
 	if len(pos) != 2 {
 		return usageErrorf("usage: ignitionctl process signal <sandbox> <process> [--signal SIGTERM]")
 	}
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := signalContext()
 	defer cancel()
 	var p processJSON
-	if err := c.do(ctx, "POST", processPath(pos[0], pos[1])+":signal", map[string]any{"signal": sig}, &p, requestOptions{idempotent: true}); err != nil {
+	if err := c.do(ctx, "POST", c.processPath(pos[0], pos[1])+":signal", map[string]any{"signal": sig}, &p, requestOptions{idempotent: true}); err != nil {
 		return err
 	}
 	if e.emit(p) {
@@ -299,14 +299,14 @@ func processCancel(e *env, args []string) error {
 	if len(pos) != 2 {
 		return usageErrorf("usage: ignitionctl process cancel <sandbox> <process>")
 	}
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := signalContext()
 	defer cancel()
 	var p processJSON
-	if err := c.do(ctx, "POST", processPath(pos[0], pos[1])+":cancel", map[string]any{}, &p, requestOptions{idempotent: true}); err != nil {
+	if err := c.do(ctx, "POST", c.processPath(pos[0], pos[1])+":cancel", map[string]any{}, &p, requestOptions{idempotent: true}); err != nil {
 		return err
 	}
 	if e.emit(p) {
