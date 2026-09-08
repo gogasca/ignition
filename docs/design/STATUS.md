@@ -63,9 +63,9 @@ is authoritative for exactly what is deployed and how.
 | Capability | Status | Notes |
 |---|---|---|
 | `ignitionctl` (`internal/cli`) — login/context, sandbox + process + operation lifecycle, `exec` with streaming | **SHIPPED** | `-o json`, stable exit codes, polling fallback when no gateway. |
-| Python `ignition-sandbox` — sync/async, bounded batch | **SHIPPED** | Control-plane lifecycle. |
-| TypeScript `@ignition/sandbox` — bounded batch | **SHIPPED** | Control-plane lifecycle. |
-| Richer SDK streaming (text wrappers, backpressure, reconnect credentials) | **PROPOSED** | Target contract in [api-contract](ignition-api-contract.md). |
+| Python `ignition-sandbox` — sync client, no deps | **SHIPPED** | `sdks/python`. Sandbox/process/operation lifecycle, `:watch`, exec streaming (built-in WS client) + polling fallback. |
+| TypeScript `@ignition/sandbox` — async client, no deps | **SHIPPED** | `sdks/typescript`. Same surface; global `fetch`/`WebSocket` (Node 22+). |
+| Native `async` Python client; PTY resize; text wrappers / backpressure helpers | **PROPOSED** | Target contract in [api-contract](ignition-api-contract.md). |
 
 ## Images
 

@@ -4,5 +4,28 @@
   "private": true,
   "description": "TypeScript SDK for Ignition sandboxes",
   "type": "module",
-  "main": "src/index.ts"
+  "engines": {
+    "node": ">=22"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "files": [
+    "dist",
+    "src"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json",
+    "test": "node --test 'test/*.test.ts'",
+    "typecheck": "tsc -p tsconfig.json --noEmit"
+  },
+  "dependencies": {},
+  "devDependencies": {
+    "typescript": "^5.7.0"
+  }
 }

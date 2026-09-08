@@ -1,9 +1,9 @@
 # Ignition API contract
 
 **Status: SHIPPED** for identity, project RBAC, the sandbox / process / operation
-API, the exec byte stream, `ignitionctl`, and the first Python/TypeScript SDK
-slice. **PROPOSED:** Project / Image (full) / Secret / Event resources, richer SDK
-streaming. Volumes and SESSION snapshots are out of scope.
+API, the exec byte stream, `ignitionctl`, and the Python/TypeScript SDKs.
+**PROPOSED:** Project / Image (full) / Secret / Event resources, a native async
+Python client. Volumes and SESSION snapshots are out of scope.
 
 The request/response schema, state machines, idempotency, and error model here
 are the canonical public contract and are runtime-agnostic. Provisioning behind
@@ -306,36 +306,49 @@ ignitionctl operation {list|get|watch|cancel} ...
 
 ## 9. SDKs
 
-- **Python `ignition-sandbox`** — sync + native async clients, bounded batch.
-- **TypeScript `@ignition/sandbox`** — native promises + async iterators, bounded
-  batch.
-
 Both are implemented for the shipped control-plane lifecycle (`Sandbox` +
-`Process` + `Operation`).
+`Process` + `Operation`), with **no runtime dependencies** — each ships a
+minimal WebSocket client for exec streaming and falls back to polling when no
+gateway is configured.
+
+- **Python `ignition-sandbox`** (`sdks/python`) — synchronous. `Client`,
+  `client.sandboxes.create/get/list`, `Sandbox.wait_ready/watch/terminate/exec/run`,
+  `Sandbox.processes`, `Process.signal/cancel/wait/stream`,
+  `client.operations`, `Operation.watch/wait/cancel`. Typed errors
+  (`APIError` + 401/403/404/409 subclasses, `TimeoutError`, `StreamError`).
+- **TypeScript `@ignition/sandbox`** (`sdks/typescript`) — async, same surface;
+  uses the global `fetch` and `WebSocket` (Node 22+). Runs on Node directly as
+  `.ts`; `tsc` build emits `dist/`.
 
 ```python
-with Client() as client:
-    sandbox = client.sandboxes.create(
-        project="prj_...", image="img_...", command=["python", "-m", "server"],
-        resources=Resources(accelerator=Accelerator(type="NVIDIA_L4", count=1)),  # omit for CPU
+from ignition_sandbox import Client
+
+with Client() as ignition:                       # server/token/project from IGNITION_* env
+    sb = ignition.sandboxes.create(
+        "img_seed", accelerator="NONE", cpu_milli=1000, memory_mib=2048, wait=True,
     )
-    sandbox.wait_ready(timeout=120)
-    process = sandbox.exec(["nvidia-smi"])
-    for chunk in process.stdout.iter_bytes():
-        consume(chunk)
-    code = process.wait()
-    sandbox.terminate(wait=True)
+    result = sb.run(["echo", "hello"])           # streams stdio via ignition-gateway
+    assert result.exit_code == 0
+    sb.terminate(wait=True)
 ```
 
-**PROPOSED** target contract: `Project` / `Image` / `Secret` / `Event` /
-`StreamReader` / `StreamWriter` handles; text wrappers with an incremental
-decoder across frame boundaries; `iter_lines()` that preserves partial final
-lines; bounded writer flow control; cancellation that does not implicitly cancel
-a remote Process; a fresh Google ID token before control calls and a new stream
-credential for reconnect (never one class refreshed as another); context managers
-where exiting an attachment closes only the local stream and exiting a sandbox
-terminates only if it created the sandbox with `terminate_on_exit=True`. No
-`Volume` or session-snapshot handle exists.
+```ts
+import { Client } from "@ignition/sandbox";
+
+const ignition = new Client();
+const sb = await ignition.sandboxes.create("img_seed", { accelerator: "NONE", wait: true });
+const result = await sb.run(["echo", "hello"]);
+await sb.terminate({ wait: true });
+```
+
+Every mutation sends an `Idempotency-Key` automatically; pass an explicit key to
+pin it across retries.
+
+**PROPOSED** target contract, not yet built: a native `async` Python client;
+`Project` / `Image` / `Secret` / `Event` handles; text wrappers with an
+incremental decoder across frame boundaries and `iter_lines()` that preserves
+partial final lines; bounded writer flow control; PTY resize. No `Volume` or
+session-snapshot handle exists.
 
 ## 10. Security invariants
 

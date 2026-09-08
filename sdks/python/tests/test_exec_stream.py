@@ -32,7 +32,14 @@ class FakeGateway:
         self._ready.wait(5)
 
     def stop(self):
-        self.loop.call_soon_threadsafe(self.loop.stop)
+        async def _shutdown():
+            for task in asyncio.all_tasks(self.loop):
+                if task is not asyncio.current_task():
+                    task.cancel()
+            self.loop.stop()
+
+        self.loop.call_soon_threadsafe(lambda: self.loop.create_task(_shutdown()))
+        self._thread.join(timeout=2)
 
     def _run(self):
         asyncio.set_event_loop(self.loop)
