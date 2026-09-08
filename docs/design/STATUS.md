@@ -35,8 +35,8 @@ is authoritative for exactly what is deployed and how.
 | Capability | Status | Notes |
 |---|---|---|
 | CPU sandbox (`accelerator: NONE`) as a gVisor Pod on `cpu-sandbox` | **SHIPPED** | Verified end to end on dev. |
-| `NVIDIA_L4` GPU sandbox, one whole GPU, one sandbox per node | **PARTIAL** | Code + profile + `ignition-gpu-agent` complete; a real L4 sandbox reaching `READY` has never been run (needs regional `NVIDIA_L4_GPUS` + `GPUS_ALL_REGIONS` quota — nothing in code left to do). |
-| `ignition-gpu-agent` — GPU identity + health attestation, node-reuse gating | **SHIPPED** | Privileged DaemonSet on the GPU pool. |
+| `NVIDIA_L4` GPU sandbox, one whole GPU, one sandbox per node | **SHIPPED** | Verified end to end on `anyscale-demo`: `CREATING → READY` on a real `g2-standard-8` + L4 node, `ignition.io/gpu-uuid` + `init-healthy` attested, `nvidia-smi -L` and a real `cuInit()` (`cuda-check`) succeed inside the gVisor sandbox, `terminate → FINISHED` leaves the node clean. |
+| `ignition-gpu-agent` — GPU identity + health attestation, node-reuse gating | **SHIPPED** | Privileged DaemonSet on the GPU pool; `distroless/base` (glibc, to exec `nvidia-smi`), tolerates its own `gpu-reuse-pending` fence taint, reads `remapped_rows.*` for the reset signal (driver 580+). |
 | `sandbox-init` — readiness probe + tenant-process supervision | **SHIPPED** | |
 | Server-owned Pod spec (gVisor, read-only root, dropped caps, no SA token) | **SHIPPED** | No client field maps to hooks/devices/mounts/scheduling. |
 | System-managed default runtime (`RuntimeSpec`, optional `CreateSandbox` fields) | **SHIPPED** | `GET /v1/projects/{project}/runtimes/default`. |
@@ -74,7 +74,7 @@ is authoritative for exactly what is deployed and how.
 | Capability | Status | Notes |
 |---|---|---|
 | Image delivery on GKE | **SHIPPED** | Delegated to GKE image streaming; no Ignition-owned data path. |
-| v0 image admission (`POST/GET /v1/projects/{project}/images`) — resolve `sourceRef` to a digest, static streaming-eligibility check | **PARTIAL** | `internal/imagecatalog`. **Security gap:** no registry-host allowlist, no SSRF guard, no signature/provenance/scan, no same-region copy — see [image-delivery](ignition-image-delivery.md#security-status). Verified against a real registry, not yet a live GKE cluster. |
+| v0 image admission (`POST/GET /v1/projects/{project}/images`) — resolve `sourceRef` to a digest, static streaming-eligibility check | **PARTIAL** | `internal/imagecatalog`. **Security gap:** no registry-host allowlist, no SSRF guard, no signature/provenance/scan, no same-region copy — see [image-delivery](ignition-image-delivery.md#security-status). Resolve + digest-pinned scheduling verified end to end on a live GKE cluster (`anyscale-demo`, private Artifact Registry via the API's Workload Identity). |
 | Digest-pinned `imageId` | **not built** | Controller resolves a bare path under the Artifact Registry sandbox prefix. |
 | Same-region import, signature/provenance verification, scanning, signed catalog | **PROPOSED** | |
 | Secondary boot-disk cache cohorts, adaptive lazy/eager selection, access profiles | **PROPOSED** | |
