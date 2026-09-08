@@ -2,8 +2,10 @@ package sandboxinit
 
 import (
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 )
@@ -147,6 +149,71 @@ func TestIdleSecondsTracksActivity(t *testing.T) {
 	if got := pm.IdleSeconds(); got != 10 {
 		t.Fatalf("idle after attach closed = %d, want 10", got)
 	}
+}
+
+func TestSupervisorAllocatesPTY(t *testing.T) {
+	pm, df := newManager(t)
+	// `test -t 1` exits 0 only when stdout is a terminal; `tput`-free size
+	// check via stty confirms the winsize was applied.
+	writeDesired(t, df, map[string]desired{
+		"prc_pty": {
+			Command: []string{"sh", "-c", "test -t 1 && stty size"},
+			PTY:     true,
+			PTYRows: 40,
+			PTYCols: 100,
+		},
+	})
+	o := waitFor(t, pm, "prc_pty", "EXITED")
+	if o.ExitCode == nil || *o.ExitCode != 0 {
+		t.Fatalf("process on a PTY exited %v, want 0 (stdout was not a tty)", o.ExitCode)
+	}
+
+	// Drain the merged output; it must report the 40x100 window.
+	var buf []byte
+	pm.mu.Lock()
+	p := pm.proc["prc_pty"]
+	pm.mu.Unlock()
+	_ = p.io.stream(0, func(c ioChunk) error {
+		buf = append(buf, c.Data...)
+		return nil
+	})
+	if got := strings.TrimSpace(string(buf)); got != "40 100" {
+		t.Fatalf("stty size = %q, want \"40 100\"", got)
+	}
+}
+
+func TestSupervisorPTYStdinEcho(t *testing.T) {
+	pm, df := newManager(t)
+	writeDesired(t, df, map[string]desired{
+		"prc_cat": {Command: []string{"cat"}, PTY: true},
+	})
+	waitFor(t, pm, "prc_cat", "RUNNING")
+	pm.mu.Lock()
+	p := pm.proc["prc_cat"]
+	pm.mu.Unlock()
+
+	got := make(chan string, 1)
+	go func() {
+		var buf []byte
+		_ = p.io.stream(0, func(c ioChunk) error {
+			buf = append(buf, c.Data...)
+			if strings.Contains(string(buf), "ping") {
+				got <- string(buf)
+				return io.EOF
+			}
+			return nil
+		})
+	}()
+	_, _ = p.stdin.Write([]byte("ping\r"))
+	select {
+	case out := <-got:
+		if !strings.Contains(out, "ping") {
+			t.Fatalf("pty echo = %q", out)
+		}
+	case <-time.After(3 * time.Second):
+		t.Fatal("no PTY echo within 3s")
+	}
+	_ = p.stdin.Close()
 }
 
 func TestSupervisorIgnoresRemovedDesired(t *testing.T) {

@@ -35,6 +35,8 @@ export interface ExecOptions {
   env?: Record<string, string>;
   workingDirectory?: string;
   pty?: boolean;
+  ptyRows?: number;
+  ptyCols?: number;
   idempotencyKey?: string;
 }
 
@@ -270,7 +272,11 @@ class Processes {
     const body: Record<string, unknown> = { command };
     if (o.env) body.environment = o.env;
     if (o.workingDirectory) body.workingDirectory = o.workingDirectory;
-    if (o.pty) body.pty = true;
+    if (o.pty) {
+      body.pty = true;
+      if (o.ptyRows) body.ptyRows = o.ptyRows;
+      if (o.ptyCols) body.ptyCols = o.ptyCols;
+    }
     const raw = await this.c.t.post(this.base(), body, {
       idempotent: true,
       idempotencyKey: o.idempotencyKey,

@@ -127,6 +127,8 @@ CREATE TABLE IF NOT EXISTS processes (
     working_directory   TEXT NOT NULL DEFAULT '',
     environment         JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(environment) = 'object'),
     pty                 BOOLEAN NOT NULL DEFAULT FALSE,
+    pty_rows            INT NOT NULL DEFAULT 0,
+    pty_cols            INT NOT NULL DEFAULT 0,
     create_time         TIMESTAMPTZ NOT NULL,
     start_time          TIMESTAMPTZ,
     exit_time           TIMESTAMPTZ,

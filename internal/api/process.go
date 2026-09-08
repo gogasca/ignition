@@ -64,8 +64,12 @@ func (s *Server) createProcess(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error(), false, 0)
 		return
 	}
-	if body.PTYRows != 0 || body.PTYCols != 0 {
-		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", "initial PTY dimensions are not supported", false, 0)
+	if (body.PTYRows != 0 || body.PTYCols != 0) && !body.PTY {
+		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", "ptyRows/ptyCols require pty: true", false, 0)
+		return
+	}
+	if body.PTYRows < 0 || body.PTYRows > 1000 || body.PTYCols < 0 || body.PTYCols > 1000 {
+		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", "ptyRows/ptyCols must be between 0 and 1000", false, 0)
 		return
 	}
 	p, replay, err := s.store.CreateProcess(r.Context(), store.CreateProcessInput{
@@ -78,6 +82,8 @@ func (s *Server) createProcess(w http.ResponseWriter, r *http.Request) {
 		WorkingDir:  body.WorkingDirectory,
 		Environment: body.Environment,
 		PTY:         body.PTY,
+		PTYRows:     body.PTYRows,
+		PTYCols:     body.PTYCols,
 	})
 	if err != nil {
 		writeStoreError(w, rid, err)

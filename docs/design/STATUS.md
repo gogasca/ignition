@@ -55,7 +55,7 @@ is authoritative for exactly what is deployed and how.
 | `sandbox-init` process supervision (`downwardAPI` desired file, `:8081` observed + stdio) | **SHIPPED** | Controller polls observed state; no Kubernetes credential in the sandbox. |
 | `ignition-gateway` — validates the token, resolves the Pod by label, proxies the attach WebSocket | **PARTIAL** | Built (`internal/gateway`). Deployed only in the `dev` overlay. |
 | Public WebSocket Ingress for `ignition-gateway` | **not built** | Non-`dev` overlays also need an image mapping + `IGNITION_GATEWAY_URL`. |
-| PTY allocation for exec | **not built** | Accepted in the contract, not honored. |
+| PTY allocation for exec | **SHIPPED** | `pty: true` (+ optional `ptyRows`/`ptyCols`) allocates a real PTY in `sandbox-init`; output is merged on the stdout channel. Mid-session resize is not wired. |
 | Durable exec spool / offset-based reconnect (`ignition-ingress`, route table) | **DEFERRED** | Shipped path uses a small in-memory replay buffer. |
 
 ## CLI and SDKs

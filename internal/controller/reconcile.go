@@ -283,6 +283,8 @@ type processDesired struct {
 	WorkingDirectory string            `json:"workingDirectory,omitempty"`
 	Environment      map[string]string `json:"environment,omitempty"`
 	PTY              bool              `json:"pty,omitempty"`
+	PTYRows          int               `json:"ptyRows,omitempty"`
+	PTYCols          int               `json:"ptyCols,omitempty"`
 	Signal           string            `json:"signal,omitempty"`
 	Cancel           bool              `json:"cancel,omitempty"`
 }
@@ -304,6 +306,8 @@ func (c *Controller) syncProcesses(ctx context.Context, sb store.Sandbox, pod *k
 			WorkingDirectory: p.WorkingDirectory,
 			Environment:      p.Environment,
 			PTY:              p.PTY,
+			PTYRows:          p.PTYRows,
+			PTYCols:          p.PTYCols,
 			Signal:           p.TerminatingSignal,
 			Cancel:           p.State == "CANCELLING",
 		}

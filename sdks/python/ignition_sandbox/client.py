@@ -232,6 +232,8 @@ class Sandbox(SandboxModel):
         env: dict[str, str] | None = None,
         working_directory: str | None = None,
         pty: bool = False,
+        pty_rows: int = 0,
+        pty_cols: int = 0,
         idempotency_key: str | None = None,
     ) -> "Process":
         """Create a process and return a handle. Does not stream output."""
@@ -240,6 +242,8 @@ class Sandbox(SandboxModel):
             env=env,
             working_directory=working_directory,
             pty=pty,
+            pty_rows=pty_rows,
+            pty_cols=pty_cols,
             idempotency_key=idempotency_key,
         )
 
@@ -317,6 +321,8 @@ class Processes:
         env: dict[str, str] | None = None,
         working_directory: str | None = None,
         pty: bool = False,
+        pty_rows: int = 0,
+        pty_cols: int = 0,
         idempotency_key: str | None = None,
     ) -> "Process":
         body: dict[str, Any] = {"command": command}
@@ -326,6 +332,10 @@ class Processes:
             body["workingDirectory"] = working_directory
         if pty:
             body["pty"] = True
+            if pty_rows:
+                body["ptyRows"] = pty_rows
+            if pty_cols:
+                body["ptyCols"] = pty_cols
         raw = self._t.post(self._base(), body, idempotent=True, idempotency_key=idempotency_key)
         return Process(self._c, self.sandbox_id, raw)
 

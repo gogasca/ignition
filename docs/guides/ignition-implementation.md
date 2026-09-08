@@ -160,7 +160,9 @@ Get/list are project-scoped SQL. Watch polls product state, emits content-addres
 
 Process APIs require `READY`. `attach` is idempotent (same key replays `streamEpoch`). Stream tokens use `IGNITION_STREAM_TOKEN_SECRET`. `signal` allowlist: `SIGTERM`, `SIGINT`, `SIGKILL`, `SIGHUP`, `SIGQUIT`, `SIGUSR1`, `SIGUSR2`. Cancel of a still-`PENDING`/`RUNNING` create fails the sandbox (`CANCELLED`) and releases quota.
 
-Tables (`internal/store/schema.sql`, embedded by the API): `projects`, `role_bindings`, `images`, `sandboxes`, `processes`, `operations`, `idempotency_keys`, `project_quota`, `controller_leases`. This is a complete baseline schema, not a migration chain. `store.Open` (API) applies it idempotently; `store.OpenWithoutSchema` (controller) is DML only.
+Tables (`internal/store/schema.sql`, embedded by the API): `projects`, `role_bindings`, `images`, `sandboxes`, `processes`, `operations`, `idempotency_keys`, `project_quota`, `controller_leases`. This is a complete baseline schema, not a migration chain. `store.Open` (API) applies it idempotently; `store.OpenWithoutSchema` (controller) is DML only. It also installs the `ignition_notify_watch` trigger on `sandboxes`/`operations` that backs the `:watch` push path.
+
+Because it is not a migration chain, a **new column on an existing dev/staging database** is not added by a redeploy — recreate the database, or add the column by hand. Columns added since the first cut: `processes.pty_rows` / `processes.pty_cols` — `ALTER TABLE processes ADD COLUMN IF NOT EXISTS pty_rows INT NOT NULL DEFAULT 0;` (and `pty_cols` likewise).
 
 ### Environment variables
 

@@ -426,8 +426,11 @@ runtime](ignition-deferred-runtime.md).
   `processes.state`, and mirrors the process map into `ignition.io/process-observed`.
 
 Failed in-sandbox create → `FAILED` with a typed reason. Signal/cancel stay SQL
-desired-state until the supervisor reports `EXITED`/`FAILED`. PTY is accepted but
-not yet allocated.
+desired-state until the supervisor reports `EXITED`/`FAILED`. When `pty: true`
+(with optional `ptyRows`/`ptyCols`), `sandbox-init` allocates a real PTY —
+`Setsid` + `Setctty`, initial `TIOCSWINSZ` — and the master is the single
+bidirectional stream endpoint; output is merged on the stdout channel. Mid-session
+resize is not wired.
 
 **Idle timeout.** `sandbox-init` reports `idleSeconds` — time with no process in
 `STARTING`/`RUNNING` and no attached exec stream (0 while active). When a `READY`

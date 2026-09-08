@@ -448,6 +448,8 @@ components:
           items: { type: string }
         workingDirectory: { type: string }
         pty: { type: boolean }
+        ptyRows: { type: integer }
+        ptyCols: { type: integer }
         exitCode: { type: integer }
         terminatingSignal: { type: string }
     CreateProcessRequest:
@@ -462,6 +464,8 @@ components:
           type: object
           additionalProperties: { type: string }
         pty: { type: boolean }
+        ptyRows: { type: integer, minimum: 0, maximum: 1000, description: "Initial PTY rows; requires pty: true." }
+        ptyCols: { type: integer, minimum: 0, maximum: 1000, description: "Initial PTY columns; requires pty: true." }
     AttachProcessResponse:
       type: object
       required: [streamToken, gatewayUrl]

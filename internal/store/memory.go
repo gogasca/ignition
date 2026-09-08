@@ -516,6 +516,8 @@ func (m *Memory) CreateProcess(_ context.Context, in CreateProcessInput) (Proces
 		WorkingDirectory: in.WorkingDir,
 		Environment:      in.Environment,
 		PTY:              in.PTY,
+		PTYRows:          in.PTYRows,
+		PTYCols:          in.PTYCols,
 		CreateTime:       now,
 		CreatedBy:        in.Principal,
 	}

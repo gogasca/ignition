@@ -267,8 +267,13 @@ Client-facing protocol (mechanism in [shipped architecture §8](ignition-shipped
    payloads are base64. A terminal `control`/`exit` frame carries the exit code
    or signal.
 4. Reconnect is available for **10 minutes** after process exit against the
-   in-memory replay buffer. PTY is accepted but not yet allocated. Durable
-   offset/ACK reconnect is [deferred](ignition-deferred-runtime.md).
+   in-memory replay buffer. Durable offset/ACK reconnect is
+   [deferred](ignition-deferred-runtime.md).
+
+`CreateProcess` accepts `pty: true` with optional `ptyRows` / `ptyCols` (0–1000;
+dimensions require `pty: true`). The supervisor allocates a real PTY; stdout and
+stderr are then merged on the `stdout` channel. Mid-session resize is not yet
+part of the contract.
 
 For a `READY` sandbox, successful attach has **p95 latency ≤ 1s** from the
 gateway receiving an authenticated request to the client receiving the stream
