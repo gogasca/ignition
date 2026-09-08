@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
 	"os/signal"
@@ -38,10 +39,7 @@ func run() error {
 	if err != nil {
 		return err
 	}
-	journeys, err := probe.Select(cfg.Journeys)
-	if err != nil {
-		return err
-	}
+	journeys := cfg.Selected // resolved and validated by probe.Load
 	env := probe.Env{Project: cfg.Project, ImageID: cfg.ImageID}
 
 	if cfg.OneShot {
@@ -90,8 +88,9 @@ func serve(cfg probe.Config, client *probe.Client, journeys []probe.Journey, env
 	})
 	// Readiness: a probe cycle has completed recently. Being not-ready only
 	// removes the pod from Service endpoints; it does not restart it.
+	stale := staleAfter(cfg)
 	mux.HandleFunc("/readyz", func(w http.ResponseWriter, _ *http.Request) {
-		if msg, ok := readyState(lastCycle.Load(), time.Now(), 3*cfg.Interval); !ok {
+		if msg, ok := readyState(lastCycle.Load(), time.Now(), stale); !ok {
 			http.Error(w, msg, http.StatusServiceUnavailable)
 			return
 		}
@@ -99,15 +98,22 @@ func serve(cfg probe.Config, client *probe.Client, journeys []probe.Journey, env
 		_, _ = w.Write([]byte("ready"))
 	})
 
-	srv := &http.Server{Addr: cfg.Listen, Handler: mux}
+	srv := &http.Server{Handler: mux, ReadHeaderTimeout: 10 * time.Second}
 	ctx, stop := signal.NotifyContext(context.Background(), syscall.SIGINT, syscall.SIGTERM)
 	defer stop()
 
+	// Bind before anything else so a bad listen address fails immediately
+	// instead of after the first (up to cfg.Timeout) probe cycle.
+	ln, err := net.Listen("tcp", cfg.Listen)
+	if err != nil {
+		return fmt.Errorf("listen %s: %w", cfg.Listen, err)
+	}
+
 	serveErr := make(chan error, 1)
 	go func() {
-		log.Printf("ignition-prober: listening on %s target=%s journeys=%s interval=%s auth=%s",
-			cfg.Listen, cfg.Target, cfg.Journeys, cfg.Interval, cfg.Auth)
-		serveErr <- srv.ListenAndServe()
+		log.Printf("ignition-prober: listening on %s target=%s journeys=%s interval=%s auth=%s readyz-stale=%s",
+			cfg.Listen, cfg.Target, cfg.Journeys, cfg.Interval, cfg.Auth, stale)
+		serveErr <- srv.Serve(ln)
 	}()
 
 	runCycle := func() {
@@ -147,6 +153,17 @@ func serve(cfg probe.Config, client *probe.Client, journeys []probe.Journey, env
 			return srv.Shutdown(shutdownCtx)
 		}
 	}
+}
+
+// staleAfter is how long /readyz tolerates no completed cycle: three intervals,
+// but never less than two full per-cycle timeouts, so one slow-but-successful
+// lifecycle cycle cannot flap readiness.
+func staleAfter(cfg probe.Config) time.Duration {
+	d := 3 * cfg.Interval
+	if min := 2 * cfg.Timeout; min > d {
+		d = min
+	}
+	return d
 }
 
 // readyState reports whether a probe cycle completed recently enough for the

@@ -13,11 +13,16 @@ import (
 // (e.g. a cleanup that failed on a network blip) can be swept later.
 const ProbeSandboxNamePrefix = "probe-"
 
+// probeName returns a unique, sweep-recognisable sandbox name.
+func probeName() string {
+	return ProbeSandboxNamePrefix + strings.TrimPrefix(id.New("s"), "s_")
+}
+
 // cpuSandboxReq is the cheapest admissible sandbox: CPU-only, internet
 // disabled, a bounded sleep so it stays READY until the journey terminates it.
 func cpuSandboxReq(env Env) CreateSandboxReq {
 	return CreateSandboxReq{
-		Name:    ProbeSandboxNamePrefix + id.New("s")[2:],
+		Name:    probeName(),
 		ImageID: env.ImageID,
 		Command: []string{"sleep", "300"},
 		Resources: &ResourceReq{
@@ -291,24 +296,22 @@ var journeyProcessExec = Journey{
 			return s.steps, err
 		}
 
-		// Best-effort: if in-sandbox process supervision is running, confirm the
-		// process advances past CREATING. It is not fatal when it does not —
-		// exec supervision ships in a later slice, and the control-plane surface
-		// (create / attach / signal / cancel) is what this journey guards.
+		// In-sandbox supervision must move the process out of CREATING. A process
+		// wedged in CREATING is a real controller / sandbox-init defect, so this
+		// step fails on the timeout rather than passing silently.
 		if err := s.run("observe-process", func() error {
-			octx, cancel := context.WithTimeout(ctx, 15*time.Second)
+			octx, cancel := context.WithTimeout(ctx, 20*time.Second)
 			defer cancel()
 			p, err := c.PollProcess(octx, sbxID, prcID, func(p ProcessView) (bool, error) {
 				if p.State == "FAILED" {
-					return false, fmt.Errorf("process entered FAILED")
+					return false, fmt.Errorf("process entered FAILED (exit %v)", p.ExitCode)
 				}
 				return p.State == "RUNNING" || p.State == "STARTING" || p.State == "EXITED", nil
 			})
-			if err != nil && !errIsDeadline(err) {
-				return err
+			if err != nil {
+				return fmt.Errorf("process did not leave CREATING: %w (last state %q)", err, p.State)
 			}
-			_ = p
-			return ctx.Err() // propagate only a parent-context cancellation
+			return nil
 		}); err != nil {
 			return s.steps, err
 		}
@@ -497,9 +500,12 @@ var journeyIdempotency = Journey{
 		if err := s.run("conflict-on-mutated-body", func() error {
 			mutated := req
 			mutated.Command = []string{"sleep", "7200"}
-			_, _, err := c.CreateSandbox(ctx, key, mutated)
+			sb, _, err := c.CreateSandbox(ctx, key, mutated)
 			if err == nil {
-				return fmt.Errorf("reused key with a changed body was accepted")
+				// The API must not have created anything, but if it did (the bug
+				// this step guards), don't leak the 2-hour sandbox.
+				cleanup(c, sb.ID)
+				return fmt.Errorf("reused key with a changed body was accepted (created %s)", sb.ID)
 			}
 			if !CodeIs(err, "IDEMPOTENCY_KEY_REUSED") {
 				return fmt.Errorf("want IDEMPOTENCY_KEY_REUSED, got %v", err)

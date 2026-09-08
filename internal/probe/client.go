@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -223,11 +224,32 @@ func (c *Client) GetSandbox(ctx context.Context, sandboxID string) (SandboxView,
 	return sb, err
 }
 
-// ListSandboxes returns the first page of sandboxes.
+// ListSandboxes returns every sandbox, following nextPageToken. SweepStale and
+// the "is my sandbox in the list" assertions must see all pages, not just the
+// first — a leaked probe sandbox on page 2 is exactly what wedges the quota.
+// Bounded at maxListPages so a broken pager cannot loop forever.
 func (c *Client) ListSandboxes(ctx context.Context) ([]SandboxView, error) {
-	var out sandboxList
-	_, err := c.do(ctx, http.MethodGet, c.proj("/sandboxes"), "", nil, &out, true)
-	return out.Sandboxes, err
+	const maxListPages = 100
+	var all []SandboxView
+	var token string
+	for page := 0; ; page++ {
+		path := c.proj("/sandboxes")
+		if token != "" {
+			path += "?pageToken=" + url.QueryEscape(token)
+		}
+		var out sandboxList
+		if _, err := c.do(ctx, http.MethodGet, path, "", nil, &out, true); err != nil {
+			return all, err
+		}
+		all = append(all, out.Sandboxes...)
+		if out.NextPageToken == "" || out.NextPageToken == token {
+			return all, nil
+		}
+		if page+1 >= maxListPages {
+			return all, fmt.Errorf("list sandboxes: stopped after %d pages", maxListPages)
+		}
+		token = out.NextPageToken
+	}
 }
 
 // TerminateSandbox requests termination. idemKey is required by the API.
@@ -301,12 +323,6 @@ func (c *Client) CancelOperation(ctx context.Context, operationID, idemKey strin
 
 // ErrPollTimeout is returned when a poll helper's context expires.
 var ErrPollTimeout = errors.New("probe: poll deadline exceeded")
-
-// errIsDeadline reports whether err is a poll/context deadline rather than a
-// real failure.
-func errIsDeadline(err error) bool {
-	return errors.Is(err, ErrPollTimeout) || errors.Is(err, context.DeadlineExceeded)
-}
 
 // PollSandbox polls GetSandbox until until returns true, the context is done, or
 // the sandbox enters a state the caller did not accept (the until func decides).

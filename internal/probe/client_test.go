@@ -90,6 +90,48 @@ func TestUnauthenticatedOmitsBearer(t *testing.T) {
 	}
 }
 
+func TestListSandboxesFollowsPages(t *testing.T) {
+	var reqs int
+	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
+		reqs++
+		switch r.URL.Query().Get("pageToken") {
+		case "":
+			w.Write([]byte(`{"sandboxes":[{"id":"sbx_1"}],"nextPageToken":"p2"}`))
+		case "p2":
+			w.Write([]byte(`{"sandboxes":[{"id":"sbx_2"},{"id":"sbx_3"}],"nextPageToken":"p3"}`))
+		case "p3":
+			w.Write([]byte(`{"sandboxes":[{"id":"sbx_4"}]}`))
+		default:
+			t.Errorf("unexpected pageToken %q", r.URL.Query().Get("pageToken"))
+		}
+	})
+	got, err := c.ListSandboxes(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 4 || got[0].ID != "sbx_1" || got[3].ID != "sbx_4" {
+		t.Fatalf("got %d sandboxes: %+v", len(got), got)
+	}
+	if reqs != 3 {
+		t.Fatalf("made %d requests, want 3", reqs)
+	}
+}
+
+func TestListSandboxesStopsOnRepeatedToken(t *testing.T) {
+	var reqs int
+	c := testClient(t, func(w http.ResponseWriter, _ *http.Request) {
+		reqs++
+		// A broken pager that always returns the same token must not loop.
+		w.Write([]byte(`{"sandboxes":[{"id":"sbx_x"}],"nextPageToken":"stuck"}`))
+	})
+	if _, err := c.ListSandboxes(context.Background()); err != nil {
+		t.Fatalf("want a bounded result, got err %v", err)
+	}
+	if reqs != 2 {
+		t.Fatalf("made %d requests, want 2 (stop when token repeats)", reqs)
+	}
+}
+
 func TestPollSandboxRespectsContext(t *testing.T) {
 	c := testClient(t, func(w http.ResponseWriter, r *http.Request) {
 		w.Write([]byte(`{"id":"sbx_1","state":"CREATING"}`))

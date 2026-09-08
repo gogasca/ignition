@@ -18,7 +18,9 @@ import (
 var metadataIdentityURL = "http://metadata.google.internal/computeMetadata/v1/instance/service-accounts/default/identity"
 
 // MetadataIDToken fetches a fresh ID token whose `aud` claim is audience. It
-// only works on GCP (GKE with Workload Identity, GCE, Cloud Run, ...).
+// only works on GCP (GKE with Workload Identity, GCE, Cloud Run, ...). A
+// transient metadata-server failure retries a few times with a short backoff so
+// one blip does not fail every journey in a cycle.
 func MetadataIDToken(ctx context.Context, hc *http.Client, audience string) (string, error) {
 	if audience == "" {
 		return "", fmt.Errorf("id token audience is required")
@@ -26,9 +28,36 @@ func MetadataIDToken(ctx context.Context, hc *http.Client, audience string) (str
 	if hc == nil {
 		hc = &http.Client{Timeout: 10 * time.Second}
 	}
+
+	const attempts = 3
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if i > 0 {
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-time.After(time.Duration(i) * 250 * time.Millisecond):
+			}
+		}
+		tok, retryable, err := metadataIDTokenOnce(ctx, hc, audience)
+		if err == nil {
+			return tok, nil
+		}
+		lastErr = err
+		if !retryable {
+			break
+		}
+	}
+	return "", fmt.Errorf("metadata identity: %w", lastErr)
+}
+
+// metadataIDTokenOnce does one fetch. retryable is true for a transport error or
+// a 5xx/429 — a transient condition worth another attempt; a 4xx (misconfigured
+// audience, SA not bound) is not.
+func metadataIDTokenOnce(ctx context.Context, hc *http.Client, audience string) (tok string, retryable bool, err error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, metadataIdentityURL, nil)
 	if err != nil {
-		return "", err
+		return "", false, err
 	}
 	q := req.URL.Query()
 	q.Set("audience", audience)
@@ -38,14 +67,15 @@ func MetadataIDToken(ctx context.Context, hc *http.Client, audience string) (str
 
 	resp, err := hc.Do(req)
 	if err != nil {
-		return "", fmt.Errorf("metadata identity: %w", err)
+		return "", true, err
 	}
 	defer resp.Body.Close()
 	body, _ := io.ReadAll(io.LimitReader(resp.Body, 1<<16))
 	if resp.StatusCode != http.StatusOK {
-		return "", fmt.Errorf("metadata identity status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+		retry := resp.StatusCode == http.StatusTooManyRequests || resp.StatusCode >= 500
+		return "", retry, fmt.Errorf("status %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
-	return strings.TrimSpace(string(body)), nil
+	return strings.TrimSpace(string(body)), false, nil
 }
 
 // IDTokenSource returns a token callback for Client.WithTokenFunc that caches a
