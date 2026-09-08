@@ -23,6 +23,12 @@ const (
 	AnnotCommand      = "ignition.io/tenant-command"
 	AnnotProcDesired  = "ignition.io/process-desired"
 	AnnotProcObserved = "ignition.io/process-observed"
+	// AnnotGeneration records the sandbox's store generation on its Pod so
+	// ignition-gateway can reject an exec-stream token minted against a
+	// superseded generation. The controller stamps it once at Pod creation and
+	// never mutates it (generation is immutable for a Pod's lifetime — a new
+	// generation is a new Pod).
+	AnnotGeneration = "ignition.io/generation"
 	// AnnotNativeEntrypoint records whether the sandbox runs the admitted
 	// image's own OCI Entrypoint/Cmd (unmanaged) instead of Ignition's
 	// sandbox-init supervisor. Observability only; nothing reads it back.
@@ -51,6 +57,15 @@ const (
 	PriorityBalloon = "ignition-balloon"
 	RuntimeClass    = "gvisor"
 	GPUResource     = "nvidia.com/gpu"
+
+	// SandboxUID / SandboxGID are the fixed non-root uid/gid the sandbox
+	// container runs as. RunAsNonRoot alone is not enough: kubelet cannot
+	// verify it when the image declares a *named* user (distroless :nonroot
+	// records "nonroot", not 65532) or no user at all, and fails the Pod with
+	// CreateContainerConfigError. Pinning a numeric id makes every admitted
+	// image run non-root deterministically. 65532 matches distroless nonroot.
+	SandboxUID int64 = 65532
+	SandboxGID int64 = 65532
 
 	NodePoolLabel    = "ignition.io/node-pool"
 	GPUNodePoolLabel = NodePoolLabel // deprecated alias
@@ -98,6 +113,8 @@ type PodSpec struct {
 	Tolerations                  []Toleration
 	AntiAffinityHostname         bool
 	RunAsNonRoot                 bool
+	RunAsUser                    *int64
+	RunAsGroup                   *int64
 	SeccompRuntimeDefault        bool
 	Containers                   []Container
 	Volumes                      []Volume

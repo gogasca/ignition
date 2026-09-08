@@ -16,4 +16,7 @@ RUN --mount=type=cache,target=/go/pkg/mod \
 
 FROM gcr.io/distroless/static:nonroot
 COPY --from=build /sandbox-init /ignition/init
+# Numeric so kubelet can verify non-root even without a pod-level runAsUser
+# (the distroless :nonroot tag only records the name "nonroot").
+USER 65532:65532
 ENTRYPOINT ["/ignition/init"]

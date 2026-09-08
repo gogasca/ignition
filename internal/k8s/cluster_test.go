@@ -45,6 +45,12 @@ func TestToCorev1SandboxProfile(t *testing.T) {
 	if c.SecurityContext == nil || c.SecurityContext.ReadOnlyRootFilesystem == nil || !*c.SecurityContext.ReadOnlyRootFilesystem {
 		t.Fatal("sandbox root filesystem must be read-only")
 	}
+	if c.SecurityContext.RunAsNonRoot == nil || !*c.SecurityContext.RunAsNonRoot {
+		t.Fatal("sandbox must set runAsNonRoot")
+	}
+	if c.SecurityContext.RunAsUser == nil || *c.SecurityContext.RunAsUser == 0 {
+		t.Fatalf("sandbox must pin a numeric non-root uid, got %v", c.SecurityContext.RunAsUser)
+	}
 	if c.LivenessProbe == nil || c.LivenessProbe.HTTPGet == nil || c.LivenessProbe.HTTPGet.Path != "/healthz" {
 		t.Fatalf("liveness probe = %#v", c.LivenessProbe)
 	}

@@ -53,17 +53,22 @@ flowchart TB
 
 | Service | Role | Kubernetes RBAC | Cloud SQL |
 |---|---|---|---|
-| `ignition-api` | Public HTTP/JSON API. Authenticates, authorizes, validates, admits, enforces quota + idempotency. **Never calls Kubernetes.** Sole writer of *desired* state. | none | DML: product + idempotency + quota |
-| `ignition-controller` | Internal reconciler. Reads desired state, creates/deletes Pods, writes *observed* public state. Sole holder of Pod RBAC. | Pods in `ignition-sandboxes`; get/list/patch Nodes, cordon only if `ignition.io/node-pool=gpu-sandbox-l4` | DML: sandbox/process/operation/lease, no DDL |
-| `ignition-gateway` | Exec data plane. Validates the `ignition-api`-minted stream token, resolves the sandbox Pod by label, proxies the attach WebSocket to `sandbox-init`. Never parses frames. | namespaced Pod get/list in `ignition-sandboxes` | none |
+| `ignition-api` | Public HTTP/JSON API. Authenticates, authorizes, validates, admits, enforces quota + idempotency. **Never calls Kubernetes.** Sole writer of *desired* state. Owns DDL (`store.Open`). | none | full DML + DDL (product + idempotency + quota) |
+| `ignition-controller` | Internal reconciler. Reads desired state, creates/deletes Pods, writes *observed* public state. Sole holder of Pod RBAC. DML only (`store.OpenWithoutSchema`). | Pods in `ignition-sandboxes`; get/list/patch Nodes, cordon only if `ignition.io/node-pool=gpu-sandbox-l4` | DML: sandbox/process/operation/lease, no DDL |
+| `ignition-gateway` | Exec data plane. Validates the `ignition-api`-minted stream token, resolves the sandbox Pod by label (READY + generation-fenced), proxies the attach WebSocket to `sandbox-init`. Never parses frames. | namespaced Pod get/list in `ignition-sandboxes` | none |
 | `ignition-gpu-agent` | Privileged DaemonSet on the GPU pool. Attests GPU identity + health, gates node reuse. | (node-scoped, on the GPU pool) | none |
 | `sandbox-init` (`/ignition/init`) | In-sandbox PID 1. Readiness probe + tenant-process supervisor + exec stdio server on `:8081`. Holds **no** Kubernetes credential. | none | none |
 
 `ignition-api`, `ignition-controller`, and `ignition-gateway` share the repo but
-deploy as separate Deployments with distinct KSAs, Workload Identity bindings,
-and database users. A combined binary is rejected: the public listener would
-inherit Pod create/delete, and a controller compromise would inherit token
-minting.
+deploy as separate Deployments with distinct KSAs and Workload Identity
+bindings. A combined binary is rejected: the public listener would inherit Pod
+create/delete, and a controller compromise would inherit token minting.
+
+**Database roles.** Today all three connect to Cloud SQL as one role
+(`google_sql_user.ignition`, password DSN) — the DML-scoping in the table above
+is the code-level contract (`store.Open` vs `store.OpenWithoutSchema`), not yet
+a database-enforced grant. Distinct per-service DB roles with IAM auth and
+table-scoped `GRANT`s are the staging/prod path (see [§9](#9-data-model)).
 
 ### Managed dependencies
 

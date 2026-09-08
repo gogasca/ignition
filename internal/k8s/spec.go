@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"encoding/json"
+	"strconv"
 
 	"ignition.dev/ignition/internal/store"
 )
@@ -78,6 +79,8 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 		NodeSelector:                 map[string]string{NodePoolLabel: profile.NodePoolValue},
 		AntiAffinityHostname:         profile.AntiAffinity,
 		RunAsNonRoot:                 true,
+		RunAsUser:                    int64Ptr(SandboxUID),
+		RunAsGroup:                   int64Ptr(SandboxGID),
 		SeccompRuntimeDefault:        true,
 		Containers:                   []Container{sandboxContainer(sb, imageRef, profile, cpu, mem, env)},
 		Volumes: []Volume{
@@ -108,6 +111,7 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 			AnnotImageID:          sb.ImageID,
 			AnnotCommand:          string(cmdJSON),
 			AnnotGPUType:          accel,
+			AnnotGeneration:       strconv.FormatInt(sb.Generation, 10),
 			AnnotNativeEntrypoint: boolStr(sb.NativeEntrypoint),
 		},
 		Phase: "Pending",

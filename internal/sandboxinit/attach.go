@@ -9,6 +9,14 @@ import (
 	"ignition.dev/ignition/internal/execframe"
 )
 
+// attachWait bounds how long attach waits for a just-created process to reach
+// the supervisor. The control plane accepts a process and mints the stream
+// token synchronously, but the desired-process set reaches sandbox-init through
+// a projected downwardAPI file plus one reconcile tick, so a valid attach can
+// arrive a beat early. Waiting bridges that gap instead of 404ing the caller
+// into the polling fallback (which loses live stdout).
+var attachWait = 15 * time.Second
+
 var upgrader = websocket.Upgrader{
 	ReadBufferSize:  32 << 10,
 	WriteBufferSize: 32 << 10,
@@ -31,10 +39,19 @@ func (s *Supervisor) attach(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "supervisor disabled", http.StatusServiceUnavailable)
 		return
 	}
+	start := time.Now()
 	p, ok := s.procs.lookup(id)
-	if !ok {
-		http.Error(w, "no such process", http.StatusNotFound)
-		return
+	for !ok {
+		select {
+		case <-r.Context().Done():
+			return
+		case <-time.After(100 * time.Millisecond):
+		}
+		if time.Since(start) > attachWait {
+			http.Error(w, "no such process", http.StatusNotFound)
+			return
+		}
+		p, ok = s.procs.lookup(id)
 	}
 
 	conn, err := upgrader.Upgrade(w, r, nil)

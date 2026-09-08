@@ -54,7 +54,7 @@ is authoritative for exactly what is deployed and how.
 |---|---|---|
 | `ignition-api` mints an HS256 exec stream token | **SHIPPED** | Separate audience from access JWTs. |
 | `sandbox-init` process supervision (`downwardAPI` desired file, `:8081` observed + stdio) | **SHIPPED** | Controller polls observed state; no Kubernetes credential in the sandbox. |
-| `ignition-gateway` — validates the token, resolves the Pod by label, proxies the attach WebSocket | **SHIPPED** | `internal/gateway`. Deployed by every overlay. |
+| `ignition-gateway` — validates the token, resolves the Pod by label, proxies the attach WebSocket | **SHIPPED** | `internal/gateway`. Deployed by every overlay. Resolver readiness mirrors the controller (CPU: kubelet `PodReady`; GPU: also `init-healthy` + canonical GPU UUID) and rejects a token whose `generation` ≠ the Pod's `ignition.io/generation` annotation. |
 | Public WebSocket `Ingress` for `ignition-gateway` | **SHIPPED** | `staging`/`prod`: `Ingress` + `ManagedCertificate` (`gateway-ingress.yaml`), backend `timeoutSec: 3600`. `dev`/`anyscale-staging`: no DNS → `kubectl port-forward svc/ignition-gateway 8443:8080`. |
 | PTY allocation for exec | **SHIPPED** | `pty: true` (+ optional `ptyRows`/`ptyCols`) allocates a real PTY in `sandbox-init`; output is merged on the stdout channel. Mid-session resize is not wired. |
 | Durable exec spool / offset-based reconnect (`ignition-ingress`, route table) | **DEFERRED** | Shipped path uses a small in-memory replay buffer. |

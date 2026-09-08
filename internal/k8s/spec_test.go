@@ -21,12 +21,13 @@ func TestPodNameRoundTrip(t *testing.T) {
 
 func TestSandboxPodProfile(t *testing.T) {
 	sb := store.Sandbox{
-		ID:        "sbx_abc123def4567890ab",
-		ProjectID: "prj_dev",
-		ImageID:   "img_seed",
-		Command:   []string{"python", "-m", "server"},
-		Resources: store.ResourceSpec{CPUMilli: 4000, MemoryMiB: 16384, Accelerator: store.AcceleratorSpec{Count: 1}},
-		Timeouts:  store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
+		ID:         "sbx_abc123def4567890ab",
+		ProjectID:  "prj_dev",
+		ImageID:    "img_seed",
+		Command:    []string{"python", "-m", "server"},
+		Resources:  store.ResourceSpec{CPUMilli: 4000, MemoryMiB: 16384, Accelerator: store.AcceleratorSpec{Count: 1}},
+		Timeouts:   store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
+		Generation: 1,
 	}
 	p := k8s.SandboxPod(sb, "img@sha256:abc")
 	if p.Name != "sbx-abc123def4567890ab" {
@@ -108,6 +109,9 @@ func TestSandboxPodProfile(t *testing.T) {
 	}
 	if p.Annotations[k8s.AnnotGPUType] != store.AcceleratorNVIDIAL4 {
 		t.Fatalf("gpu type annotation = %q", p.Annotations[k8s.AnnotGPUType])
+	}
+	if p.Annotations[k8s.AnnotGeneration] != "1" {
+		t.Fatalf("generation annotation = %q", p.Annotations[k8s.AnnotGeneration])
 	}
 	if spec.NodeSelector[k8s.GPUNodePoolLabel] != k8s.GPUNodePoolValue {
 		t.Fatalf("node pool = %v", spec.NodeSelector)
