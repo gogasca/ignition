@@ -118,10 +118,16 @@ func TestSweepStale(t *testing.T) {
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch {
 		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/sandboxes"):
+			// The stale probe sandbox is on page 2 — SweepStale must follow it.
+			if r.URL.Query().Get("pageToken") == "" {
+				w.Write([]byte(`{"sandboxes":[
+					{"id":"sbx_fresh","name":"probe-bbb","state":"CREATING","createTime":"` + recent + `"},
+					{"id":"sbx_done","name":"probe-ccc","state":"FINISHED","createTime":"` + old + `"}
+				],"nextPageToken":"p2"}`))
+				return
+			}
 			w.Write([]byte(`{"sandboxes":[
 				{"id":"sbx_stale","name":"probe-aaa","state":"READY","createTime":"` + old + `"},
-				{"id":"sbx_fresh","name":"probe-bbb","state":"CREATING","createTime":"` + recent + `"},
-				{"id":"sbx_done","name":"probe-ccc","state":"FINISHED","createTime":"` + old + `"},
 				{"id":"sbx_user","name":"my-box","state":"READY","createTime":"` + old + `"}
 			]}`))
 		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, ":terminate"):
@@ -143,6 +149,42 @@ func TestSweepStale(t *testing.T) {
 	}
 	if n != 1 || len(terminated) != 1 || terminated[0] != "sbx_stale" {
 		t.Fatalf("swept %d %v, want [sbx_stale]", n, terminated)
+	}
+}
+
+func TestJourneyProcessExecFailsOnStuckProcess(t *testing.T) {
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/sandboxes"):
+			w.WriteHeader(http.StatusAccepted)
+			w.Write([]byte(`{"sandbox":{"id":"sbx_1","state":"CREATING"},"operation":{"id":"op_1"}}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/sandboxes/sbx_1"):
+			w.Write([]byte(`{"id":"sbx_1","state":"READY","readyTime":"2026-01-01T00:00:00Z"}`))
+		case r.Method == http.MethodPost && strings.HasSuffix(r.URL.Path, "/processes"):
+			w.Write([]byte(`{"id":"prc_1","state":"CREATING"}`))
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/processes/prc_1"):
+			w.Write([]byte(`{"id":"prc_1","state":"CREATING"}`)) // never advances
+		case r.Method == http.MethodGet && strings.HasSuffix(r.URL.Path, "/processes"):
+			w.Write([]byte(`{"processes":[{"id":"prc_1","state":"CREATING"}]}`))
+		case r.Method == http.MethodPost && strings.Contains(r.URL.Path, ":terminate"):
+			w.WriteHeader(http.StatusAccepted)
+			w.Write([]byte(`{"sandbox":{},"operation":{}}`))
+		default:
+			t.Errorf("unexpected %s %s", r.Method, r.URL.Path)
+		}
+	}))
+	defer ts.Close()
+
+	c := New(ts.URL, "prj_dev", WithStaticToken("tok"), WithPollInterval(time.Millisecond))
+	ctx, cancel := context.WithTimeout(context.Background(), 300*time.Millisecond)
+	defer cancel()
+	res := Run(ctx, c, []Journey{journeyProcessExec}, Env{Project: "prj_dev", ImageID: "img_seed"})[0]
+	if res.OK {
+		t.Fatal("process-exec passed with a process wedged in CREATING")
+	}
+	if !strings.Contains(res.Err.Error(), "observe-process") ||
+		!strings.Contains(res.Err.Error(), "did not leave CREATING") {
+		t.Fatalf("want an observe-process CREATING failure, got %v", res.Err)
 	}
 }
 

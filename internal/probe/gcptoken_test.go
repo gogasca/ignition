@@ -48,7 +48,9 @@ func TestMetadataIDToken(t *testing.T) {
 }
 
 func TestMetadataIDTokenNon200(t *testing.T) {
+	var calls atomic.Int32
 	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls.Add(1)
 		http.Error(w, "no metadata server here", http.StatusForbidden)
 	}))
 	defer ts.Close()
@@ -58,6 +60,33 @@ func TestMetadataIDTokenNon200(t *testing.T) {
 
 	if _, err := MetadataIDToken(context.Background(), nil, "aud"); err == nil {
 		t.Fatal("want error on non-200")
+	}
+	if calls.Load() != 1 {
+		t.Fatalf("403 is not transient; made %d calls, want 1", calls.Load())
+	}
+}
+
+func TestMetadataIDTokenRetriesTransient(t *testing.T) {
+	var calls atomic.Int32
+	want := fakeIDToken(t, time.Now().Add(time.Hour))
+	ts := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if calls.Add(1) < 3 {
+			http.Error(w, "try later", http.StatusServiceUnavailable)
+			return
+		}
+		w.Write([]byte(want))
+	}))
+	defer ts.Close()
+	old := metadataIdentityURL
+	metadataIdentityURL = ts.URL
+	defer func() { metadataIdentityURL = old }()
+
+	got, err := MetadataIDToken(context.Background(), nil, "aud")
+	if err != nil {
+		t.Fatalf("should recover after transient 503s: %v", err)
+	}
+	if got != want || calls.Load() != 3 {
+		t.Fatalf("token=%q calls=%d", got, calls.Load())
 	}
 }
 

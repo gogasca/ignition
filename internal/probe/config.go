@@ -17,11 +17,15 @@ type Config struct {
 	Audience string        // OIDC audience for the minted ID token
 	Auth     string        // "gcp-idtoken" | "static" | "none"
 	Token    string        // static bearer (Auth == "static")
-	Journeys string        // "full" | "lite" | comma list
+	Journeys string        // "full" | "lite" | "smoke" | comma list
 	Interval time.Duration // between continuous cycles
 	Timeout  time.Duration // per-cycle deadline
 	Listen   string        // metrics/health listen address
 	OneShot  bool          // run once and exit non-zero on failure
+
+	// Selected is Journeys resolved to the concrete set, populated by Load so
+	// callers do not re-parse.
+	Selected []Journey
 }
 
 // Load reads IGNITION_PROBE_* environment variables.
@@ -61,6 +65,7 @@ func Load() (Config, error) {
 	if err != nil {
 		return c, err
 	}
+	c.Selected = js
 	if c.Auth == "none" {
 		// Every journey but health and auth-guard calls an authenticated route
 		// and would 401. Fail fast rather than deploy a gate that always fails.

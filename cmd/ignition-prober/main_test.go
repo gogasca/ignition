@@ -3,7 +3,20 @@ package main
 import (
 	"testing"
 	"time"
+
+	"ignition.dev/ignition/internal/probe"
 )
+
+func TestStaleAfter(t *testing.T) {
+	// Default 5m interval, 10m timeout -> 2*timeout (20m) wins over 3*interval (15m).
+	if got := staleAfter(probe.Config{Interval: 5 * time.Minute, Timeout: 10 * time.Minute}); got != 20*time.Minute {
+		t.Fatalf("staleAfter = %s, want 20m", got)
+	}
+	// Long interval, short timeout -> 3*interval wins.
+	if got := staleAfter(probe.Config{Interval: 30 * time.Minute, Timeout: time.Minute}); got != 90*time.Minute {
+		t.Fatalf("staleAfter = %s, want 90m", got)
+	}
+}
 
 func TestReadyState(t *testing.T) {
 	now := time.Unix(1_000_000, 0)
