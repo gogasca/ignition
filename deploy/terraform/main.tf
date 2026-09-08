@@ -307,6 +307,15 @@ resource "google_container_cluster" "main" {
     google_project_iam_member.nodes,
     google_service_networking_connection.private_services,
   ]
+
+  # remove_default_node_pool deletes the pool this node_config describes right
+  # after create, so it never governs a running node. The provider still reads
+  # server-populated fields (e.g. node_config.sandbox_config) back into state on
+  # refresh and then plans a ForceNew removal of them. All real node settings
+  # live on the google_container_node_pool resources below.
+  lifecycle {
+    ignore_changes = [node_config]
+  }
 }
 
 # Nodes use a dedicated minimal identity. In particular, sandbox workloads do
@@ -391,7 +400,7 @@ resource "google_container_node_pool" "cpu_sandbox" {
     metadata        = { "disable-legacy-endpoints" = "true" }
     gcfs_config { enabled = true }
     workload_metadata_config { mode = "GKE_METADATA" }
-    sandbox_config { type = "gvisor" }
+    sandbox_config { type = "GVISOR" }
     taint {
       key    = "ignition.io/sandbox"
       value  = "true"
@@ -431,7 +440,7 @@ resource "google_container_node_pool" "gpu_sandbox" {
     metadata        = { "disable-legacy-endpoints" = "true" }
     gcfs_config { enabled = true }
     workload_metadata_config { mode = "GKE_METADATA" }
-    sandbox_config { type = "gvisor" }
+    sandbox_config { type = "GVISOR" }
     guest_accelerator {
       type  = "nvidia-l4"
       count = 1
@@ -485,7 +494,7 @@ resource "google_container_node_pool" "gpu_sandbox_cache_epoch" {
     metadata        = { "disable-legacy-endpoints" = "true" }
     gcfs_config { enabled = true }
     workload_metadata_config { mode = "GKE_METADATA" }
-    sandbox_config { type = "gvisor" }
+    sandbox_config { type = "GVISOR" }
     guest_accelerator {
       type  = "nvidia-l4"
       count = 1
@@ -533,7 +542,7 @@ resource "google_container_node_pool" "cpu_sandbox_internet" {
     metadata        = { "disable-legacy-endpoints" = "true" }
     gcfs_config { enabled = true }
     workload_metadata_config { mode = "GKE_METADATA" }
-    sandbox_config { type = "gvisor" }
+    sandbox_config { type = "GVISOR" }
     taint {
       key    = "ignition.io/sandbox"
       value  = "true"
@@ -577,7 +586,7 @@ resource "google_container_node_pool" "gpu_sandbox_internet" {
     metadata        = { "disable-legacy-endpoints" = "true" }
     gcfs_config { enabled = true }
     workload_metadata_config { mode = "GKE_METADATA" }
-    sandbox_config { type = "gvisor" }
+    sandbox_config { type = "GVISOR" }
     guest_accelerator {
       type  = "nvidia-l4"
       count = 1
@@ -609,7 +618,8 @@ resource "google_sql_database_instance" "main" {
   deletion_protection = var.sql_deletion_protection
   settings {
     tier                        = var.sql_tier
-    availability_type           = "REGIONAL"
+    edition                     = var.sql_edition
+    availability_type           = var.sql_availability_type
     disk_autoresize             = true
     deletion_protection_enabled = var.sql_deletion_protection
     retain_backups_on_delete    = true
@@ -673,6 +683,18 @@ resource "google_artifact_registry_repository_iam_member" "nodes_sandbox_pull" {
   repository = google_artifact_registry_repository.sandboxes.repository_id
   role       = "roles/artifactregistry.reader"
   member     = "serviceAccount:${google_service_account.nodes.email}"
+}
+
+# ignition-api resolves the sourceRef of every image it admits by reading that
+# image's manifest from its source registry (internal/imagecatalog). For the
+# platform's own sandbox repository that read needs repository-scoped reader —
+# it is manifest metadata only, never a blob pull, and never a tenant path.
+resource "google_artifact_registry_repository_iam_member" "api_sandbox_read" {
+  project    = var.project_id
+  location   = google_artifact_registry_repository.sandboxes.location
+  repository = google_artifact_registry_repository.sandboxes.repository_id
+  role       = "roles/artifactregistry.reader"
+  member     = "serviceAccount:${google_service_account.api.email}"
 }
 
 resource "google_service_account" "api" {
@@ -754,7 +776,8 @@ resource "google_sql_database_instance" "dr" {
 
   settings {
     tier                        = var.sql_tier
-    availability_type           = "REGIONAL"
+    edition                     = var.sql_edition
+    availability_type           = var.sql_availability_type
     disk_autoresize             = true
     deletion_protection_enabled = var.sql_deletion_protection
     ip_configuration {

@@ -15,13 +15,17 @@ ARG CUDA_BASE=nvidia/cuda:12.4.1-base-ubuntu22.04
 
 FROM golang:1.26.7-bookworm AS build
 WORKDIR /src
-COPY go.mod ./
+COPY go.mod go.sum ./
+RUN go mod download
 COPY cmd/sandbox-init ./cmd/sandbox-init
 COPY cmd/cuda-check ./cmd/cuda-check
-COPY internal/sandboxinit ./internal/sandboxinit
-COPY internal/gpuid ./internal/gpuid
-RUN CGO_ENABLED=0 go build -o /out/init ./cmd/sandbox-init
-RUN CGO_ENABLED=1 go build -o /out/cuda-check ./cmd/cuda-check
+COPY internal ./internal
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=0 go build -trimpath -ldflags="-s -w" -o /out/init ./cmd/sandbox-init
+RUN --mount=type=cache,target=/go/pkg/mod \
+    --mount=type=cache,target=/root/.cache/go-build \
+    CGO_ENABLED=1 go build -trimpath -o /out/cuda-check ./cmd/cuda-check
 
 FROM ${CUDA_BASE}
 COPY --from=build /out/init /ignition/init

@@ -158,7 +158,7 @@ func copyConn(dst, src *websocket.Conn, done chan<- struct{}) {
 
 // Run serves the gateway against GKE-resolved sandbox endpoints.
 func Run(cfg config.Config) error {
-	if err := cfg.Validate(); err != nil {
+	if err := cfg.ValidateGateway(); err != nil {
 		return err
 	}
 	if strings.TrimSpace(cfg.StreamTokenSecret) == "" {

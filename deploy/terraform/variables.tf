@@ -90,6 +90,28 @@ variable "sql_password" {
   sensitive = true
 }
 
+variable "sql_edition" {
+  type        = string
+  default     = "ENTERPRISE"
+  description = "Cloud SQL edition. ENTERPRISE supports shared-core tiers (db-g1-small) and is the low-cost default. ENTERPRISE_PLUS requires db-perf-optimized-* / larger custom tiers."
+
+  validation {
+    condition     = contains(["ENTERPRISE", "ENTERPRISE_PLUS"], var.sql_edition)
+    error_message = "sql_edition must be ENTERPRISE or ENTERPRISE_PLUS."
+  }
+}
+
+variable "sql_availability_type" {
+  type        = string
+  default     = "REGIONAL"
+  description = "Cloud SQL availability. REGIONAL is synchronous HA across two zones (production default). Set ZONAL for a low-cost disposable environment; shared-core tiers (db-g1-small, db-f1-micro) require ZONAL."
+
+  validation {
+    condition     = contains(["REGIONAL", "ZONAL"], var.sql_availability_type)
+    error_message = "sql_availability_type must be REGIONAL or ZONAL."
+  }
+}
+
 variable "gpu_max_nodes" {
   type    = number
   default = 2
