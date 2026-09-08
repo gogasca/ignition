@@ -84,9 +84,6 @@ func New(nodeName string, pods PodClient, nodes NodeMarker, insp Inspector) *Age
 // already attested is left alone, and the node annotation is only patched when
 // its value needs to change.
 func (a *Agent) Reconcile(ctx context.Context) error {
-	first := a.firstPass
-	a.firstPass = false
-
 	pods, err := a.Pods.ListPodsOnNode(a.NodeName)
 	if err != nil {
 		return err
@@ -94,15 +91,25 @@ func (a *Agent) Reconcile(ctx context.Context) error {
 	sandbox := liveSandbox(pods)
 	if sandbox != nil {
 		a.sawSandbox = true
+		a.firstPass = false
 		return a.attest(ctx, sandbox)
 	}
 
 	// No live sandbox. Verify the GPU is clean for the next tenant when a
-	// sandbox has just left, or once on cold start (the agent may have missed
-	// the teardown while restarting).
-	if a.sawSandbox || first {
+	// sandbox has just left (justLeft), or once on cold start (the agent may
+	// have missed the teardown while restarting). Only consume the one-shot
+	// token once verifyReuse reaches a verdict: on a cold GPU node the driver
+	// install races the agent, so the first few inspects fail with
+	// "nvidia-smi: no such file or directory" — retrying is correct, and
+	// consuming the token there would strand the node (fenced by verifyReuse,
+	// never re-checked).
+	if a.sawSandbox || a.firstPass {
+		justLeft := a.sawSandbox
+		if err := a.verifyReuse(ctx, justLeft); err != nil {
+			return err
+		}
 		a.sawSandbox = false
-		return a.verifyReuse(ctx)
+		a.firstPass = false
 	}
 	return nil
 }
@@ -181,15 +188,22 @@ func (a *Agent) attest(ctx context.Context, pod *k8s.Pod) error {
 	return nil
 }
 
-func (a *Agent) verifyReuse(ctx context.Context) error {
-	// Close the scheduling window as soon as this pass notices the sandbox is
-	// gone, independent of whether the controller already tainted the node on
-	// its own delete path (reconcile.go) — this also covers teardowns the
-	// controller never observed, such as WORKER_LOST. Best-effort: a failure
-	// here still falls through to the inspect + MarkNodeGPUCleanup cordon
-	// path below, which is the safety net if the taint call itself fails.
-	if err := a.Nodes.SetGPUReusePending(a.NodeName, true); err != nil {
-		log.Printf("gpu-agent: node %s: set reuse-pending taint: %v", a.NodeName, err)
+func (a *Agent) verifyReuse(ctx context.Context, justLeft bool) error {
+	// When a sandbox has just left, close the scheduling window immediately —
+	// before we can even inspect — independent of whether the controller
+	// already tainted the node on its own delete path (reconcile.go). This also
+	// covers teardowns the controller never observed, such as WORKER_LOST.
+	// Best-effort: a failure here still falls through to the inspect +
+	// MarkNodeGPUCleanup cordon path below.
+	//
+	// The cold-start pass (justLeft == false) does NOT pre-fence: no tenant has
+	// ever run on this node, and fencing a pristine node whose driver is still
+	// installing would block its first sandbox. It only fences on a positive
+	// dirty verdict below.
+	if justLeft {
+		if err := a.Nodes.SetGPUReusePending(a.NodeName, true); err != nil {
+			log.Printf("gpu-agent: node %s: set reuse-pending taint: %v", a.NodeName, err)
+		}
 	}
 	g, procs, err := a.inspect(ctx)
 	if err != nil {

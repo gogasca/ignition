@@ -6,9 +6,17 @@ import "fmt"
 // CreateSandbox request and when validating the system default runtime at
 // process startup.
 const (
-	MaxCPUMilli       = 8000
-	MaxMemoryMiB      = 32768
-	MaxStartupSeconds = 600
+	MaxCPUMilli  = 8000
+	MaxMemoryMiB = 32768
+	// MaxStartupSeconds caps timeouts.startupSeconds. A *warm* sandbox (CPU or
+	// GPU, node already up) reaches READY in seconds; this ceiling is for the
+	// cold path. A cold GPU sandbox is the worst case: GKE must provision a
+	// g2 VM (minutes, and longer when GCE retries a zonal stockout) and then
+	// install the NVIDIA driver (~3 min) before the Pod can even schedule — 600s
+	// could not fit it, so a cold GPU create was structurally unable to succeed
+	// within the max. Cold GPU creation is still not a fast path: run a warm
+	// GPU pool (IGNITION_MIN_WARM > 0) for predictable latency.
+	MaxStartupSeconds = 1200
 	MaxRuntimeSeconds = 86400
 	MaxIdleSeconds    = 3600
 	MaxGraceSeconds   = 120

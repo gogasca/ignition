@@ -33,7 +33,7 @@ func newEagerPullHarness(t *testing.T) *eagerPullHarness {
 		Digest: "sha256:b", RegistryRef: "ineligible-huge@sha256:b",
 		StreamingEligible: false, IneligibleReason: "schema version 1 manifest is not eligible for GKE image streaming",
 		// 20 GB at the 50 MB/s test default is a 400s estimate: comfortably
-		// exceeds a 60s deadline but still fits within the API's 600s
+		// exceeds a 60s deadline but still fits within a 600s
 		// startupSeconds cap for the "sufficient deadline" case.
 		CompressedBytes: 20_000_000_000,
 	}
@@ -120,7 +120,7 @@ func TestCreateSandboxAllowsWhenDeadlineSufficient(t *testing.T) {
 	h.admitImage(t, "img_ineligible_huge", "ineligible-huge:latest")
 
 	// Same 20 GB ineligible image, but a deadline generous enough for the
-	// 400s estimate (20e9 bytes / 50 MB/s) to fit within the 600s cap.
+	// 400s estimate (20e9 bytes / 50 MB/s) to fit within a 600s startupSeconds.
 	resp, body := h.req(t, http.MethodPost, "/v1/projects/prj/sandboxes", "sbx-2", sandboxBody("img_ineligible_huge", 600))
 	if resp.StatusCode != http.StatusAccepted {
 		t.Fatalf("status = %d, body = %v", resp.StatusCode, body)
