@@ -13,13 +13,18 @@ manifests:
 deploy:
   kubectl: {}
 verify:
-  # Post-deploy gate: run the read-only critical-user-journeys (health, auth
-  # guard, default runtime, list) once against the freshly rolled API. The
-  # lifecycle journeys (create/exec/terminate) are covered continuously by the
-  # in-cluster ignition-prober Deployment and by tests/integration in CI.
-  - name: cuj-lite
+  # Post-deploy gate: run the credential-free critical-user-journeys (health,
+  # auth-guard) once against the freshly rolled API. These are the only journeys
+  # valid without a bearer — "lite" also contains default-runtime and list,
+  # which call authenticated routes and 401 under IGNITION_PROBE_AUTH=none. The
+  # authenticated read-only and lifecycle journeys are covered continuously by
+  # the in-cluster ignition-prober Deployment (Workload Identity token) and by
+  # tests/integration in CI. To run more here, give this Job the
+  # ignition-prober ServiceAccount + IGNITION_PROBE_AUTH=gcp-idtoken +
+  # IGNITION_PROBE_AUDIENCE=<the API's IGNITION_OIDC_AUDIENCE>.
+  - name: cuj-smoke
     container:
-      name: cuj-lite
+      name: cuj-smoke
       image: ignition-prober
       env:
         - name: IGNITION_PROBE_TARGET
@@ -27,7 +32,7 @@ verify:
         - name: IGNITION_PROBE_ONESHOT
           value: "true"
         - name: IGNITION_PROBE_JOURNEYS
-          value: lite
+          value: smoke
         - name: IGNITION_PROBE_AUTH
           value: none
     executionMode:

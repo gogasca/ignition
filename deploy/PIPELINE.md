@@ -265,13 +265,17 @@ gcloud deploy targets rollback staging \
 
 `ignition-prober` runs the public-API critical user journeys — health, auth guard, default runtime,
 list, the `create → ready → list → terminate → finished` sandbox lifecycle, the exec control plane
-(`create process → attach token → signal → cancel`), and idempotency replay/conflict — and exports
-Prometheus metrics (`ignition_probe_*`) on `:9102`. (Exec byte-streaming and in-sandbox process
-supervision ship later; the `process-exec` journey asserts the control-plane surface that exists today
-and starts checking the `RUNNING` transition automatically once supervision lands.) It is deployed to staging by `deploy/k8s/components/prober`
-(a `Deployment` + `Service`, wired into `overlays/staging`). The Cloud Deploy `verify` gate additionally
-runs the read-only subset once per rollout (`skaffold.yaml`, `IGNITION_PROBE_JOURNEYS=lite`,
-`IGNITION_PROBE_AUTH=none`).
+(`create process → attach token → signal → cancel`), the exec **data plane** (`gateway-exec`: dial
+ignition-gateway with the stream token, stream real bytes from sandbox-init, verify the nonce), and
+idempotency replay/conflict — and exports Prometheus metrics (`ignition_probe_*`) on `:9102`. It is
+deployed to staging by `deploy/k8s/components/prober` (a `Deployment` + `Service`, wired into
+`overlays/staging`). The Cloud Deploy `verify` gate additionally runs the credential-free smoke subset
+once per rollout (`skaffold.yaml`, `IGNITION_PROBE_JOURNEYS=smoke`, `IGNITION_PROBE_AUTH=none` — just
+`health` + `auth-guard`; `lite` also has authenticated journeys and cannot run without a token).
+
+Journey selections: `full` (all), `lite`/`read` (non-lifecycle), `smoke`/`noauth` (credential-free:
+`health`, `auth-guard`), or a comma list of names. `gateway-exec` needs a reachable `gatewayUrl` and,
+to check stdout bytes, an `IGNITION_PROBE_IMAGE` with a shell.
 
 The continuous prober authenticates with a **Workload Identity ID token** (no secrets). For that to
 work on staging:
@@ -336,11 +340,17 @@ auto-promote staging→prod after a soak while keeping the approval gate.
 - **Database schema rollout is not separated from API startup.** `ignition-api` currently applies
   the complete, idempotent `internal/store/schema.sql` baseline when it starts. Before schema
   evolution is needed, add a reviewed predeploy schema job and remove DDL privileges from the API.
-- **Cloud Deploy `verify` runs only the read-only journeys** (`lite`, unauthenticated). Full lifecycle
-  CUJ coverage on staging comes from the continuous `ignition-prober` Deployment and from
-  `tests/integration` (`TestProbeJourneys`) in CI. To run the full set in `verify` too, give the
-  skaffold verify Job the `ignition-prober` ServiceAccount, `IGNITION_PROBE_AUTH=gcp-idtoken`, and
-  `IGNITION_PROBE_AUDIENCE` equal to the API's `IGNITION_OIDC_AUDIENCE`.
+- **Cloud Deploy `verify` runs only the credential-free smoke journeys** (`smoke` = `health` +
+  `auth-guard`, unauthenticated). Authenticated read-only and full lifecycle CUJ coverage on staging
+  comes from the continuous `ignition-prober` Deployment and from `tests/integration`
+  (`TestProbeJourneys`) in CI. To run more in `verify`, give the skaffold verify Job the
+  `ignition-prober` ServiceAccount, `IGNITION_PROBE_AUTH=gcp-idtoken`, and `IGNITION_PROBE_AUDIENCE`
+  equal to the API's `IGNITION_OIDC_AUDIENCE`.
+- **`gateway-exec` is not in any automated run yet.** It needs a reachable `gatewayUrl` (the
+  `anyscale-staging` overlay reaches the gateway only via `kubectl port-forward`, and its
+  `img_seed` has no shell). It runs on `overlays/staging` once `IGNITION_PROBE_JOURNEYS=full` and a
+  shell-capable `IGNITION_PROBE_IMAGE` are set, and via a manual `IGNITION_PROBE_JOURNEYS=gateway-exec`
+  one-shot.
 - **`tests/conformance/` is superseded** by `internal/probe` + `cmd/ignition-prober` and can be removed.
 - **The controller has no health signal.** `cmd/ignition-controller` serves no HTTP, so its Deployment
   has no liveness/readiness probe, and `controller.Run` uses a non-cancellable `context.Background()`
