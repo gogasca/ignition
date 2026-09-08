@@ -53,11 +53,16 @@ func (s *Server) watchOperation(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	operationID := r.PathValue("operation")
-	writeSSE(w, r, s.requestID(r.Context()), func() (any, error) {
-		return s.store.GetOperation(r.Context(), project, operationID)
-	}, func(v any) bool {
-		op := v.(store.Operation)
-		return op.State == "SUCCEEDED" || op.State == "FAILED" || op.State == "CANCELLED"
+	wake, stop := s.watchWake("operations", operationID)
+	defer stop()
+	writeSSE(w, r, sseOpts{
+		requestID: s.requestID(r.Context()),
+		fetch:     func() (any, error) { return s.store.GetOperation(r.Context(), project, operationID) },
+		terminal: func(v any) bool {
+			op := v.(store.Operation)
+			return op.State == "SUCCEEDED" || op.State == "FAILED" || op.State == "CANCELLED"
+		},
+		wake: wake,
 	})
 }
 

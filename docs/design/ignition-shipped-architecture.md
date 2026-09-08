@@ -114,7 +114,10 @@ routing on `placement.region`. Do not run a globally writable Postgres.
 - `Authorization: Bearer` on every route. `Idempotency-Key` required on create,
   terminate, operation-cancel, and process create/attach/signal/cancel.
 - Watch is **SSE** — content-addressed snapshot on change, `Last-Event-ID`,
-  heartbeats, closes on terminal state or ~60s.
+  15s heartbeats. A Postgres `LISTEN/NOTIFY` trigger on `sandboxes`/`operations`
+  wakes the stream on any write (from `ignition-api` or `ignition-controller`),
+  so changes push in <1s; a 10s poll is only a backstop. Stays open until the
+  resource is terminal, the client disconnects, or a 30-minute cap.
 
 ### Authentication and authorization
 
@@ -173,7 +176,8 @@ One serializable Cloud SQL transaction; the API never creates a Pod:
   expireTime, streamEpoch }`; signal/cancel are idempotent row updates. Bytes
   never enter `ignition-api`.
 - **List:** cursor pagination, order `(create_time, id)`, project filter, SQL
-  `LIMIT`. **Watch:** snapshot then heartbeats then close (~60s).
+  `LIMIT`. **Watch:** snapshot, then push-on-change via `LISTEN/NOTIFY` (10s poll
+  backstop), heartbeats, open until terminal / disconnect / 30-minute cap.
 
 API crash after commit is safe: the operation is durable, the controller
 proceeds, clients reconnect with watch/`GET`. No cross-replica lock — the
@@ -464,6 +468,10 @@ projects           role_bindings      images            -- images: seed rows; Im
 sandboxes          processes          operations
 idempotency_keys   project_quota      controller_leases  -- project_quota is a count, not a ledger
 ```
+
+An `AFTER INSERT OR UPDATE` trigger on `sandboxes` and `operations`
+(`ignition_notify_watch`) issues `pg_notify('ignition_watch', …)`, which
+`ignition-api` `LISTEN`s on to push `:watch` streams.
 
 Complete baseline schema (`internal/store/schema.sql`, embedded), not a migration
 chain. Every customer row has non-null `project_id`. Indexes `(project_id, id)`,

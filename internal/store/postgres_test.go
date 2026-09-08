@@ -488,3 +488,51 @@ func TestPostgresRoleBindingAdmin(t *testing.T) {
 		t.Fatalf("delete missing existed=%v err=%v", existed, err)
 	}
 }
+
+func TestPostgresChangeNotifierDeliversOnWrite(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	p.SeedImage(project, "img")
+
+	changes, cancel := p.Subscribe()
+	defer cancel()
+	// Give the LISTEN connection a moment to establish.
+	time.Sleep(200 * time.Millisecond)
+
+	res, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
+		ProjectID: project, Principal: "alice", IdemKey: "k1", IdemHash: "k1",
+		ImageID: "img", Resources: spec(), MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if !waitChange(t, changes, "sandboxes", res.Sandbox.ID) {
+		t.Fatalf("no sandbox change notification for %s", res.Sandbox.ID)
+	}
+
+	if err := p.UpdateObserved(ctx, store.ObservedUpdate{
+		ProjectID: project, SandboxID: res.Sandbox.ID, State: "SCHEDULED", Reason: "SCHEDULED",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !waitChange(t, changes, "sandboxes", res.Sandbox.ID) {
+		t.Fatalf("no sandbox change notification after UpdateObserved")
+	}
+}
+
+func waitChange(t *testing.T, ch <-chan store.Change, kind, id string) bool {
+	t.Helper()
+	deadline := time.After(5 * time.Second)
+	for {
+		select {
+		case c := <-ch:
+			if c.Kind == kind && c.ID == id {
+				return true
+			}
+		case <-deadline:
+			return false
+		}
+	}
+}

@@ -21,7 +21,7 @@ is authoritative for exactly what is deployed and how.
 | `ignition-controller` — reconciles sandboxes into GKE Pods | **SHIPPED** | Sole holder of Pod RBAC. CPU lifecycle verified end to end. |
 | Google OIDC / Cloud IAP authentication | **SHIPPED** | Verified end to end on staging. IAP rollout needs a public Ingress + Workspace domain. |
 | SQL-backed project RBAC (`roleBindings`, last-owner guard, audit line) | **SHIPPED** | |
-| Sandbox lifecycle: create / get / list / terminate / watch (SSE) | **SHIPPED** | |
+| Sandbox lifecycle: create / get / list / terminate / watch (SSE) | **SHIPPED** | `:watch` pushes on change via Postgres `LISTEN/NOTIFY` (10s poll backstop), stays open to terminal / disconnect / 30-min cap. |
 | Process control plane: create / get / list / attach / signal / cancel | **SHIPPED** | |
 | Operations: get / list / watch / cancel | **SHIPPED** | |
 | Idempotency (`Idempotency-Key`, 24h replay) | **SHIPPED** | |

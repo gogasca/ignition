@@ -226,7 +226,13 @@ reuse → non-retryable `409 IDEMPOTENCY_KEY_REUSED`. Retry after expiry may cre
 a new side effect; SDKs warn.
 
 Watch endpoints use authenticated SSE — content-addressed snapshot on change,
-`Last-Event-ID`, heartbeats, close on terminal state or ~60s.
+`Last-Event-ID`, 15s heartbeat comments. A Postgres `LISTEN/NOTIFY` trigger on
+`sandboxes`/`operations` wakes the stream the moment either `ignition-api`
+(desired state) or `ignition-controller` (observed state) writes, so a change is
+delivered in well under a second; a 10s poll is only a backstop. The stream
+stays open until the resource is terminal, the client disconnects, or a 30-minute
+safety cap — it is no longer force-closed after a minute. (In-memory dev mode
+uses an in-process notifier with the same behavior.)
 
 ## 6. Errors and quotas
 
