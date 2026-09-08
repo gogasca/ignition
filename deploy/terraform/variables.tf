@@ -129,7 +129,11 @@ variable "system_machine_type" {
 
 variable "cpu_sandbox_machine_type" {
   type    = string
-  default = "n2-standard-8"
+  default = "e2-standard-8"
+  # Any gVisor-capable type works — the seed sandbox only asks for 1 vCPU /
+  # 2 GiB. e2-standard-8 has the broadest regional availability (n2-standard-8
+  # was seen stocked out in us-central1-a); the implementation guide's gcloud
+  # path uses the same default.
 }
 
 variable "gpu_sandbox_machine_type" {
