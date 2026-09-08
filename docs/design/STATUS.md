@@ -19,7 +19,8 @@ is authoritative for exactly what is deployed and how.
 |---|---|---|
 | `ignition-api` — HTTP/JSON public API, auth, admission, quota, idempotency | **SHIPPED** | No Kubernetes access. |
 | `ignition-controller` — reconciles sandboxes into GKE Pods | **SHIPPED** | Sole holder of Pod RBAC. CPU lifecycle verified end to end. |
-| Google OIDC / Cloud IAP authentication | **SHIPPED** | Verified end to end on staging. IAP rollout needs a public Ingress + Workspace domain. |
+| Google OIDC authentication | **SHIPPED** | Verified end to end on staging. |
+| Cloud IAP authentication | **PARTIAL** | Verifier + `deploy/k8s/components/iap` component are built and tested. Turning it on is an operator step: include the component, deploy so the backend service exists, set `IGNITION_IAP_AUDIENCE` to its resource path, grant `roles/iap.httpsResourceAccessor`. Not enabled in any overlay. |
 | SQL-backed project RBAC (`roleBindings`, last-owner guard, audit line) | **SHIPPED** | |
 | Sandbox lifecycle: create / get / list / terminate / watch (SSE) | **SHIPPED** | `:watch` pushes on change via Postgres `LISTEN/NOTIFY` (10s poll backstop), stays open to terminal / disconnect / 30-min cap. |
 | Process control plane: create / get / list / attach / signal / cancel | **SHIPPED** | |
@@ -34,13 +35,13 @@ is authoritative for exactly what is deployed and how.
 | Capability | Status | Notes |
 |---|---|---|
 | CPU sandbox (`accelerator: NONE`) as a gVisor Pod on `cpu-sandbox` | **SHIPPED** | Verified end to end on dev. |
-| `NVIDIA_L4` GPU sandbox, one whole GPU, one sandbox per node | **PARTIAL** | Code complete; a real L4 sandbox reaching `READY` is not yet exercised (dev L4 quota). |
+| `NVIDIA_L4` GPU sandbox, one whole GPU, one sandbox per node | **PARTIAL** | Code + profile + `ignition-gpu-agent` complete; a real L4 sandbox reaching `READY` has never been run (needs regional `NVIDIA_L4_GPUS` + `GPUS_ALL_REGIONS` quota — nothing in code left to do). |
 | `ignition-gpu-agent` — GPU identity + health attestation, node-reuse gating | **SHIPPED** | Privileged DaemonSet on the GPU pool. |
 | `sandbox-init` — readiness probe + tenant-process supervision | **SHIPPED** | |
 | Server-owned Pod spec (gVisor, read-only root, dropped caps, no SA token) | **SHIPPED** | No client field maps to hooks/devices/mounts/scheduling. |
 | System-managed default runtime (`RuntimeSpec`, optional `CreateSandbox` fields) | **SHIPPED** | `GET /v1/projects/{project}/runtimes/default`. |
 | Timeouts: `startupSeconds`, `maximumRuntimeSeconds`, `idleSeconds` | **SHIPPED** | Startup deadline in the controller; max runtime via Pod `activeDeadlineSeconds`; idle via `sandbox-init` `idleSeconds` + controller (`FINISHED`/`IDLE_TIMEOUT`). No idle enforcement for `nativeEntrypoint` (no supervisor). |
-| Warm-node capacity via balloon Pods | **PARTIAL** | Implemented; dev runs `IGNITION_MIN_WARM=0`, not measured. CPU warm pool opt-in. |
+| Warm-node capacity via balloon Pods | **PARTIAL** | Implemented; `IGNITION_MIN_WARM=0` in every overlay so no standing warm pool. The 9s p95 API-to-`READY` SLO is unmeasured — needs `MIN_WARM>0` + a load run against real capacity (the `ignition_sandbox_stage_latency_seconds` per-stage metric is already emitted). |
 | `nativeEntrypoint` (run the image's own entrypoint as PID 1) | **PARTIAL** | Works; weaker readiness, no exec/idle-tracking, same security context. |
 | Ephemeral `/scratch` emptyDir | **SHIPPED** | Lost on node loss — part of the public contract. |
 | Read-only dataset / artifact mounts, content caches | **PROPOSED** | |
