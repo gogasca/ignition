@@ -49,3 +49,20 @@ func TestLoadValidation(t *testing.T) {
 		t.Fatal("want error for unknown journey spec")
 	}
 }
+
+func TestLoadRejectsNoneAuthWithAuthedJourneys(t *testing.T) {
+	t.Setenv("IGNITION_PROBE_TARGET", "http://api:8080")
+	t.Setenv("IGNITION_PROBE_AUTH", "none")
+
+	// "lite" includes default-runtime and list, which need a bearer.
+	t.Setenv("IGNITION_PROBE_JOURNEYS", "lite")
+	if _, err := Load(); err == nil {
+		t.Fatal("want error: AUTH=none with lite (has authenticated journeys)")
+	}
+
+	// "smoke" is health + auth-guard only.
+	t.Setenv("IGNITION_PROBE_JOURNEYS", "smoke")
+	if _, err := Load(); err != nil {
+		t.Fatalf("AUTH=none + smoke should load: %v", err)
+	}
+}

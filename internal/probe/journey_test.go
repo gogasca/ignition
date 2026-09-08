@@ -33,6 +33,37 @@ func TestSelect(t *testing.T) {
 	if _, err := Select("bogus"); err == nil {
 		t.Fatal("want error for unknown journey")
 	}
+
+	smoke, err := Select("smoke")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(smoke) == 0 {
+		t.Fatal("smoke selected nothing")
+	}
+	for _, j := range smoke {
+		if !j.NoAuth {
+			t.Fatalf("smoke contains auth-required journey %s", j.Name)
+		}
+	}
+	if noauth, _ := Select("noauth"); len(noauth) != len(smoke) {
+		t.Fatal("noauth should alias smoke")
+	}
+}
+
+func TestGatewayJourneyIsLifecycleAndGateway(t *testing.T) {
+	var j Journey
+	for _, cand := range All() {
+		if cand.Name == "gateway-exec" {
+			j = cand
+		}
+	}
+	if j.Name == "" {
+		t.Fatal("gateway-exec not registered")
+	}
+	if !j.Lifecycle || !j.Gateway {
+		t.Fatalf("gateway-exec: Lifecycle=%v Gateway=%v", j.Lifecycle, j.Gateway)
+	}
 }
 
 func TestAllJourneyNamesUnique(t *testing.T) {

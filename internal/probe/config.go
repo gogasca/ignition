@@ -57,8 +57,22 @@ func Load() (Config, error) {
 		// in-cluster Target the prober dials.
 		return c, fmt.Errorf("IGNITION_PROBE_AUTH=gcp-idtoken requires IGNITION_PROBE_AUDIENCE (must equal the API's IGNITION_OIDC_AUDIENCE)")
 	}
-	if _, err := Select(c.Journeys); err != nil {
+	js, err := Select(c.Journeys)
+	if err != nil {
 		return c, err
+	}
+	if c.Auth == "none" {
+		// Every journey but health and auth-guard calls an authenticated route
+		// and would 401. Fail fast rather than deploy a gate that always fails.
+		var need []string
+		for _, j := range js {
+			if !j.NoAuth {
+				need = append(need, j.Name)
+			}
+		}
+		if len(need) > 0 {
+			return c, fmt.Errorf("IGNITION_PROBE_AUTH=none cannot run authenticated journeys %v; use IGNITION_PROBE_JOURNEYS=smoke or set an auth mode", need)
+		}
 	}
 	return c, nil
 }

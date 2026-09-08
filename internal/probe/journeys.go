@@ -95,7 +95,8 @@ func cleanup(c *Client, sandboxID string) {
 // --- read-only journeys -------------------------------------------------
 
 var journeyHealth = Journey{
-	Name: "health",
+	Name:   "health",
+	NoAuth: true,
 	Run: func(ctx context.Context, c *Client, _ Env) ([]Step, error) {
 		s := &stepper{}
 		return s.steps, s.run("healthz", func() error { return c.Healthz(ctx) })
@@ -103,7 +104,8 @@ var journeyHealth = Journey{
 }
 
 var journeyAuthGuard = Journey{
-	Name: "auth-guard",
+	Name:   "auth-guard",
+	NoAuth: true,
 	Run: func(ctx context.Context, c *Client, _ Env) ([]Step, error) {
 		s := &stepper{}
 		return s.steps, s.run("reject-anonymous", func() error {
@@ -347,6 +349,104 @@ var journeyProcessExec = Journey{
 		if err := s.run("cancel", func() error {
 			_, err := c.CancelProcess(ctx, sbxID, prcID, id.New("idem"))
 			return err
+		}); err != nil {
+			return s.steps, err
+		}
+
+		if err := s.run("terminate", func() error {
+			return terminateAndWait(ctx, c, sbxID)
+		}); err != nil {
+			return s.steps, err
+		}
+		return s.steps, nil
+	},
+}
+
+// journeyGatewayExec is the only journey that exercises the exec *data plane*:
+// it dials ignition-gateway with the minted stream token and streams real bytes
+// from sandbox-init. It proves, in one shot, that the gateway verifies the
+// token, resolves the Pod, passes the READY + generation gate, dials the
+// supervisor, and proxies frames both ways — none of which the control-plane
+// process-exec journey touches.
+//
+// It needs a reachable gatewayUrl (so it is skipped by the in-process
+// fake-cluster tests) and, to assert stdout bytes end to end, an
+// IGNITION_PROBE_IMAGE with a shell. Against a shell-less image the byte path is
+// still fully exercised — sandbox-init emits a terminal control frame — so the
+// journey passes on the round trip alone.
+var journeyGatewayExec = Journey{
+	Name:      "gateway-exec",
+	Lifecycle: true,
+	Gateway:   true,
+	Run: func(ctx context.Context, c *Client, env Env) ([]Step, error) {
+		s := &stepper{}
+		var sbxID, prcID string
+		nonce := id.New("n")
+
+		if err := s.run("create-sandbox", func() error {
+			sb, _, err := c.CreateSandbox(ctx, id.New("idem"), cpuSandboxReq(env))
+			if err != nil {
+				return err
+			}
+			sbxID = sb.ID
+			return nil
+		}); err != nil {
+			return s.steps, err
+		}
+		defer cleanup(c, sbxID)
+
+		if err := s.run("wait-ready", func() error {
+			_, err := waitReady(ctx, c, sbxID)
+			return err
+		}); err != nil {
+			return s.steps, err
+		}
+
+		if err := s.run("create-process", func() error {
+			// A shell image echoes the nonce then lingers briefly so the attach
+			// races the output rather than always replaying it from the buffer.
+			// A shell-less image fails to start; sandbox-init still frames that.
+			p, err := c.CreateProcess(ctx, sbxID, id.New("idem"),
+				[]string{"/bin/sh", "-c", "echo " + nonce + "; sleep 2"})
+			if err != nil {
+				return err
+			}
+			if p.ID == "" {
+				return fmt.Errorf("create-process returned no id")
+			}
+			prcID = p.ID
+			return nil
+		}); err != nil {
+			return s.steps, err
+		}
+
+		if err := s.run("attach-stream", func() error {
+			att, err := c.AttachProcess(ctx, sbxID, prcID, id.New("idem"))
+			if err != nil {
+				return err
+			}
+			if att.StreamToken == "" || att.GatewayURL == "" {
+				return fmt.Errorf("attach response missing token or gateway url")
+			}
+			sctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+			defer cancel()
+			res, err := streamAttach(sctx, att.GatewayURL, att.StreamToken)
+			if err != nil {
+				return fmt.Errorf("gateway stream: %w", err)
+			}
+			// The round trip completed: gateway upgraded, proxied to sandbox-init,
+			// and closed cleanly. Require a terminal signal so a silently hung
+			// backend still fails.
+			if !res.SawExit && !res.SawStdout {
+				return fmt.Errorf("stream produced no frames before close")
+			}
+			// If stdout bytes flowed, they must be intact (catches a corrupting
+			// or truncating proxy). A shell-less image yields no stdout — the
+			// exit frame alone is a pass.
+			if res.SawStdout && !strings.Contains(res.Stdout, nonce) {
+				return fmt.Errorf("stdout did not contain the nonce %q (got %q)", nonce, res.Stdout)
+			}
+			return nil
 		}); err != nil {
 			return s.steps, err
 		}

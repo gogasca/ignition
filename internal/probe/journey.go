@@ -70,11 +70,17 @@ func All() []Journey {
 		journeyList,
 		journeySandboxLifecycle,
 		journeyProcessExec,
+		journeyGatewayExec,
 		journeyIdempotency,
 	}
 }
 
-// Select resolves a spec ("full", "lite", or a comma list of names) to journeys.
+// Select resolves a spec to journeys. Recognised specs:
+//   - "full" / "all" / "":     every journey
+//   - "lite" / "read":         the read-only (non-Lifecycle) journeys
+//   - "smoke" / "noauth":      the credential-free journeys (health, auth-guard);
+//     the only valid set under IGNITION_PROBE_AUTH=none
+//   - a comma list of names
 func Select(spec string) ([]Journey, error) {
 	spec = strings.TrimSpace(spec)
 	all := All()
@@ -85,6 +91,14 @@ func Select(spec string) ([]Journey, error) {
 		var out []Journey
 		for _, j := range all {
 			if !j.Lifecycle {
+				out = append(out, j)
+			}
+		}
+		return out, nil
+	case "smoke", "noauth":
+		var out []Journey
+		for _, j := range all {
+			if j.NoAuth {
 				out = append(out, j)
 			}
 		}
