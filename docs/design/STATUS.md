@@ -39,6 +39,7 @@ is authoritative for exactly what is deployed and how.
 | `sandbox-init` — readiness probe + tenant-process supervision | **SHIPPED** | |
 | Server-owned Pod spec (gVisor, read-only root, dropped caps, no SA token) | **SHIPPED** | No client field maps to hooks/devices/mounts/scheduling. |
 | System-managed default runtime (`RuntimeSpec`, optional `CreateSandbox` fields) | **SHIPPED** | `GET /v1/projects/{project}/runtimes/default`. |
+| Timeouts: `startupSeconds`, `maximumRuntimeSeconds`, `idleSeconds` | **SHIPPED** | Startup deadline in the controller; max runtime via Pod `activeDeadlineSeconds`; idle via `sandbox-init` `idleSeconds` + controller (`FINISHED`/`IDLE_TIMEOUT`). No idle enforcement for `nativeEntrypoint` (no supervisor). |
 | Warm-node capacity via balloon Pods | **PARTIAL** | Implemented; dev runs `IGNITION_MIN_WARM=0`, not measured. CPU warm pool opt-in. |
 | `nativeEntrypoint` (run the image's own entrypoint as PID 1) | **PARTIAL** | Works; weaker readiness, no exec/idle-tracking, same security context. |
 | Ephemeral `/scratch` emptyDir | **SHIPPED** | Lost on node loss — part of the public contract. |

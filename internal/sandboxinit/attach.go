@@ -43,6 +43,11 @@ func (s *Supervisor) attach(w http.ResponseWriter, r *http.Request) {
 	}
 	defer conn.Close()
 
+	// A live exec stream counts as sandbox activity even while no bytes flow,
+	// so an interactive session is not idle-terminated under the operator.
+	s.procs.attachBegin()
+	defer s.procs.attachEnd()
+
 	// Reader: client stdin and control frames.
 	go func() {
 		for {

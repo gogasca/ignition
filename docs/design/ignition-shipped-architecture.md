@@ -195,6 +195,7 @@ for each sandbox in SQL:
   PodReady (+ GPU: init-healthy + gpu-uuid annotations) → SQL READY
   desired TERMINATING               → delete Pod; on gone → FINISHED
   CREATE cancelled                  → SQL already FAILED; do not create
+  READY + idle > timeouts.idleSeconds → delete Pod; FINISHED / IDLE_TIMEOUT
   startup deadline exceeded         → FAILED CAPACITY_UNAVAILABLE / STARTUP_TIMEOUT
   Pod gone unexpectedly             → FAILED WORKER_LOST; release quota; restore balloon
   GPU cleanup ambiguous             → GET node; cordon only if gpu-sandbox-l4
@@ -417,12 +418,20 @@ runtime](ignition-deferred-runtime.md).
   `sandbox-init` polls. The sandbox holds no Kubernetes credential.
 - **Observed → controller.** `sandbox-init` runs/signals/reaps the processes and
   serves `GET :8081/v1/processes` (`{processes: {processId → {state, exitCode,
-  signal}}}`). The controller polls it each reconcile, advances `processes.state`,
-  and mirrors the result into `ignition.io/process-observed`.
+  signal}}, idleSeconds}`). The controller polls it each reconcile, advances
+  `processes.state`, and mirrors the process map into `ignition.io/process-observed`.
 
 Failed in-sandbox create → `FAILED` with a typed reason. Signal/cancel stay SQL
 desired-state until the supervisor reports `EXITED`/`FAILED`. PTY is accepted but
 not yet allocated.
+
+**Idle timeout.** `sandbox-init` reports `idleSeconds` — time with no process in
+`STARTING`/`RUNNING` and no attached exec stream (0 while active). When a `READY`
+sandbox's `idleSeconds` reaches `timeouts.idleSeconds` (and that value is > 0),
+the controller deletes the Pod and finalizes the sandbox `FINISHED` /
+`IDLE_TIMEOUT`, releasing quota. `nativeEntrypoint` sandboxes have no supervisor
+and so no idle enforcement. `timeouts.maximumRuntimeSeconds` is enforced
+separately by the Pod's `activeDeadlineSeconds`.
 
 ### Byte stream (`ignition-gateway`)
 
