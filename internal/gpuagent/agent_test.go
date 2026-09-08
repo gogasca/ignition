@@ -1,6 +1,7 @@
 package gpuagent
 
 import (
+	"errors"
 	"context"
 	"testing"
 
@@ -179,5 +180,65 @@ func TestVerifyReuseResidualMarksNode(t *testing.T) {
 	}
 	if dirty, _ := f.GPUCleanupAmbiguous("n1"); !dirty {
 		t.Fatal("residual process after teardown did not mark the node")
+	}
+}
+
+// TestColdStartInspectErrorRetriesAndDoesNotFence guards the cold-GPU-node race:
+// the NVIDIA driver install can lag the agent's first pass, so the first few
+// nvidia-smi calls fail with "no such file or directory". A failed first-pass
+// verifyReuse must NOT consume the one-shot check and must NOT fence a pristine
+// node — otherwise the node is stranded (blocked from ever scheduling its first
+// sandbox) with no path back.
+func TestColdStartInspectErrorRetriesAndDoesNotFence(t *testing.T) {
+	f := newNode(t, "n1", false)
+	insp := &fakeInspector{err: errors.New("fork/exec /usr/local/nvidia/bin/nvidia-smi: no such file or directory")}
+	a := New("n1", f, f, insp)
+
+	// Driver not ready yet: pass errors, node stays unfenced, check not consumed.
+	if err := a.Reconcile(context.Background()); err == nil {
+		t.Fatal("expected the cold inspect error to surface")
+	}
+	if f.GPUReusePending("n1") {
+		t.Fatal("cold-start inspect failure fenced a pristine node")
+	}
+
+	// Driver lands: the next pass must still run verifyReuse and clear cleanly.
+	a.Inspector = &fakeInspector{gpus: []GPU{{UUID: goodUUID, ECCUncorrected: -1}}}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.GPUReusePending("n1") {
+		t.Fatal("clean cold-start verdict left the node fenced")
+	}
+	if dirty, _ := f.GPUCleanupAmbiguous("n1"); dirty {
+		t.Fatal("clean cold-start verdict marked the node dirty")
+	}
+}
+
+// TestSandboxLeftInspectErrorKeepsFenceAndRetries: the other case — a real
+// tenant just left, inspect then fails transiently. The node must stay fenced
+// (fail-closed) and the check must not be consumed, so a later pass re-verifies.
+func TestSandboxLeftInspectErrorKeepsFenceAndRetries(t *testing.T) {
+	f := newNode(t, "n1", true)
+	a := New("n1", f, f, &fakeInspector{gpus: []GPU{{UUID: goodUUID, ECCUncorrected: -1}}})
+	if err := a.Reconcile(context.Background()); err != nil { // attest the live sandbox
+		t.Fatal(err)
+	}
+	f.Drop("sbx-1")
+
+	a.Inspector = &fakeInspector{err: errors.New("transient nvml error")}
+	if err := a.Reconcile(context.Background()); err == nil {
+		t.Fatal("expected transient inspect error")
+	}
+	if !f.GPUReusePending("n1") {
+		t.Fatal("a departed tenant left the node unfenced during a transient inspect error")
+	}
+
+	a.Inspector = &fakeInspector{gpus: []GPU{{UUID: goodUUID, ECCUncorrected: -1}}}
+	if err := a.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if f.GPUReusePending("n1") {
+		t.Fatal("clean re-verify after the transient error did not unfence the node")
 	}
 }
