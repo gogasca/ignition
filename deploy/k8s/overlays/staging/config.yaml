@@ -34,3 +34,13 @@ metadata:
 data:
   # Must equal the ignition-api ConfigMap's IGNITION_OIDC_AUDIENCE above.
   IGNITION_PROBE_AUDIENCE: "https://api.staging.ignition.dev"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-gateway
+  namespace: ignition-system
+data:
+  IGNITION_ENV: "staging"
+  # Must equal ignition-api's IGNITION_GATEWAY_URL (the exec-stream audience).
+  IGNITION_GATEWAY_URL: "https://gateway.staging.ignition.dev"

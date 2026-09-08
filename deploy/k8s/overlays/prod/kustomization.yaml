@@ -3,6 +3,7 @@ kind: Kustomization
 resources:
   - ../../base
   - ingress.yaml
+  - gateway-ingress.yaml
 components:
   - ../../components/cloud-sql-proxy-private
 images:
@@ -11,6 +12,9 @@ images:
     newTag: prod
   - name: ignition-controller
     newName: us-central1-docker.pkg.dev/ignition-prod/ignition/ignition-controller
+    newTag: prod
+  - name: ignition-gateway
+    newName: us-central1-docker.pkg.dev/ignition-prod/ignition/ignition-gateway
     newTag: prod
 patches:
   - path: config.yaml

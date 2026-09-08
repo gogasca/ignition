@@ -19,3 +19,12 @@ data:
   IGNITION_MIN_WARM: "0"
   IGNITION_MAX_WARM: "0"
   IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/PROJECT/sandboxes"
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: ignition-gateway
+  namespace: ignition-system
+data:
+  # Must equal ignition-api's IGNITION_GATEWAY_URL (the exec-stream audience).
+  IGNITION_GATEWAY_URL: "http://ignition-gateway.example"

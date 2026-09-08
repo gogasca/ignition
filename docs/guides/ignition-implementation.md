@@ -16,7 +16,7 @@ This is the **only** build-and-deploy runbook: one regional GKE **dev** environm
 |---|---|
 | `SandboxService` (lifecycle + process metadata) and `OperationService` | Custom GCE MIG workers |
 | Google OIDC / Cloud IAP auth, SQL project RBAC, Cloud SQL, `ignition-controller` | Digest-pinned images |
-| HTTP/JSON public edge (SSE for watch); `sandbox-init` health/GPU readiness + process supervision; `ignition-gateway` exec byte stream; `ignitionctl` | Public WebSocket Ingress for `ignition-gateway`; PTY allocation |
+| HTTP/JSON public edge (SSE for watch, `LISTEN/NOTIFY` push); `sandbox-init` health/GPU readiness + process supervision + PTY + idle timeout; `ignition-gateway` exec byte stream + public `Ingress` (`staging`/`prod`); `ignitionctl`; Python + TypeScript SDKs | Mid-session PTY resize |
 | `secretRefs` (Secret Manager → Pod env), binary outbound internet preference | GCP network-profile provisioning for both internet modes |
 
 Public transport is **HTTP/JSON**. Protobuf is the schema; JSON field names follow proto `json_name` (lowerCamelCase). `ignition-api` must **not** call Kubernetes. The controller is the only Pod RBAC identity. They meet in Cloud SQL.
@@ -225,9 +225,19 @@ Context is stored in `~/.config/ignition/config.json` (`$IGNITION_CONFIG`); `--s
 
 ### `ignition-gateway`
 
-Implemented (`internal/gateway`, image `deploy/docker/ignition-gateway.Dockerfile`, manifests `deploy/k8s/base/ignition-gateway.yaml` + `rbac-gateway.yaml`). It reads the exec-stream token from `?token=` or `Authorization: Bearer` on `GET /v1/attach`, verifies it with `IGNITION_STREAM_TOKEN_SECRET` + audience `IGNITION_GATEWAY_URL` (**must equal** `ignition-api`'s), resolves the sandbox Pod by the `ignition.io/sandbox-id` label in the sandbox namespace, and proxies the WebSocket to `ws://<podIP>:8081/v1/processes/<id>/attach`. It holds no database access. The `sandbox-supervisor-ingress` policy in `deploy/k8s/base/sandbox-network-policies.yaml` is the only gateway↔sandbox path. A public WebSocket Ingress for the gateway is still overlay work; overlays other than `dev` also need an `ignition-gateway` image mapping and a `IGNITION_GATEWAY_URL` ConfigMap patch.
+Implemented (`internal/gateway`, image `deploy/docker/ignition-gateway.Dockerfile`, manifests `deploy/k8s/base/ignition-gateway.yaml` + `rbac-gateway.yaml`). It reads the exec-stream token from `?token=` or `Authorization: Bearer` on `GET /v1/attach`, verifies it with `IGNITION_STREAM_TOKEN_SECRET` + audience `IGNITION_GATEWAY_URL` (**must equal** `ignition-api`'s), resolves the sandbox Pod by the `ignition.io/sandbox-id` label in the sandbox namespace, and proxies the WebSocket to `ws://<podIP>:8081/v1/processes/<id>/attach`. It holds no database access. The `sandbox-supervisor-ingress` policy in `deploy/k8s/base/sandbox-network-policies.yaml` is the only gateway↔sandbox path.
 
-Process execution: the controller writes desired processes to the `ignition.io/process-desired` Pod annotation; a `downwardAPI` volume projects it to `/etc/ignition/pod/process-desired`, which `sandbox-init` reads (no kube credential). `sandbox-init` runs/signals/reaps the processes, serves observed state at `GET :8081/v1/processes` (the controller polls it and advances `processes.state`), and serves the byte stream at `GET :8081/v1/processes/{id}/attach`. PTY is accepted but not yet allocated.
+**Per-overlay wiring** (all overlays build the gateway Deployment from `base`; each sets the image + a matching `IGNITION_GATEWAY_URL` on both the `ignition-api` and `ignition-gateway` ConfigMaps):
+
+| Overlay | Reach | `IGNITION_GATEWAY_URL` |
+|---|---|---|
+| `prod` | public `Ingress` + `ManagedCertificate` (`gateway-ingress.yaml`) | `https://gateway.us-central1.ignition.dev` |
+| `staging` | public `Ingress` + `ManagedCertificate` (`gateway-ingress.yaml`) | `https://gateway.staging.ignition.dev` |
+| `dev`, `anyscale-staging` | `kubectl port-forward -n ignition-system svc/ignition-gateway 8443:8080` | `http://127.0.0.1:8443` |
+
+The base `Service` carries a `BackendConfig` with `timeoutSec: 3600` because an exec attach is a long-lived WebSocket; GCLB proxies WebSockets on HTTPS backends without extra config. `exec` from a laptop against `dev`/`anyscale-staging` needs the port-forward running so the `gatewayUrl` in the attach response resolves.
+
+Process execution: the controller writes desired processes to the `ignition.io/process-desired` Pod annotation; a `downwardAPI` volume projects it to `/etc/ignition/pod/process-desired`, which `sandbox-init` reads (no kube credential). `sandbox-init` runs/signals/reaps the processes, serves observed state at `GET :8081/v1/processes` (the controller polls it, and also reads `idleSeconds` for idle-timeout enforcement), and serves the byte stream at `GET :8081/v1/processes/{id}/attach`. `pty: true` (with optional `ptyRows`/`ptyCols`) allocates a real PTY; mid-session resize is not wired.
 
 ---
 
@@ -1111,7 +1121,7 @@ done
 
 This is the acceptance boundary today. The controller creates and schedules the GPU Pod. `sandbox-init` `/readyz` passes once its local probe (device nodes + `nvidia-smi` + `cuInit()`) succeeds, and `ignition-gpu-agent` independently stamps the canonical `ignition.io/gpu-uuid` + `ignition.io/init-healthy`; the controller advances the sandbox to `READY` only when both hold. If the cold node does not arrive within 600 seconds, inspect the retained events. `FailedScaleUp` with quota exceeded means either the regional L4 or global all-regions GPU quota is insufficient; `CAPACITY_UNAVAILABLE` is the expected public infrastructure failure. Terminating the test sandbox removes the Pod and makes the GPU node eligible for autoscaler scale-down.
 
-Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes token; the GPU attestation annotations come only from `ignition-gpu-agent`, and kubelet PodReady only from probing `sandbox-init`. Process execution and attach run through `sandbox-init` process supervision and `ignition-gateway` (see [`ignition-gateway`](#ignition-gateway) above); `ignition-gateway` is wired only in the `dev` overlay and has no public WebSocket Ingress yet.
+Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes token; the GPU attestation annotations come only from `ignition-gpu-agent`, and kubelet PodReady only from probing `sandbox-init`. Process execution and attach run through `sandbox-init` process supervision and `ignition-gateway` (see [`ignition-gateway`](#ignition-gateway) above), which every overlay now deploys.
 
 ## What not to do
 
@@ -1129,7 +1139,7 @@ Do **not** manually add readiness annotations. The sandbox Pod has no Kubernetes
 
 ## Not covered here
 
-Not built: Secret/Event APIs, digest-pinned images, a public WebSocket Ingress for `ignition-gateway`, PTY allocation, and the custom Compute Engine worker runtime. Designs: [API contract](../design/ignition-api-contract.md), [shipped architecture — exec data plane](../design/ignition-shipped-architecture.md#8-exec-data-plane), [deferred runtime](../design/ignition-deferred-runtime.md). Full status: [STATUS.md](../design/STATUS.md).
+Not built: Secret/Event APIs, digest-pinned images, mid-session PTY resize, and the custom Compute Engine worker runtime. Designs: [API contract](../design/ignition-api-contract.md), [shipped architecture — exec data plane](../design/ignition-shipped-architecture.md#8-exec-data-plane), [deferred runtime](../design/ignition-deferred-runtime.md). Full status: [STATUS.md](../design/STATUS.md).
 
 | Item | Value |
 |---|---|

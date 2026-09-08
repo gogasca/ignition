@@ -461,8 +461,11 @@ only from `ignition-controller` and `ignition-gateway` — the only
 control-plane↔sandbox path.
 
 `gatewayUrl` is the **regional** gateway hostname; a token is invalid on any
-other region's gateway. `ignition-gateway` is deployed in the `dev` overlay
-only; a public WebSocket Ingress and non-`dev` overlay wiring are open.
+other region's gateway. Every overlay deploys `ignition-gateway`: `staging` and
+`prod` front it with a public `Ingress` + `ManagedCertificate` (backend
+`timeoutSec: 3600` for the long-lived WebSocket); `dev` and `anyscale-staging`
+have no public DNS, so exec goes through `kubectl port-forward svc/ignition-gateway
+8443:8080` and `IGNITION_GATEWAY_URL` is `http://127.0.0.1:8443`.
 
 ## 9. Data model
 

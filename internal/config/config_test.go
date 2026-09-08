@@ -57,6 +57,33 @@ func TestLoadProdRejectsDefaultStreamSecret(t *testing.T) {
 	}
 }
 
+func TestValidateGatewayURL(t *testing.T) {
+	base := func(gw string) config.Config {
+		return config.Config{
+			Env:                  "staging",
+			DatabaseURL:          "postgres://ignition@127.0.0.1:5432/ignition",
+			OIDCIssuer:           "https://issuer.example",
+			StreamTokenSecret:    "prod-stream-token-secret-32-bytes!!",
+			GCPProject:           "ignition-staging",
+			GatewayURL:           gw,
+			AssumedEagerPullMBps: 50,
+		}
+	}
+	if err := base("https://gateway.staging.ignition.dev").Validate(); err != nil {
+		t.Fatalf("https gateway URL rejected: %v", err)
+	}
+	// Loopback HTTP is allowed for a port-forwarded, no-public-DNS deployment.
+	for _, ok := range []string{"http://127.0.0.1:8443", "http://localhost:8443"} {
+		if err := base(ok).Validate(); err != nil {
+			t.Fatalf("%s rejected: %v", ok, err)
+		}
+	}
+	// A non-loopback HTTP URL is still rejected.
+	if err := base("http://gateway.staging.ignition.dev").Validate(); err == nil {
+		t.Fatal("non-loopback http gateway URL accepted")
+	}
+}
+
 func TestLoadDevAllowsMissingDatabase(t *testing.T) {
 	t.Setenv("IGNITION_ENV", "dev")
 	t.Setenv("DATABASE_URL", "")
