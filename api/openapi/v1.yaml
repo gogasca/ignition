@@ -13,6 +13,13 @@ servers:
 security:
   - bearerAuth: []
 paths:
+  /v1/me:
+    get:
+      operationId: getMe
+      summary: Echo the authenticated principal (subject, email, kind, domain).
+      responses:
+        "200": { description: The caller's identity. }
+        "401": { description: Missing or invalid credential. }
   /v1/projects/{project}/sandboxes:
     get:
       operationId: listSandboxes

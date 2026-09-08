@@ -54,6 +54,11 @@ func (f *fakeAPI) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	p := r.URL.Path
+	// The real API is project-scoped: /v1/projects/{project}/... — accept and
+	// strip that prefix so the routes below stay compact.
+	if rest, ok := strings.CutPrefix(p, "/v1/projects/prj_dev"); ok {
+		p = "/v1" + rest
+	}
 	switch {
 	case p == "/v1/me":
 		writeJSONT(w, 200, map[string]any{"subject": "alice", "domain": "acme.test"})

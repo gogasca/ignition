@@ -101,6 +101,19 @@ func TestHealthzUnauthenticated(t *testing.T) {
 	}
 }
 
+func TestMeEchoesPrincipal(t *testing.T) {
+	h := newHarness(t)
+	got := decode(t, h.do(t, http.MethodGet, "/v1/me", "alice", "", ""))
+	if got["subject"] != "alice" {
+		t.Fatalf("me = %v", got)
+	}
+	resp := h.do(t, http.MethodGet, "/v1/me", "", "", "")
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusUnauthorized {
+		t.Fatalf("unauthenticated /v1/me = %d, want 401", resp.StatusCode)
+	}
+}
+
 func TestMissingBearerIs401(t *testing.T) {
 	h := newHarness(t)
 	resp := h.do(t, http.MethodGet, "/v1/projects/prj_dev/sandboxes", "", "", "")

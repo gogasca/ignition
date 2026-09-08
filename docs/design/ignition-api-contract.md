@@ -102,6 +102,8 @@ checks are authoritative.
 the default-runtime read):
 
 ```text
+GET    /v1/me                                        -- echo the authenticated principal
+
 POST   /v1/projects/{project}/sandboxes
 GET    /v1/projects/{project}/sandboxes
 GET    /v1/projects/{project}/sandboxes/{sandbox}

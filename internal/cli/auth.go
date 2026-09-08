@@ -111,35 +111,18 @@ func cmdProjects(e *env, args []string) error {
 	if _, err := e.parse(fs, g, args); err != nil {
 		return err
 	}
-	c, err := e.client()
-	if err != nil {
-		return err
-	}
-	ctx, cancel := signalContext()
-	defer cancel()
-	var resp struct {
-		Projects []struct {
-			ID         string `json:"id"`
-			Name       string `json:"name"`
-			Domain     string `json:"domain"`
-			CreateTime string `json:"createTime"`
-		} `json:"projects"`
-	}
-	if err := c.do(ctx, "GET", "/v1/me/projects", nil, &resp, requestOptions{}); err != nil {
-		return err
-	}
-	if e.emit(resp) {
+	// The Project API is not exposed (projects are seeded server-side), so there
+	// is nothing to list. Report the configured context instead.
+	cfg := e.cfg.resolve(e.g)
+	if e.emit(map[string]any{"project": cfg.Project, "server": cfg.Server}) {
 		return nil
 	}
-	if len(resp.Projects) == 0 {
-		e.printf("no projects\n")
+	if cfg.Project == "" {
+		e.printf("no project configured; the Project API is not exposed, so set one with `ignitionctl config set-project <id>`\n")
 		return nil
 	}
-	rows := make([][]string, 0, len(resp.Projects))
-	for _, p := range resp.Projects {
-		rows = append(rows, []string{p.ID, p.Name, p.Domain, ageOf(p.CreateTime)})
-	}
-	table(e.stdout, []string{"ID", "NAME", "DOMAIN", "AGE"}, rows)
+	e.printf("current project: %s\n", cfg.Project)
+	e.printf("(the Project API is not exposed; project IDs are provisioned server-side)\n")
 	return nil
 }
 

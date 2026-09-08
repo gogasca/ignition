@@ -45,7 +45,7 @@ func operationList(e *env, args []string) error {
 	if _, err := e.parse(fs, g, args); err != nil {
 		return err
 	}
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
@@ -62,7 +62,7 @@ func operationList(e *env, args []string) error {
 		Operations    []operationJSON `json:"operations"`
 		NextPageToken string          `json:"nextPageToken"`
 	}
-	if err := c.do(ctx, "GET", operationsPath(), nil, &resp, requestOptions{query: q}); err != nil {
+	if err := c.do(ctx, "GET", c.operationsPath(), nil, &resp, requestOptions{query: q}); err != nil {
 		return err
 	}
 	if e.emit(resp) {
@@ -90,14 +90,14 @@ func operationGet(e *env, args []string) error {
 	if len(pos) != 1 {
 		return usageErrorf("usage: ignitionctl operation get <operation>")
 	}
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := signalContext()
 	defer cancel()
 	var op operationJSON
-	if err := c.do(ctx, "GET", operationPath(pos[0]), nil, &op, requestOptions{}); err != nil {
+	if err := c.do(ctx, "GET", c.operationPath(pos[0]), nil, &op, requestOptions{}); err != nil {
 		return err
 	}
 	if e.emit(op) {
@@ -123,7 +123,7 @@ func operationWatch(e *env, args []string) error {
 		return usageErrorf("usage: ignitionctl operation watch <operation>")
 	}
 	id := pos[0]
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
@@ -133,7 +133,7 @@ func operationWatch(e *env, args []string) error {
 	seen := ""
 	for i := 0; ; i++ {
 		var op operationJSON
-		if err := c.do(ctx, "GET", operationPath(id), nil, &op, requestOptions{}); err != nil {
+		if err := c.do(ctx, "GET", c.operationPath(id), nil, &op, requestOptions{}); err != nil {
 			return err
 		}
 		if op.State != seen {
@@ -169,14 +169,14 @@ func operationCancel(e *env, args []string) error {
 	if len(pos) != 1 {
 		return usageErrorf("usage: ignitionctl operation cancel <operation>")
 	}
-	c, err := e.client()
+	c, err := e.projectClient()
 	if err != nil {
 		return err
 	}
 	ctx, cancel := signalContext()
 	defer cancel()
 	var op operationJSON
-	if err := c.do(ctx, "POST", operationPath(pos[0])+":cancel", map[string]any{}, &op, requestOptions{idempotent: true}); err != nil {
+	if err := c.do(ctx, "POST", c.operationPath(pos[0])+":cancel", map[string]any{}, &op, requestOptions{idempotent: true}); err != nil {
 		return err
 	}
 	if e.emit(op) {

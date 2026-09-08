@@ -88,6 +88,20 @@ func (e *env) client() (*client, error) {
 	return newClient(e.cfg.resolve(e.g), time.Duration(e.g.timeout)*time.Second)
 }
 
+// projectClient is client() plus a check that a project is configured. Every
+// sandbox/process/operation route is project-scoped, so the commands that call
+// them use this.
+func (e *env) projectClient() (*client, error) {
+	c, err := e.client()
+	if err != nil {
+		return nil, err
+	}
+	if c.project == "" {
+		return nil, usageErrorf("no project configured: pass --project, set IGNITION_PROJECT, or run `ignitionctl config set-project <id>`")
+	}
+	return c, nil
+}
+
 // requireProject resolves the effective project or fails with a usage error.
 func (e *env) requireProject() (string, error) {
 	p := e.cfg.resolve(e.g).Project
