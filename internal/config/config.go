@@ -79,7 +79,34 @@ type Config struct {
 	DefaultRuntime store.RuntimeSpec
 }
 
+// Load reads the full control-plane configuration for ignition-api and
+// ignition-controller and fails closed on staging/prod misconfiguration.
 func Load() (Config, error) {
+	cfg, err := loadBase()
+	if err != nil {
+		return Config{}, err
+	}
+	if err := cfg.Validate(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+// LoadGateway reads configuration for the stateless ignition-gateway. The
+// gateway holds no database credential and performs no OIDC verification, so it
+// is checked against ValidateGateway rather than the control-plane Validate.
+func LoadGateway() (Config, error) {
+	cfg, err := loadBase()
+	if err != nil {
+		return Config{}, err
+	}
+	if err := cfg.ValidateGateway(); err != nil {
+		return Config{}, err
+	}
+	return cfg, nil
+}
+
+func loadBase() (Config, error) {
 	maxActive := 100
 	if v := os.Getenv("IGNITION_MAX_ACTIVE_SANDBOXES"); v != "" {
 		if n, err := strconv.Atoi(v); err == nil && n > 0 {
@@ -165,9 +192,6 @@ func Load() (Config, error) {
 		return Config{}, err
 	}
 	cfg.DefaultRuntime = rt
-	if err := cfg.Validate(); err != nil {
-		return Config{}, err
-	}
 	return cfg, nil
 }
 
@@ -262,20 +286,50 @@ func (c Config) Validate() error {
 			return fmt.Errorf("%s must be an absolute HTTPS URL without user info", name)
 		}
 	}
-	// IGNITION_GATEWAY_URL is HTTPS in a public deployment, but a
-	// no-public-DNS environment reaches the gateway through a `kubectl
-	// port-forward` to a loopback address, which is not a security downgrade
-	// (it never leaves the operator's machine and the token audience still
-	// binds the stream).
-	if raw := c.GatewayURL; raw != "" {
-		u, err := url.Parse(raw)
-		loopback := u != nil && u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1")
-		if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "https" && !loopback) {
-			return fmt.Errorf("IGNITION_GATEWAY_URL must be an absolute HTTPS URL (or http://127.0.0.1[:port] for a port-forwarded deployment)")
-		}
+	if err := c.validateGatewayURL(); err != nil {
+		return err
 	}
 	if strings.TrimSpace(c.SandboxImagePrefix) == "" && strings.TrimSpace(c.GCPProject) == "" {
 		return fmt.Errorf("IGNITION_ENV=%s requires IGNITION_SANDBOX_IMAGE_PREFIX or IGNITION_GCP_PROJECT", c.Env)
+	}
+	return nil
+}
+
+// validateGatewayURL accepts an absolute HTTPS URL, or an http loopback address
+// for a `kubectl port-forward` deployment. The port-forward is not a security
+// downgrade: it never leaves the operator's machine and the exec-stream token
+// audience still binds the stream.
+func (c Config) validateGatewayURL() error {
+	raw := c.GatewayURL
+	if raw == "" {
+		return nil
+	}
+	u, err := url.Parse(raw)
+	loopback := u != nil && u.Scheme == "http" && (u.Hostname() == "127.0.0.1" || u.Hostname() == "localhost" || u.Hostname() == "::1")
+	if err != nil || u.Host == "" || u.User != nil || (u.Scheme != "https" && !loopback) {
+		return fmt.Errorf("IGNITION_GATEWAY_URL must be an absolute HTTPS URL (or http://127.0.0.1[:port] for a port-forwarded deployment)")
+	}
+	return nil
+}
+
+// ValidateGateway checks only what ignition-gateway uses: the exec-stream token
+// secret and the gateway audience URL. The gateway has no database, OIDC
+// issuer, or image prefix, so it deliberately skips those control-plane checks.
+func (c Config) ValidateGateway() error {
+	if err := c.validateGatewayURL(); err != nil {
+		return err
+	}
+	if !RequiresDatabase(c.Env) {
+		return nil
+	}
+	if c.DevBearer != "" {
+		return fmt.Errorf("IGNITION_ENV=%s forbids IGNITION_DEV_BEARER", c.Env)
+	}
+	if c.StreamTokenSecret == "" || c.StreamTokenSecret == defaultStreamSecret {
+		return fmt.Errorf("IGNITION_ENV=%s requires a non-default IGNITION_STREAM_TOKEN_SECRET", c.Env)
+	}
+	if len(c.StreamTokenSecret) < 32 {
+		return fmt.Errorf("IGNITION_STREAM_TOKEN_SECRET must contain at least 32 bytes")
 	}
 	return nil
 }

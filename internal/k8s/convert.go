@@ -120,6 +120,8 @@ func toContainer(c Container, spec PodSpec) (corev1.Container, error) {
 		SecurityContext: &corev1.SecurityContext{
 			AllowPrivilegeEscalation: &priv,
 			RunAsNonRoot:             boolPtr(spec.RunAsNonRoot),
+			RunAsUser:                spec.RunAsUser,
+			RunAsGroup:               spec.RunAsGroup,
 		},
 	}
 	if c.GPU != "" {

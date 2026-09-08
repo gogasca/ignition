@@ -9,7 +9,7 @@ import (
 )
 
 func main() {
-	cfg, err := config.Load()
+	cfg, err := config.LoadGateway()
 	if err != nil {
 		fmt.Fprintf(os.Stderr, "ignition-gateway: %v\n", err)
 		os.Exit(1)

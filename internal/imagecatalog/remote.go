@@ -7,9 +7,17 @@ import (
 	"github.com/google/go-containerregistry/pkg/authn"
 	"github.com/google/go-containerregistry/pkg/name"
 	v1 "github.com/google/go-containerregistry/pkg/v1"
+	"github.com/google/go-containerregistry/pkg/v1/google"
 	"github.com/google/go-containerregistry/pkg/v1/remote"
 	"github.com/google/go-containerregistry/pkg/v1/types"
 )
+
+// platformKeychain authenticates registry reads with the platform's ambient
+// credentials: the GCP metadata / Application Default Credentials chain first
+// (so a Workload Identity ignition-api can read a private Artifact Registry
+// repository it is authorized for), falling back to a local Docker config.
+// It never receives or forwards a tenant credential.
+var platformKeychain = authn.NewMultiKeychain(google.Keychain, authn.DefaultKeychain)
 
 // RemoteResolver resolves references against their source OCI registry.
 // It authenticates with ambient credentials only (the local Docker config or
@@ -24,7 +32,7 @@ func (RemoteResolver) Resolve(ctx context.Context, ref string) (Resolved, error)
 	if err != nil {
 		return Resolved{}, fmt.Errorf("invalid image reference %q: %w", ref, err)
 	}
-	desc, err := remote.Get(r, remote.WithContext(ctx), remote.WithAuthFromKeychain(authn.DefaultKeychain))
+	desc, err := remote.Get(r, remote.WithContext(ctx), remote.WithAuthFromKeychain(platformKeychain))
 	if err != nil {
 		return Resolved{}, fmt.Errorf("resolve %s: %w", ref, err)
 	}

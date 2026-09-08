@@ -90,6 +90,28 @@ variable "sql_password" {
   sensitive = true
 }
 
+variable "sql_edition" {
+  type        = string
+  default     = "ENTERPRISE"
+  description = "Cloud SQL edition. ENTERPRISE supports shared-core tiers (db-g1-small) and is the low-cost default. ENTERPRISE_PLUS requires db-perf-optimized-* / larger custom tiers."
+
+  validation {
+    condition     = contains(["ENTERPRISE", "ENTERPRISE_PLUS"], var.sql_edition)
+    error_message = "sql_edition must be ENTERPRISE or ENTERPRISE_PLUS."
+  }
+}
+
+variable "sql_availability_type" {
+  type        = string
+  default     = "REGIONAL"
+  description = "Cloud SQL availability. REGIONAL is synchronous HA across two zones (production default). Set ZONAL for a low-cost disposable environment; shared-core tiers (db-g1-small, db-f1-micro) require ZONAL."
+
+  validation {
+    condition     = contains(["REGIONAL", "ZONAL"], var.sql_availability_type)
+    error_message = "sql_availability_type must be REGIONAL or ZONAL."
+  }
+}
+
 variable "gpu_max_nodes" {
   type    = number
   default = 2
@@ -107,7 +129,11 @@ variable "system_machine_type" {
 
 variable "cpu_sandbox_machine_type" {
   type    = string
-  default = "n2-standard-8"
+  default = "e2-standard-8"
+  # Any gVisor-capable type works — the seed sandbox only asks for 1 vCPU /
+  # 2 GiB. e2-standard-8 has the broadest regional availability (n2-standard-8
+  # was seen stocked out in us-central1-a); the implementation guide's gcloud
+  # path uses the same default.
 }
 
 variable "gpu_sandbox_machine_type" {
