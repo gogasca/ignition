@@ -25,8 +25,9 @@ func smiWith(t *testing.T, byArgs map[string]string) *smiInspector {
 }
 
 func TestInventoryParsesHealthFields(t *testing.T) {
+	// uuid, pci.bus_id, ecc.uncorrected, remapped_rows.pending, remapped_rows.failure
 	s := smiWith(t, map[string]string{
-		"query-gpu": "GPU-4a1b2c3d-1122-3344-5566-778899aabbcc, 00000000:00:04.0, 0, No\n",
+		"query-gpu": "GPU-4a1b2c3d-1122-3344-5566-778899aabbcc, 00000000:00:04.0, 0, No, No\n",
 	})
 	gpus, err := s.Inventory(context.Background())
 	if err != nil || len(gpus) != 1 {
@@ -41,16 +42,26 @@ func TestInventoryParsesHealthFields(t *testing.T) {
 	}
 }
 
-func TestInventoryFlagsResetRequired(t *testing.T) {
+func TestInventoryFlagsRemapPending(t *testing.T) {
 	s := smiWith(t, map[string]string{
-		"query-gpu": "GPU-4a1b2c3d-1122-3344-5566-778899aabbcc, 00000000:00:04.0, [N/A], Yes\n",
+		"query-gpu": "GPU-4a1b2c3d-1122-3344-5566-778899aabbcc, 00000000:00:04.0, [N/A], Yes, No\n",
 	})
 	gpus, _ := s.Inventory(context.Background())
 	if len(gpus) != 1 || !gpus[0].ResetRequired || HealthOK(gpus[0]) {
-		t.Fatalf("reset-required not honored: %+v", gpus)
+		t.Fatalf("remapped_rows.pending not honored: %+v", gpus)
 	}
 	if gpus[0].ECCUncorrected != -1 {
 		t.Fatalf("unknown ECC should be -1, got %d", gpus[0].ECCUncorrected)
+	}
+}
+
+func TestInventoryFlagsRemapFailure(t *testing.T) {
+	s := smiWith(t, map[string]string{
+		"query-gpu": "GPU-4a1b2c3d-1122-3344-5566-778899aabbcc, 00000000:00:04.0, 0, No, Yes\n",
+	})
+	gpus, _ := s.Inventory(context.Background())
+	if len(gpus) != 1 || !gpus[0].ResetRequired || HealthOK(gpus[0]) {
+		t.Fatalf("remapped_rows.failure not honored: %+v", gpus)
 	}
 }
 

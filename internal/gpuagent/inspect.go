@@ -14,7 +14,7 @@ type GPU struct {
 	UUID           string
 	PCIBusID       string
 	ECCUncorrected int  // count of volatile uncorrected ECC errors; -1 when the card does not expose the counter
-	ResetRequired  bool // the driver flagged the GPU as needing a reset
+	ResetRequired  bool // a row remap is pending (needs a GPU reset) or has failed — unfit to lease
 }
 
 // ComputeProc is one running CUDA process on the node's GPU.
@@ -60,8 +60,13 @@ func runCommand(ctx context.Context, name string, args ...string) ([]byte, error
 func (s *smiInspector) Inventory(ctx context.Context) ([]GPU, error) {
 	ctx, cancel := context.WithTimeout(ctx, s.timeout)
 	defer cancel()
+	// gpu_reset_status.* was dropped from --query-gpu in the 580 driver line
+	// (GKE's current DEFAULT L4 driver), and nvidia-smi rejects the whole query
+	// if any field is unknown. remapped_rows.{pending,failure} is the portable
+	// "GPU needs a reset / is unfit" signal — present since Ampere, so it also
+	// works on the older 535 line.
 	out, err := s.run(ctx, s.bin,
-		"--query-gpu=uuid,pci.bus_id,ecc.errors.uncorrected.volatile.total,gpu_reset_status.reset_required",
+		"--query-gpu=uuid,pci.bus_id,ecc.errors.uncorrected.volatile.total,remapped_rows.pending,remapped_rows.failure",
 		"--format=csv,noheader,nounits")
 	if err != nil {
 		return nil, fmt.Errorf("nvidia-smi --query-gpu: %w", err)
@@ -81,8 +86,11 @@ func (s *smiInspector) Inventory(ctx context.Context) ([]GPU, error) {
 				g.ECCUncorrected = n
 			}
 		}
-		if len(f) > 3 {
-			g.ResetRequired = strings.EqualFold(f[3], "yes") || strings.EqualFold(f[3], "true")
+		if len(f) > 3 && isSMIYes(f[3]) {
+			g.ResetRequired = true
+		}
+		if len(f) > 4 && isSMIYes(f[4]) {
+			g.ResetRequired = true
 		}
 		gpus = append(gpus, g)
 	}
@@ -126,6 +134,17 @@ func nonEmptyLines(s string) []string {
 		}
 	}
 	return out
+}
+
+// isSMIYes matches nvidia-smi's boolean rendering ("Yes"/"No", or "Enabled"/
+// "true" on some fields). "[N/A]" and "" are not yes.
+func isSMIYes(s string) bool {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "yes", "true", "enabled", "1":
+		return true
+	default:
+		return false
+	}
 }
 
 func splitCSV(line string) []string {
