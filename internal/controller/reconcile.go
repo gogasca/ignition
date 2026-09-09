@@ -154,6 +154,9 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 		case "FINISHED", "FAILED":
 			return nil
 		case "TERMINATING":
+			if err := c.failProcesses(ctx, sb); err != nil {
+				return err
+			}
 			return c.store.UpdateObserved(ctx, store.ObservedUpdate{
 				ProjectID: sb.ProjectID,
 				SandboxID: sb.ID,
@@ -161,10 +164,10 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 				Reason:    "TERMINATED",
 			})
 		default:
-			return c.fail(ctx, sb, "COMPUTE_ENVIRONMENT_UNAVAILABLE")
+			return c.failSandbox(ctx, sb, "COMPUTE_ENVIRONMENT_UNAVAILABLE")
 		}
 	default:
-		return c.fail(ctx, sb, "COMPUTE_ENVIRONMENT_UNAVAILABLE")
+		return c.failSandbox(ctx, sb, "COMPUTE_ENVIRONMENT_UNAVAILABLE")
 	}
 
 	name := k8s.PodName(sb.ID)
