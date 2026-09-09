@@ -15,9 +15,16 @@ internal/store/schema.sql  complete Cloud SQL schema (embedded by the API)
 deploy/               GKE manifests and Terraform
 images/sandbox-init/  container image for the in-sandbox supervisor
 sdks/                 Python and TypeScript clients
+examples/             worked SDK consumers (start with agentic-rl/)
 docs/design/          architecture documents (start with STATUS.md)
 docs/guides/          build and deploy runbook
 ```
+
+## Examples
+
+| Example | What it shows |
+|---|---|
+| [`examples/agentic-rl/`](examples/agentic-rl/) | Using a sandbox as the **environment / rollout worker** for RL from verifiable rewards: an LLM agent fixes a bug inside the sandbox, a pytest verifier scores it, trajectories flow back to a trainer. Two topologies, a GRPO training-batch stub, and a hermetic test suite. Design notes: [`docs/design/agentic-rl-on-ignition.md`](docs/design/agentic-rl-on-ignition.md); runbook: [`docs/guides/agentic-rl-example.md`](docs/guides/agentic-rl-example.md). |
 
 ## Services
 

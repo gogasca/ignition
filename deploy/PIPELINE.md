@@ -4,7 +4,7 @@ Four automated flows, one GCP project, source in GitHub:
 
 | # | When | What | Config |
 |---|---|---|---|
-| 0 | **PR to `main`** | Per component: `go vet` + `go test ./...` + `docker build` the affected image. **No push** — validation only. A trigger fires only when the PR changes that binary's code or a package it compiles in. | `deploy/cloudbuild/pr.yaml` + `deploy/cloudbuild/prpaths` |
+| 0 | **PR to `main`** | Per component: `go vet` + `go test ./...` + `docker build` the affected image. **No push** — validation only. A trigger fires only when the PR changes that binary's code or a package it compiles in. Plus `ignition-pr-examples`: the `examples/agentic-rl/` Python suite when that tree or `sdks/python/` changes. | `deploy/cloudbuild/pr.yaml` + `deploy/cloudbuild/prpaths`; `deploy/cloudbuild/pr-examples.yaml` |
 | 1 | Push to `main` (PR merge) | `go vet` + `go test ./...` + Postgres store tests, then build & push `ignition-api`, `ignition-controller`, `ignition-gateway`, `ignition-prober` tagged `sha-<sha>` and `main` | `deploy/cloudbuild/build.yaml` |
 | 2 | Nightly ~02:00 | Same tests + build, tagged `sha-<sha>`, `nightly`, `nightly-YYYYMMDD` | `deploy/cloudbuild/build.yaml` |
 | 3 | Daily 12:00 | `go test ./...` gate, then a Cloud Deploy release: resolve `:nightly` → digest, roll onto the staging GKE cluster, run the read-only critical-user-journey probes as the verify gate | `deploy/cloudbuild/deploy-staging.yaml` + `deploy/clouddeploy/pipeline.yaml` + `skaffold.yaml` |
@@ -197,6 +197,14 @@ for pair in "api:ignition-pr-api" "controller:ignition-pr-controller" "gateway:i
     --service-account="projects/${PROJECT}/serviceAccounts/${CB}" \
     --substitutions="_COMPONENT=${comp}"
 done
+
+# Flow 0 — examples/agentic-rl hermetic Python suite (no Go, no GCP, no Docker).
+gcloud builds triggers create github \
+  --name=ignition-pr-examples --region="${REGION}" \
+  --repository="${REPO}" --pull-request-pattern='^main$' \
+  --build-config=deploy/cloudbuild/pr-examples.yaml \
+  --included-files="examples/agentic-rl/**,sdks/python/**" \
+  --service-account="projects/${PROJECT}/serviceAccounts/${CB}"
 
 # Flow 1 — PR merge → main
 gcloud builds triggers create github \

@@ -203,6 +203,15 @@ class SDKTest(unittest.TestCase):
         finally:
             FakeAPI.gateway_url = ""
 
+    def test_run_capture_is_empty_without_gateway(self):
+        # capture=True but the polling fallback has no output to capture.
+        c = self.client()
+        sb = c.sandboxes.create("img_seed")
+        result = sb.run(["echo", "hi"], timeout=5, capture=True)
+        self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.stdout, b"")
+        self.assertEqual(result.stderr, b"")
+
 
 if __name__ == "__main__":
     unittest.main()

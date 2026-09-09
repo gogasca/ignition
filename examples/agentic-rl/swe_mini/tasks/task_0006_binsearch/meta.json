@@ -1,0 +1,8 @@
+{
+  "task_id": "task_0006_binsearch",
+  "summary": "loop condition lo < hi should be lo <= hi",
+  "solution": {
+    "path": "bug.py",
+    "content": "def binary_search(arr, target):\n    \"\"\"Return the index of target in the sorted list arr, or -1 if absent.\"\"\"\n    lo, hi = 0, len(arr) - 1\n    while lo <= hi:\n        mid = (lo + hi) // 2\n        if arr[mid] == target:\n            return mid\n        elif arr[mid] < target:\n            lo = mid + 1\n        else:\n            hi = mid - 1\n    return -1\n"
+  }
+}

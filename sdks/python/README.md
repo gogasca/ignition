@@ -42,12 +42,17 @@ Errors: `IgnitionError` base; `APIError` with `.code` / `.status` / `.request_id
 Every mutation sends an `Idempotency-Key` automatically; pass
 `idempotency_key=...` to pin it across retries.
 
+`run(cmd, capture=True)` collects the streamed stdout/stderr onto
+`ExecResult.stdout` / `.stderr` (bytes) in addition to any sink you pass — handy
+when the caller needs the output as a value, not just echoed. It works only on
+the gateway stream; the polling fallback leaves those empty.
+
 ## Not yet implemented
 
 A native `async` client, PTY resize, and the Project / Secret / Event resources
-(not exposed by the server). `run(..., stream=False)` returns the exit status
-but not captured output — the API has no output-read endpoint outside the
-gateway stream.
+(not exposed by the server). `run(..., stream=False)` (or `capture=True` when the
+deployment has no gateway) returns the exit status but no output — the API has no
+output-read endpoint outside the gateway stream.
 
 ## Tests
 

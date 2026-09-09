@@ -1,0 +1,7 @@
+.venv/
+*.egg-info/
+.pytest_cache/
+__pycache__/
+trajectories/
+training_batch/
+state/

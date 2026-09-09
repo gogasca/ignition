@@ -1,0 +1,8 @@
+{
+  "task_id": "task_0002_is_palindrome",
+  "summary": "missing normalization before the reverse comparison",
+  "solution": {
+    "path": "bug.py",
+    "content": "def is_palindrome(s):\n    \"\"\"True if s reads the same forwards and backwards, ignoring case,\n    spaces, and punctuation.\"\"\"\n    norm = [c.lower() for c in s if c.isalnum()]\n    return norm == norm[::-1]\n"
+  }
+}

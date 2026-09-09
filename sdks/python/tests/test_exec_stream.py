@@ -15,7 +15,7 @@ try:
 except ImportError:  # pragma: no cover
     websockets = None
 
-from ignition_sandbox.client import _stream_exec
+from ignition_sandbox.client import _stream_exec, _Tee
 
 
 class FakeGateway:
@@ -100,6 +100,32 @@ class ExecStreamTest(unittest.TestCase):
             self.assertEqual(out.getvalue(), b"hello\n")
         finally:
             gw.stop()
+
+    def test_capture_tee_collects_and_forwards(self):
+        """What run(capture=True) does: tee the stream into a buffer *and* an
+        optional caller sink."""
+        gw = FakeGateway()
+        gw.start()
+        try:
+            caller_sink, cap = io.BytesIO(), io.BytesIO()
+            code, _ = _stream_exec(
+                f"http://127.0.0.1:{gw.port}", "tok", "prc_1",
+                b"payload\n", _Tee(caller_sink, cap), io.BytesIO(),
+            )
+            self.assertEqual(code, 7)
+            self.assertEqual(cap.getvalue(), b"payload\n")
+            self.assertEqual(caller_sink.getvalue(), b"payload\n")
+        finally:
+            gw.stop()
+
+
+class TeeTest(unittest.TestCase):
+    def test_skips_none_and_returns_length(self):
+        buf = io.BytesIO()
+        tee = _Tee(None, buf, None)
+        self.assertEqual(tee.write(b"abc"), 3)
+        tee.flush()
+        self.assertEqual(buf.getvalue(), b"abc")
 
 
 if __name__ == "__main__":

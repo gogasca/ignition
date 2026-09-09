@@ -1,0 +1,8 @@
+{
+  "task_id": "task_0005_dedupe_order",
+  "summary": "list(set(xs)) loses first-seen ordering",
+  "solution": {
+    "path": "bug.py",
+    "content": "def dedupe(xs):\n    \"\"\"Return the items of xs with duplicates removed, keeping the order of\n    first appearance.\"\"\"\n    seen = set()\n    out = []\n    for x in xs:\n        if x not in seen:\n            seen.add(x)\n            out.append(x)\n    return out\n"
+  }
+}
