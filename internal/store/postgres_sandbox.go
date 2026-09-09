@@ -107,17 +107,18 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 		// so a non-READY image or any later failure (secrets, quota) never
 		// persists a count. Combining the readiness check with the increment
 		// avoids a second round trip.
-		var imgState string
+		img := Image{ProjectID: in.ProjectID, ImageID: in.ImageID}
 		err = tx.QueryRow(ctx,
-			`UPDATE images SET launch_count = launch_count + 1 WHERE project_id=$1 AND image_id=$2 RETURNING state`,
-			in.ProjectID, in.ImageID).Scan(&imgState)
+			`UPDATE images SET launch_count = launch_count + 1 WHERE project_id=$1 AND image_id=$2
+			 RETURNING state, streaming_eligible, ineligible_reason, compressed_bytes`,
+			in.ProjectID, in.ImageID).Scan(&img.State, &img.StreamingEligible, &img.IneligibleReason, &img.CompressedBytes)
 		if err != nil {
 			if errors.Is(err, pgx.ErrNoRows) {
 				return ErrImageNotReady
 			}
 			return err
 		}
-		if imgState != "READY" {
+		if img.State != "READY" {
 			return ErrImageNotReady
 		}
 
@@ -135,6 +136,12 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 		}
 		if active >= max {
 			return ErrQuotaExceeded
+		}
+
+		if in.Admit != nil {
+			if err := in.Admit(ctx, img); err != nil {
+				return err
+			}
 		}
 
 		now := time.Now().UTC()

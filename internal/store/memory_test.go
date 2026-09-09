@@ -50,6 +50,64 @@ func TestCreateSandboxIdempotency(t *testing.T) {
 	_ = a
 }
 
+// B2: the Admit pre-check runs inside the idempotent transaction, so a
+// replayed request keeps its original outcome even if the check would now
+// reject it (e.g. the image lost streaming-eligibility mid-flight).
+func TestCreateSandboxReplaySkipsAdmit(t *testing.T) {
+	ctx := context.Background()
+	m := store.NewMemory()
+	m.SeedImage("prj", "img")
+	in := store.CreateSandboxInput{
+		ProjectID: "prj", Principal: "alice", IdemKey: "k", IdemHash: "h",
+		ImageID: "img", Resources: spec(), MaxActive: 10,
+		Admit: func(context.Context, store.Image) error { return nil },
+	}
+	first, err := m.CreateSandbox(ctx, in)
+	if err != nil || first.Replay != nil {
+		t.Fatalf("first create: replay=%v err=%v", first.Replay, err)
+	}
+
+	called := false
+	in.Admit = func(context.Context, store.Image) error {
+		called = true
+		return &store.AdmissionError{Code: "IMAGE_UNAVAILABLE", Message: "image changed"}
+	}
+	second, err := m.CreateSandbox(ctx, in)
+	if err != nil {
+		t.Fatalf("second create: %v", err)
+	}
+	if second.Replay == nil || second.Replay.Status != 202 {
+		t.Fatalf("second create should replay the original 202, got %+v", second)
+	}
+	if called {
+		t.Fatal("Admit must not run on the replay path")
+	}
+}
+
+// An Admit rejection rolls the whole create back, including the idempotency
+// record, so a corrected retry can still succeed.
+func TestCreateSandboxAdmitRejectionRollsBack(t *testing.T) {
+	ctx := context.Background()
+	m := store.NewMemory()
+	m.SeedImage("prj", "img")
+	in := store.CreateSandboxInput{
+		ProjectID: "prj", Principal: "alice", IdemKey: "k", IdemHash: "h",
+		ImageID: "img", Resources: spec(), MaxActive: 10,
+		Admit: func(context.Context, store.Image) error {
+			return &store.AdmissionError{Code: "IMAGE_UNAVAILABLE", Message: "nope"}
+		},
+	}
+	var adm *store.AdmissionError
+	if _, err := m.CreateSandbox(ctx, in); !errors.As(err, &adm) {
+		t.Fatalf("err = %v, want *store.AdmissionError", err)
+	}
+	in.Admit = func(context.Context, store.Image) error { return nil }
+	res, err := m.CreateSandbox(ctx, in)
+	if err != nil || res.Replay != nil || res.Sandbox.ID == "" {
+		t.Fatalf("retry after rejection: err=%v res=%+v", err, res)
+	}
+}
+
 func TestCreateSandboxImageAndQuota(t *testing.T) {
 	ctx := context.Background()
 	m := store.NewMemory()

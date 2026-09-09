@@ -287,6 +287,53 @@ func TestPostgresCreateSandboxIdempotency(t *testing.T) {
 	}
 }
 
+// B2: Admit runs inside the idempotent transaction. A replayed request never
+// re-evaluates it; a rejection rolls the whole create (idempotency row
+// included) back so a corrected retry still succeeds.
+func TestPostgresCreateSandboxAdmitIsTransactional(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	p.SeedImage(project, "img")
+	in := store.CreateSandboxInput{
+		ProjectID: project, Principal: "alice", IdemKey: "k", IdemHash: "h",
+		ImageID: "img", Resources: spec(), MaxActive: 10,
+		Admit: func(context.Context, store.Image) error {
+			return &store.AdmissionError{Code: "IMAGE_UNAVAILABLE", Message: "nope"}
+		},
+	}
+	var adm *store.AdmissionError
+	if _, err := p.CreateSandbox(ctx, in); !errors.As(err, &adm) {
+		t.Fatalf("err = %v, want *store.AdmissionError", err)
+	}
+
+	called := false
+	in.Admit = func(context.Context, store.Image) error { called = true; return nil }
+	res, err := p.CreateSandbox(ctx, in)
+	if err != nil || res.Replay != nil || res.Sandbox.ID == "" {
+		t.Fatalf("retry after rejection: err=%v res=%+v", err, res)
+	}
+	if !called {
+		t.Fatal("Admit should run on the first non-replay create")
+	}
+
+	called = false
+	in.Admit = func(context.Context, store.Image) error {
+		called = true
+		return &store.AdmissionError{Code: "IMAGE_UNAVAILABLE", Message: "changed"}
+	}
+	replay, err := p.CreateSandbox(ctx, in)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if replay.Replay == nil || replay.Replay.Status != 202 {
+		t.Fatalf("want replayed 202, got %+v", replay)
+	}
+	if called {
+		t.Fatal("Admit must not run on the replay path")
+	}
+}
+
 func TestPostgresCreateSandboxRejectsUnregisteredSecret(t *testing.T) {
 	ctx := context.Background()
 	p := postgresForTest(t)

@@ -1,6 +1,9 @@
 package store
 
-import "time"
+import (
+	"context"
+	"time"
+)
 
 type Sandbox struct {
 	ID          string     `json:"id"`
@@ -198,6 +201,15 @@ type CreateSandboxInput struct {
 	SecretRefs  []SecretRef
 	TraceID     string
 	MaxActive   int
+	// Admit, when non-nil, runs inside the idempotent transaction on the
+	// non-replay path only, after the image-readiness, secret, and quota
+	// checks pass and before any sandbox/operation/process row is written. It
+	// receives the catalog row the store read in the same transaction;
+	// returning an error (see AdmissionError) rolls the whole creation back.
+	// A replayed request never calls Admit, so a pre-check that depends on
+	// mutable image state (streaming-eligibility, size) cannot diverge from
+	// the request's original outcome.
+	Admit func(ctx context.Context, img Image) error
 }
 
 type CreateProcessInput struct {
