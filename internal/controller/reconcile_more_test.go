@@ -380,3 +380,49 @@ func TestTerminatingFailsProcessesImmediately(t *testing.T) {
 		t.Fatalf("process state = %s, want FAILED on the terminating pass", got.State)
 	}
 }
+
+// B4: a READY sandbox whose operation has already reached SUCCEEDED must
+// surface a subsequent crash on that operation — the operation regresses
+// SUCCEEDED→FAILED so a client watching :watch sees the runtime failure.
+// This is deliberate: idle/runtime-limit teardown keeps the operation
+// SUCCEEDED (creation succeeded), but a pod crash (WORKER_LOST) flips it to
+// FAILED.
+func TestWorkerLostSurfacesOnGET(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	res := admit(t, m, store.TimeoutSpec{})
+	ctx := context.Background()
+	_ = c.Reconcile(ctx)
+	name := k8s.PodName(res.Sandbox.ID)
+	fake.SetReady(name, "GPU-1")
+	_ = c.Reconcile(ctx)
+	if mustGet(t, m, res.Sandbox.ID).State != "READY" {
+		t.Fatal("sandbox did not reach READY")
+	}
+	op, err := m.GetOperation(ctx, "prj_dev", res.Operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.State != "SUCCEEDED" {
+		t.Fatalf("operation = %s, want SUCCEEDED after READY", op.State)
+	}
+	fake.Drop(name)
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	sb := mustGet(t, m, res.Sandbox.ID)
+	if sb.State != "FAILED" || sb.StateReason != "WORKER_LOST" {
+		t.Fatalf("sandbox = %s/%s", sb.State, sb.StateReason)
+	}
+	op, err = m.GetOperation(ctx, "prj_dev", res.Operation.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if op.State != "FAILED" {
+		t.Fatalf("operation = %s, want FAILED (crash surfaces on operation)", op.State)
+	}
+	if op.EndTime == nil {
+		t.Fatal("operation EndTime should be set on FAILED transition")
+	}
+}
