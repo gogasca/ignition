@@ -1,0 +1,10 @@
+.venv/
+tests/
+trajectories/
+training_batch/
+state/
+**/__pycache__/
+*.egg-info/
+.pytest_cache/
+env_image/
+Makefile

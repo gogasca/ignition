@@ -6,6 +6,7 @@ operations, ``:watch`` streams, and exec streaming through ``ignition-gateway``.
 
 from __future__ import annotations
 
+import io
 import json
 import sys
 import time
@@ -22,10 +23,22 @@ DEFAULT_TIMEOUT = 30.0
 class ExecResult:
     """Outcome of :meth:`Sandbox.run`."""
 
-    def __init__(self, process_id: str, exit_code: int | None, signal: str = "") -> None:
+    def __init__(
+        self,
+        process_id: str,
+        exit_code: int | None,
+        signal: str = "",
+        *,
+        stdout: bytes = b"",
+        stderr: bytes = b"",
+    ) -> None:
         self.process_id = process_id
         self.exit_code = exit_code
         self.signal = signal
+        # Populated only when run(..., capture=True). The polling fallback cannot
+        # capture output, so these stay empty there.
+        self.stdout = stdout
+        self.stderr = stderr
 
     @property
     def ok(self) -> bool:
@@ -33,6 +46,25 @@ class ExecResult:
 
     def __repr__(self) -> str:
         return f"ExecResult(process_id={self.process_id!r}, exit_code={self.exit_code}, signal={self.signal!r})"
+
+
+class _Tee:
+    """Fan writes out to several binary sinks (skips ``None``)."""
+
+    def __init__(self, *sinks: "BinaryIO | None") -> None:
+        self._sinks = [s for s in sinks if s is not None]
+
+    def write(self, data: bytes) -> int:
+        for s in self._sinks:
+            s.write(data)
+        return len(data)
+
+    def flush(self) -> None:
+        for s in self._sinks:
+            try:
+                s.flush()
+            except Exception:  # noqa: BLE001
+                pass
 
 
 class Client:
@@ -261,14 +293,26 @@ class Sandbox(SandboxModel):
         stderr: BinaryIO | None = None,
         timeout: float | None = None,
         stream: bool = True,
+        capture: bool = False,
     ) -> ExecResult:
         """Create a process, stream its stdio through ``ignition-gateway``, and
         return its exit code. Falls back to polling when no gateway is
         configured or ``stream=False``.
+
+        With ``capture=True`` the streamed stdout/stderr bytes are also collected
+        onto ``ExecResult.stdout`` / ``.stderr`` (in addition to any ``stdout`` /
+        ``stderr`` sink you pass). The polling fallback has no output to capture,
+        so those stay empty there.
         """
         proc = self.exec(command, env=env, working_directory=working_directory)
-        out = stdout if stdout is not None else sys.stdout.buffer
-        err = stderr if stderr is not None else sys.stderr.buffer
+        cap_out = io.BytesIO() if capture else None
+        cap_err = io.BytesIO() if capture else None
+        if capture:
+            out: BinaryIO = _Tee(stdout, cap_out)  # type: ignore[assignment]
+            err: BinaryIO = _Tee(stderr, cap_err)  # type: ignore[assignment]
+        else:
+            out = stdout if stdout is not None else sys.stdout.buffer
+            err = stderr if stderr is not None else sys.stderr.buffer
 
         if stream:
             attach = self._t.post(proc._path(":attach"), {}, idempotent=True)
@@ -277,7 +321,11 @@ class Sandbox(SandboxModel):
                     code, sig = _stream_exec(
                         attach["gatewayUrl"], attach["streamToken"], proc.id, stdin, out, err
                     )
-                    return ExecResult(proc.id, code, sig)
+                    return ExecResult(
+                        proc.id, code, sig,
+                        stdout=cap_out.getvalue() if cap_out else b"",
+                        stderr=cap_err.getvalue() if cap_err else b"",
+                    )
                 except StreamError:
                     # Gateway not reachable from here — fall through to polling.
                     pass

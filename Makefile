@@ -3,7 +3,7 @@ BIN ?= bin
 IMAGE_REGISTRY ?= us-central1-docker.pkg.dev/ignition-dev/ignition
 IMAGE_TAG ?= dev
 
-.PHONY: build test tidy fmt vet images push-images
+.PHONY: build test tidy fmt vet images push-images examples-test
 
 build:
 	$(GO) build -o $(BIN)/ignition-api ./cmd/ignition-api
@@ -23,6 +23,12 @@ test:
 
 tidy:
 	$(GO) mod tidy
+
+# Hermetic test suite for the worked SDK example (no GCP, no Docker, no LLM).
+examples-test:
+	cd examples/agentic-rl && python3 -m venv .venv && \
+	  .venv/bin/pip -q install -e ../../sdks/python -e '.[dev]' && \
+	  .venv/bin/python -m pytest -q
 
 fmt:
 	$(GO) fmt ./...

@@ -1,0 +1,8 @@
+{
+  "task_id": "task_0004_flatten",
+  "summary": "does not recurse into nested lists",
+  "solution": {
+    "path": "bug.py",
+    "content": "def flatten(items):\n    \"\"\"Flatten an arbitrarily nested list of values into a single flat list,\n    preserving left-to-right order. Non-list values are kept as-is.\"\"\"\n    out = []\n    for item in items:\n        if isinstance(item, list):\n            out.extend(flatten(item))\n        else:\n            out.append(item)\n    return out\n"
+  }
+}

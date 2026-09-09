@@ -1,0 +1,8 @@
+{
+  "task_id": "task_0001_sum_list",
+  "summary": "off-by-one: iterates xs[1:] instead of xs",
+  "solution": {
+    "path": "bug.py",
+    "content": "def sum_list(xs):\n    \"\"\"Return the sum of all numbers in xs (0 for an empty list).\"\"\"\n    total = 0\n    for x in xs:\n        total += x\n    return total\n"
+  }
+}
