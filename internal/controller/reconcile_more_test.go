@@ -284,3 +284,99 @@ func TestScaleDownDisabledOnOccupiedNode(t *testing.T) {
 		t.Fatal("scale-down-disabled should be cleared after sandbox is gone")
 	}
 }
+
+// admitWithMain creates a CREATING sandbox that already carries its supervised
+// main process row (as a managed nativeEntrypoint=false create does).
+func admitWithMain(t *testing.T, m *store.Memory) store.CreateSandboxResult {
+	t.Helper()
+	m.SeedImage("prj_dev", "img_seed")
+	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
+		ProjectID:   "prj_dev",
+		Principal:   "alice",
+		IdemKey:     t.Name(),
+		IdemHash:    t.Name(),
+		ImageID:     "img_seed",
+		Command:     []string{"sleep", "1"},
+		MainCommand: []string{"sleep", "1"},
+		Resources:   store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+		Timeouts:    store.TimeoutSpec{StartupSeconds: 30},
+		MaxActive:   10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return res
+}
+
+func onlyProcess(t *testing.T, m *store.Memory, sandboxID string) store.Process {
+	t.Helper()
+	procs, err := m.ListProcessesBySandbox(context.Background(), "prj_dev", sandboxID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(procs) != 1 {
+		t.Fatalf("want exactly 1 process, got %d", len(procs))
+	}
+	return procs[0]
+}
+
+// B1: a CREATING sandbox whose Pod was never created must fail its main
+// process row in the same pass it transitions to FAILED, not one tick later.
+func TestCreatingMissingPodFailsMainProcess(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
+	c := controller.New(m, fake, fake, controller.Options{Now: func() time.Time { return now }})
+	res := admitWithMain(t, m)
+	// Push past the startup deadline with no Pod ever created.
+	sb := mustGet(t, m, res.Sandbox.ID)
+	sb.CreateTime = now.Add(-2 * time.Minute)
+	m.SeedSandbox(sb)
+
+	if err := c.Reconcile(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if got := mustGet(t, m, res.Sandbox.ID); got.State != "FAILED" || got.StateReason != "CAPACITY_UNAVAILABLE" {
+		t.Fatalf("sandbox = %s/%s", got.State, got.StateReason)
+	}
+	if p := onlyProcess(t, m, res.Sandbox.ID); p.State != "FAILED" {
+		t.Fatalf("main process state = %s, want FAILED in the same pass", p.State)
+	}
+}
+
+// B3: terminating a READY sandbox must fail its child processes in the same
+// pass that tears the Pod down, not leave them RUNNING for two ticks.
+func TestTerminatingFailsProcessesImmediately(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	res := admit(t, m, store.TimeoutSpec{})
+	ctx := context.Background()
+	_ = c.Reconcile(ctx)
+	name := k8s.PodName(res.Sandbox.ID)
+	fake.SetReady(name, "GPU-1")
+	_ = c.Reconcile(ctx)
+	p, _, err := m.CreateProcess(ctx, store.CreateProcessInput{
+		ProjectID: "prj_dev", SandboxID: res.Sandbox.ID, Principal: "alice",
+		IdemKey: "p", IdemHash: "ph", Command: []string{"true"},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	fake.SetProcessObserved(name, p.ID, "RUNNING", nil)
+	_ = c.Reconcile(ctx)
+
+	if _, err := m.TerminateSandbox(ctx, "prj_dev", res.Sandbox.ID, "alice", "t", "th", "trace"); err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	got, err := m.GetProcess(ctx, "prj_dev", res.Sandbox.ID, p.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.State != "FAILED" {
+		t.Fatalf("process state = %s, want FAILED on the terminating pass", got.State)
+	}
+}

@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"sort"
 	"strings"
 	"sync"
@@ -251,7 +252,7 @@ func (m *Memory) finishIdem(slot, hash string, status int, body []byte) {
 	m.idem[slot] = idemRecord{Hash: hash, Status: status, Body: body, Done: true}
 }
 
-func (m *Memory) CreateSandbox(_ context.Context, in CreateSandboxInput) (CreateSandboxResult, error) {
+func (m *Memory) CreateSandbox(ctx context.Context, in CreateSandboxInput) (CreateSandboxResult, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
@@ -280,6 +281,13 @@ func (m *Memory) CreateSandbox(_ context.Context, in CreateSandboxInput) (Create
 	if m.quotaActive[in.ProjectID] >= max {
 		delete(m.idem, slot)
 		return CreateSandboxResult{}, ErrQuotaExceeded
+	}
+
+	if in.Admit != nil {
+		if err := in.Admit(ctx, m.images[imgKey(in.ProjectID, in.ImageID)]); err != nil {
+			delete(m.idem, slot)
+			return CreateSandboxResult{}, err
+		}
 	}
 
 	// Every remaining check has passed; this create will succeed, so this is
@@ -671,6 +679,11 @@ func (m *Memory) ListSandboxesAll(_ context.Context) ([]Sandbox, error) {
 	return out, nil
 }
 
+// UpdateObserved mirrors Postgres.UpdateObserved: it applies a
+// controller-observed sandbox state and its operation, rejecting updates to
+// an already-terminal sandbox but performing no other monotonicity check.
+// See the doc comment there for why an unconditional forward-only guard is
+// not applied.
 func (m *Memory) UpdateObserved(_ context.Context, in ObservedUpdate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -713,6 +726,10 @@ func (m *Memory) UpdateObserved(_ context.Context, in ObservedUpdate) error {
 	}
 	op, ok := m.operations[sb.OperationID]
 	if !ok {
+		// The operation is always written in the same call as the sandbox, so
+		// its absence is a data-integrity violation. Surface it; the sandbox
+		// update still stands.
+		log.Printf("store: sandbox %s: operation %s absent on observed update to %s (data integrity)", in.SandboxID, sb.OperationID, in.State)
 		return nil
 	}
 	switch in.State {

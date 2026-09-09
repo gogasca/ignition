@@ -49,10 +49,6 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error(), false, 0)
 		return
 	}
-	if msg, fits := s.fitsEagerPullDeadline(r.Context(), project, in); !fits {
-		writeStatus(w, rid, http.StatusBadRequest, "IMAGE_UNAVAILABLE", msg, false, 0)
-		return
-	}
 	hash := canonicalHash(r.Method, r.URL.Path, raw)
 	res, err := s.store.CreateSandbox(r.Context(), store.CreateSandboxInput{
 		ProjectID:        project,
@@ -74,6 +70,9 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 		SecretRefs:       in.SecretRefs,
 		TraceID:          rid,
 		MaxActive:        s.cfg.MaxActiveSandboxes,
+		Admit: func(_ context.Context, img store.Image) error {
+			return admitEagerPull(img, in.Timeouts.StartupSeconds, in.ImageID, s.cfg.AssumedEagerPullMBps)
+		},
 	})
 	if err != nil {
 		writeStoreError(w, rid, err)
@@ -88,8 +87,8 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusAccepted, map[string]any{"sandbox": res.Sandbox, "operation": res.Operation})
 }
 
-// fitsEagerPullDeadline rejects a create before it can consume a warm-node
-// cycle and quota only when the image is known (from admission) to be
+// admitEagerPull rejects a create before it can consume a warm-node cycle and
+// quota only when the image is known (from admission) to be
 // streaming-ineligible and its estimated eager pull time exceeds the
 // request's own startupSeconds — see
 // docs/design/ignition-image-delivery.md: "If its measured pull
@@ -97,23 +96,29 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 // than remaining ambiguously stuck." The estimate is not a measurement: no
 // launch has ever been observed in this deployment, so this is a
 // conservative size/assumed-bandwidth calculation only (see
-// Config.AssumedEagerPullMBps), and a lookup failure or an eligible/unsized
-// image always passes — this check only ever adds a fast, explicit failure
-// for a case that would otherwise silently time out later.
-func (s *Server) fitsEagerPullDeadline(ctx context.Context, projectID string, in store.CreateSandboxInput) (msg string, fits bool) {
-	img, err := s.store.GetImage(ctx, projectID, in.ImageID)
-	if err != nil || img.StreamingEligible || img.CompressedBytes <= 0 {
-		return "", true
+// Config.AssumedEagerPullMBps), and an eligible/unsized image always passes —
+// this check only ever adds a fast, explicit failure for a case that would
+// otherwise silently time out later.
+//
+// It runs as CreateSandboxInput.Admit, i.e. inside the idempotent transaction
+// on the non-replay path only, so a retried request keeps its original
+// outcome even if the image's streaming-eligibility changed in between.
+func admitEagerPull(img store.Image, startupSeconds int, imageID string, mbps float64) error {
+	if img.StreamingEligible || img.CompressedBytes <= 0 {
+		return nil
 	}
-	estimate := estimatedEagerPullSeconds(img.CompressedBytes, s.cfg.AssumedEagerPullMBps)
-	deadline := float64(in.Timeouts.StartupSeconds)
+	estimate := estimatedEagerPullSeconds(img.CompressedBytes, mbps)
+	deadline := float64(startupSeconds)
 	if deadline <= 0 || estimate <= deadline {
-		return "", true
+		return nil
 	}
-	return fmt.Sprintf(
-		"image %q is not eligible for GKE image streaming (%s) and its estimated eager pull (%.0fs, at an assumed %.0f MB/s) exceeds startupSeconds (%.0fs)",
-		in.ImageID, img.IneligibleReason, estimate, s.cfg.AssumedEagerPullMBps, deadline,
-	), false
+	return &store.AdmissionError{
+		Code: "IMAGE_UNAVAILABLE",
+		Message: fmt.Sprintf(
+			"image %q is not eligible for GKE image streaming (%s) and its estimated eager pull (%.0fs, at an assumed %.0f MB/s) exceeds startupSeconds (%.0fs)",
+			imageID, img.IneligibleReason, estimate, mbps, deadline,
+		),
+	}
 }
 
 // estimatedEagerPullSeconds is a conservative estimate only: compressedBytes

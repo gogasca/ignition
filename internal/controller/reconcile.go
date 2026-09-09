@@ -200,6 +200,13 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 		return nil
 
 	case "TERMINATING":
+		// Client-initiated teardown. Make child processes terminal in the same
+		// pass that tears the Pod down — mirroring the terminal case above and
+		// terminateSandbox — so process rows are never left RUNNING under a
+		// sandbox that has already transitioned to FINISHED.
+		if err := c.failProcesses(ctx, sb); err != nil {
+			return err
+		}
 		if !missing {
 			if err := c.cordonIfGPUDirty(pod); err != nil {
 				return err
@@ -220,19 +227,23 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 		if sb.State == "READY" || sb.State == "STARTED" || sb.State == "SCHEDULED" {
 			return c.failSandbox(ctx, sb, "WORKER_LOST")
 		}
+		// Still CREATING: the Pod was never created, but a managed sandbox
+		// already has its main process row. Route every failure through
+		// failSandbox so that row goes terminal in the same pass, matching the
+		// WORKER_LOST path above and the pod-exists paths below.
 		if !now.Before(deadline) {
-			return c.fail(ctx, sb, "CAPACITY_UNAVAILABLE")
+			return c.failSandbox(ctx, sb, "CAPACITY_UNAVAILABLE")
 		}
 		ref := c.opts.ResolveImage(ctx, sb.ProjectID, sb.ImageID)
 		if ref == "" {
-			return c.fail(ctx, sb, "IMAGE_UNAVAILABLE")
+			return c.failSandbox(ctx, sb, "IMAGE_UNAVAILABLE")
 		}
 		if _, ok := k8s.ProfileForNetwork(sb.Resources.Accelerator.Type, sb.Network.InternetAccess == store.InternetAccessEnabled); !ok {
-			return c.fail(ctx, sb, "WORKLOAD_NOT_SUPPORTED")
+			return c.failSandbox(ctx, sb, "WORKLOAD_NOT_SUPPORTED")
 		}
 		secretEnv, err := c.resolveSecrets(ctx, sb)
 		if err != nil {
-			return c.fail(ctx, sb, "SECRET_UNAVAILABLE")
+			return c.failSandbox(ctx, sb, "SECRET_UNAVAILABLE")
 		}
 		spec := k8s.SandboxPod(sb, ref)
 		k8s.ApplySecretEnv(spec, secretEnv)
@@ -341,6 +352,12 @@ func (c *Controller) syncProcesses(ctx context.Context, sb store.Sandbox, pod *k
 			if mirror, merr := json.Marshal(observed); merr == nil {
 				_ = c.pods.PatchAnnotations(pod.Name, map[string]string{k8s.AnnotProcObserved: string(mirror)})
 			}
+		} else {
+			// A failed probe leaves probe.IdleReported false, so idleExceeded
+			// skips idle-timeout enforcement this tick. Log it: a persistently
+			// unreachable supervisor silently disables the idle timeout until
+			// maximumRuntimeSeconds backstops it.
+			log.Printf("controller: sandbox %s: process probe %s: %v", sb.ID, pod.PodIP, perr)
 		}
 	}
 	if len(observed) == 0 {
@@ -391,10 +408,15 @@ func (c *Controller) syncProcesses(ctx context.Context, sb store.Sandbox, pod *k
 }
 
 // idleExceeded reports whether a READY sandbox has been inactive longer than
-// its timeouts.idleSeconds. Enforcement needs the supervisor's idleSeconds
-// (only the in-sandbox supervisor sees both process state and live exec
-// streams), so it is skipped when the sandbox opted out (idleSeconds <= 0) or
-// the probe did not report the field.
+// its timeouts.idleSeconds. Enforcement needs the supervisor's live
+// idleSeconds (only the in-sandbox supervisor sees both process state and
+// live exec streams), so it is skipped whenever that number is unavailable:
+// the sandbox opted out (idleSeconds <= 0), the supervisor is too old to
+// report the field, or — a broader condition — the probe did not succeed this
+// tick (supervisor crashed, unreachable, or non-200). A sandbox whose
+// supervisor stays unreachable is therefore never idle-terminated;
+// maximumRuntimeSeconds (kubelet activeDeadlineSeconds) is the backstop.
+// syncProcesses logs every probe failure.
 func (c *Controller) idleExceeded(sb store.Sandbox, probe ProbeResult) bool {
 	return sb.Timeouts.IdleSeconds > 0 &&
 		probe.IdleReported &&

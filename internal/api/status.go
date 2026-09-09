@@ -40,7 +40,10 @@ func writeStatus(w http.ResponseWriter, requestID string, httpStatus int, code, 
 }
 
 func writeStoreError(w http.ResponseWriter, requestID string, err error) {
+	var adm *store.AdmissionError
 	switch {
+	case errors.As(err, &adm):
+		writeStatus(w, requestID, http.StatusBadRequest, adm.Code, adm.Message, false, 0)
 	case errors.Is(err, store.ErrNotFound):
 		writeStatus(w, requestID, http.StatusNotFound, "NOT_FOUND", "not found", false, 0)
 	case errors.Is(err, store.ErrIdempotencyReused):
