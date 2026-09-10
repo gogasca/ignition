@@ -13,9 +13,9 @@ dependencies = []
 
 [project.optional-dependencies]
 dev = ["pytest>=8", "ignition-sandbox"]
-# Left as the seam for a real optimizer step (trl.GRPOTrainer / verifiers).
-# Not needed for anything in this example; see docs/guides/agentic-rl-example.md.
-train = ["torch", "transformers", "trl>=0.11"]
+# The real GRPO step (swe_mini/trainer/grpo_trl.py). Needs a GPU + a vLLM
+# endpoint at INFERENCE_URL; see docs/guides/agentic-rl-example.md.
+train = ["torch", "transformers", "trl>=1.0", "datasets"]
 
 [tool.uv.sources]
 ignition-sandbox = { path = "../../sdks/python", editable = true }
