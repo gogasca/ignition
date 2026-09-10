@@ -1,8 +1,8 @@
 # Ignition
 
-Ignition is an early implementation of isolated sandboxes on GKE Standard with GKE Sandbox (`gvisor`/`nvproxy`). A sandbox is CPU-only or one whole NVIDIA L4; the L4 path schedules one tenant sandbox per `g2-standard-8` node. `CreateSandbox` needs only an `imageId` — compute, timeouts, and networking default to a system-managed [default runtime](docs/design/ignition-shipped-architecture.md#6-default-runtime) (CPU-only) and can be overridden per request.
+Ignition is a control plane for creating isolated sandboxes on GKE Standard with GKE Sandbox (`gvisor`/`nvproxy`) — the substrate for running **coding / tool-use agents** and **RL environments** (rollout workers for RL from verifiable rewards). A sandbox is CPU-only or one whole NVIDIA L4; the L4 path schedules one tenant sandbox per `g2-standard-8` node. `CreateSandbox` needs only an `imageId` — compute, timeouts, and networking default to a system-managed [default runtime](docs/design/ignition-shipped-architecture.md#6-default-runtime) (CPU-only) and can be overridden per request. The control plane owns auth, admission, quota, idempotency, lifecycle, and exec streaming; GKE owns compute; the trainer and inference for an RL run stay outside Ignition (see [`examples/agentic-rl/`](examples/agentic-rl/)).
 
-Architecture and public API contracts live in [`docs/design/`](docs/design/). **What is built vs not:** [`docs/design/STATUS.md`](docs/design/STATUS.md). The shipped system: [`docs/design/ignition-shipped-architecture.md`](docs/design/ignition-shipped-architecture.md). The public API: [`docs/design/ignition-api-contract.md`](docs/design/ignition-api-contract.md). Build images, create the cluster, and deploy: [`docs/guides/ignition-implementation.md`](docs/guides/ignition-implementation.md).
+Where this is going: [`docs/design/ROADMAP.md`](docs/design/ROADMAP.md). Architecture and public API contracts live in [`docs/design/`](docs/design/). **What is built vs not:** [`docs/design/STATUS.md`](docs/design/STATUS.md). The shipped system: [`docs/design/ignition-shipped-architecture.md`](docs/design/ignition-shipped-architecture.md). The public API: [`docs/design/ignition-api-contract.md`](docs/design/ignition-api-contract.md). Build images, create the cluster, and deploy: [`docs/guides/ignition-implementation.md`](docs/guides/ignition-implementation.md).
 
 ## Layout
 
@@ -24,7 +24,7 @@ docs/guides/          build and deploy runbook
 
 | Example | What it shows |
 |---|---|
-| [`examples/agentic-rl/`](examples/agentic-rl/) | Using a sandbox as the **environment / rollout worker** for RL from verifiable rewards: an LLM agent fixes a bug inside the sandbox, a pytest verifier scores it, trajectories flow back to a trainer. Two topologies, a GRPO training-batch stub, and a hermetic test suite. Design notes: [`docs/design/agentic-rl-on-ignition.md`](docs/design/agentic-rl-on-ignition.md); runbook: [`docs/guides/agentic-rl-example.md`](docs/guides/agentic-rl-example.md). |
+| [`examples/agentic-rl/`](examples/agentic-rl/) | Using a sandbox as the **environment / rollout worker** for RL from verifiable rewards: an LLM agent fixes a bug inside the sandbox, a pytest verifier scores it, trajectories flow back to a trainer. Two topologies, a hermetic test suite, and a real GRPO step (`trl.GRPOTrainer` via its `rollout_func` hook). Design notes: [`docs/design/agentic-rl-on-ignition.md`](docs/design/agentic-rl-on-ignition.md); runbook: [`docs/guides/agentic-rl-example.md`](docs/guides/agentic-rl-example.md). |
 
 ## Services
 

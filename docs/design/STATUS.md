@@ -2,7 +2,9 @@
 
 One table per area. This is the fast answer to "is X implemented?" — the design
 docs carry the detail. The [implementation guide](../guides/ignition-implementation.md)
-is authoritative for exactly what is deployed and how.
+is authoritative for exactly what is deployed and how. Where the platform is
+headed — sandboxes for **agents** and **RL environments** — is in
+[ROADMAP.md](ROADMAP.md).
 
 **Status vocabulary**
 
@@ -65,9 +67,17 @@ is authoritative for exactly what is deployed and how.
 | Capability | Status | Notes |
 |---|---|---|
 | `ignitionctl` (`internal/cli`) — login/context, sandbox + process + operation lifecycle, `exec` with streaming | **SHIPPED** | `-o json`, stable exit codes, polling fallback when no gateway. |
-| Python `ignition-sandbox` — sync client, no deps | **SHIPPED** | `sdks/python`. Sandbox/process/operation lifecycle, `:watch`, exec streaming (built-in WS client) + polling fallback. |
+| Python `ignition-sandbox` — sync client, no deps | **SHIPPED** | `sdks/python`. Sandbox/process/operation lifecycle, `:watch`, exec streaming (built-in WS client) + polling fallback. `run(cmd, capture=True)` collects stdout/stderr bytes onto `ExecResult`. |
 | TypeScript `@ignition/sandbox` — async client, no deps | **SHIPPED** | `sdks/typescript`. Same surface; global `fetch`/`WebSocket` (Node 22+). |
 | Native `async` Python client; PTY resize; text wrappers / backpressure helpers | **PROPOSED** | Target contract in [api-contract](ignition-api-contract.md). |
+
+These live in `examples/`, not on the deploy path — they exercise the shipped
+public API, they are not platform features.
+
+| Item | Status | Notes |
+|---|---|---|
+| `examples/agentic-rl/` — sandbox as an RL environment / rollout worker (RLVR) | **built + tested** | Six code-fix tasks with pytest verifiers; in-sandbox agent harness + out-of-cluster rollout controller (topology A: agent in the sandbox, dials out; topology B: driver drives a bare sandbox over the exec stream). Hermetic test suite + CI (`deploy/cloudbuild/pr-examples.yaml`). Design: [agentic-rl-on-ignition](agentic-rl-on-ignition.md); runbook: [agentic-rl-example](../guides/agentic-rl-example.md). |
+| `examples/agentic-rl/` — real GRPO step (`swe_mini/trainer/grpo_trl.py`) | **built + tested** | `trl.GRPOTrainer` via its `rollout_func` hook — TRL owns the optimizer + group-relative advantage; the example owns generation (the harness) and reward (the verifier). Verified against `trl==1.13.0` (1-step, CPU, tiny model). A real run needs a GPU + a vLLM endpoint. The trainer / inference are **not** part of Ignition. |
 
 ## Images
 
