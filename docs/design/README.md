@@ -1,7 +1,11 @@
 # Ignition design documents
 
-Normative architecture for Ignition — isolated single-GPU / CPU sandboxes for
-untrusted tenant code on GKE Standard with GKE Sandbox (gVisor / `nvproxy`).
+Normative architecture for Ignition — a control plane for isolated single-GPU /
+CPU sandboxes on GKE Standard with GKE Sandbox (gVisor / `nvproxy`), the
+substrate for running **agents** and **RL environments** over untrusted tenant
+code.
+
+**Where is this going?** → [ROADMAP.md](ROADMAP.md). The platform thesis and the order of work.
 
 **Is X built?** → [STATUS.md](STATUS.md). One table per area.
 
@@ -12,6 +16,7 @@ Source of truth for what actually runs.
 
 | Doc | Covers | Status |
 |---|---|---|
+| [ROADMAP.md](ROADMAP.md) | The platform thesis (sandboxes for agents + RL envs), what is shipped toward it, near-term and later work | — |
 | [STATUS.md](STATUS.md) | Feature-by-feature: shipped / partial / proposed / deferred | — |
 | [Shipped architecture](ignition-shipped-architecture.md) | `ignition-api`, `ignition-controller`, `ignition-gateway`, `sandbox-init`, `ignition-gpu-agent`; GKE topology, the reconcile loop, the Pod profile, warm capacity, the exec data plane, GPU attestation, the default runtime, storage | **SHIPPED** |
 | [API contract](ignition-api-contract.md) | Public REST surface, Google identity, project RBAC, `CreateSandbox`, state machines, idempotency, errors, `ignitionctl`, SDKs | **SHIPPED** (core); Project/Secret/Event **PROPOSED** |
@@ -33,6 +38,10 @@ Inside the sandbox, `sandbox-init` supervises tenant processes and serves their
 stdio; `ignition-gateway` proxies the exec WebSocket in after checking an
 `ignition-api`-minted stream token. `ignitionctl` and Python/TypeScript SDKs
 wrap the public API. GKE owns VM lifecycle, drivers, scheduling, and
-autoscaling. The custom Compute Engine runtime in
-[deferred-runtime](ignition-deferred-runtime.md) is retained as a design of
-record only, gated on measured evidence that GKE cannot meet a requirement.
+autoscaling. A caller drives the sandbox as a coding/tool agent or as an RL
+rollout worker — the agent harness, the verifier, the trainer, and the inference
+server all live outside Ignition; a worked example is in
+[`examples/agentic-rl/`](../../examples/agentic-rl/). The custom Compute Engine
+runtime in [deferred-runtime](ignition-deferred-runtime.md) is retained as a
+design of record only, gated on measured evidence that GKE cannot meet a
+requirement.

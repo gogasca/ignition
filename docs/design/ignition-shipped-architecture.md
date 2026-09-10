@@ -10,10 +10,13 @@ are in the [implementation guide](../guides/ignition-implementation.md).
 
 ## 1. Overview
 
-Ignition runs allowlisted single-GPU CUDA inference (and CPU workloads) in
-sandboxes holding untrusted tenant code. GKE owns VM lifecycle, drivers,
-scheduling, and autoscaling; Ignition owns the public API, authorization, and
-reconciliation.
+Ignition runs untrusted tenant code — single-GPU CUDA workloads, CPU workloads,
+coding / tool-use agents, and RL environments (rollout workers) — in isolated
+sandboxes. GKE owns VM lifecycle, drivers, scheduling, and autoscaling; Ignition
+owns the public API, authorization, and reconciliation. The caller supplies the
+workload: an agent harness, a verifier, a trainer, or an inference server all run
+outside Ignition (see [`examples/agentic-rl/`](../../examples/agentic-rl/) and
+the [roadmap](ROADMAP.md)).
 
 ```mermaid
 flowchart TB
