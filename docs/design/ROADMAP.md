@@ -55,7 +55,7 @@ cheaply, reproducibly."
 |---|---|---|
 | **Warm CPU pools** (`IGNITION_MIN_WARM > 0`, load-tested to the 9s p95 SLO) | Rollout throughput is create-latency-bound; a cold pull per attempt kills fan-out | implemented, off in every overlay |
 | **Read-only dataset / artifact mounts** | Ship task sets, repos, eval suites, fixtures without rebuilding the image per change | PROPOSED |
-| **Registry-host allowlist + SSRF guard; signature / provenance / scan** | The image resolver will contact any host today — must close before untrusted task images | PARTIAL (known gap) |
+| **Signature / provenance / scan; same-region Ignition-owned copy** | Registry-host allowlist + SSRF guard + resolve timeout landed (`internal/imagecatalog/guard.go`); identity/provenance verification and a copy that removes the source-registry dependency are still open | PARTIAL |
 | **Usage / metering ledger + reconciler** | Per-run, per-project cost accounting for large rollout batches | PROPOSED |
 | **Project / Secret / Event public APIs** | Self-serve project + secret management instead of seed rows | PROPOSED (contract exists) |
 

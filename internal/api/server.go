@@ -43,7 +43,13 @@ type Server struct {
 // source registry (imagecatalog.RemoteResolver). Use NewWithResolver to
 // inject a test double.
 func New(cfg config.Config, st store.Store, authn auth.Authenticator) *Server {
-	return NewWithResolver(cfg, st, authn, imagecatalog.RemoteResolver{})
+	if len(cfg.ImageRegistryAllowlist) == 0 {
+		log.Printf("WARNING: IGNITION_IMAGE_REGISTRY_ALLOWLIST is empty — image admission will resolve any registry host (non-public addresses are still blocked). Set it in this environment.")
+	}
+	return NewWithResolver(cfg, st, authn, imagecatalog.RemoteResolver{
+		Allowlist: cfg.ImageRegistryAllowlist,
+		Timeout:   cfg.ImageResolveTimeout,
+	})
 }
 
 func NewWithResolver(cfg config.Config, st store.Store, authn auth.Authenticator, resolver imagecatalog.Resolver) *Server {

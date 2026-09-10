@@ -84,7 +84,7 @@ public API, they are not platform features.
 | Capability | Status | Notes |
 |---|---|---|
 | Image delivery on GKE | **SHIPPED** | Delegated to GKE image streaming; no Ignition-owned data path. |
-| v0 image admission (`POST/GET /v1/projects/{project}/images`) — resolve `sourceRef` to a digest, static streaming-eligibility check | **PARTIAL** | `internal/imagecatalog`. **Security gap:** no registry-host allowlist, no SSRF guard, no signature/provenance/scan, no same-region copy — see [image-delivery](ignition-image-delivery.md#security-status). Resolve + digest-pinned scheduling verified end to end on a live GKE cluster (`anyscale-demo`, private Artifact Registry via the API's Workload Identity). |
+| v0 image admission (`POST/GET /v1/projects/{project}/images`) — resolve `sourceRef` to a digest, static streaming-eligibility check | **PARTIAL** | `internal/imagecatalog`. Registry-host allowlist (`IGNITION_IMAGE_REGISTRY_ALLOWLIST`) + SSRF guard (no loopback / private / link-local / `169.254.169.254` dials, post-DNS) + resolve timeout + sanitized client errors are **now in place** (`guard.go`). Still missing: signature / provenance / scan, and a same-region Ignition-owned copy — see [image-delivery](ignition-image-delivery.md#security-status). Resolve + digest-pinned scheduling verified end to end on a live GKE cluster (`anyscale-demo`). |
 | Digest-pinned `imageId` | **not built** | Controller resolves a bare path under the Artifact Registry sandbox prefix. |
 | Same-region import, signature/provenance verification, scanning, signed catalog | **PROPOSED** | |
 | Secondary boot-disk cache cohorts, adaptive lazy/eager selection, access profiles | **PROPOSED** | |

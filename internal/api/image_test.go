@@ -2,6 +2,7 @@ package api_test
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -138,6 +139,36 @@ func TestCreateImageRejectsUnresolvableSourceRef(t *testing.T) {
 	resp, body := h.req(t, http.MethodPost, "/v1/projects/prj/images", "owner",
 		`{"imageId":"img_bad","sourceRef":"does.not/exist:latest"}`)
 	if resp.StatusCode != http.StatusBadRequest || body["code"] != "IMAGE_UNAVAILABLE" {
+		t.Fatalf("status = %d, body = %v", resp.StatusCode, body)
+	}
+}
+
+// The raw registry error is a network-topology oracle and must not reach the
+// client — only a generic message.
+func TestCreateImageSanitizesResolverError(t *testing.T) {
+	h := newImageHarness(t)
+	h.resolver.Err["private.registry/x:latest"] = fmt.Errorf(
+		"%w: Get \"https://10.1.2.3/v2/\": dial tcp 10.1.2.3:443: connect: connection refused",
+		imagecatalog.ErrResolveFailed)
+	resp, body := h.req(t, http.MethodPost, "/v1/projects/prj/images", "owner",
+		`{"imageId":"img_priv","sourceRef":"private.registry/x:latest"}`)
+	if resp.StatusCode != http.StatusBadRequest || body["code"] != "IMAGE_UNAVAILABLE" {
+		t.Fatalf("status = %d, body = %v", resp.StatusCode, body)
+	}
+	msg, _ := body["message"].(string)
+	for _, leak := range []string{"10.1.2.3", "connection refused", "dial tcp"} {
+		if strings.Contains(msg, leak) {
+			t.Fatalf("message leaks resolver detail %q: %q", leak, msg)
+		}
+	}
+}
+
+func TestCreateImageRejectsDisallowedSource(t *testing.T) {
+	h := newImageHarness(t)
+	h.resolver.Err["gcr.io/evil/x:latest"] = fmt.Errorf("%w: %q", imagecatalog.ErrSourceNotAllowed, "gcr.io")
+	resp, body := h.req(t, http.MethodPost, "/v1/projects/prj/images", "owner",
+		`{"imageId":"img_evil","sourceRef":"gcr.io/evil/x:latest"}`)
+	if resp.StatusCode != http.StatusBadRequest || body["code"] != "IMAGE_SOURCE_NOT_ALLOWED" {
 		t.Fatalf("status = %d, body = %v", resp.StatusCode, body)
 	}
 }

@@ -17,6 +17,12 @@ data:
   IGNITION_OIDC_AUDIENCE: "https://api.ignition.dev"
   IGNITION_GATEWAY_URL: "https://gateway.us-central1.ignition.dev"
   IGNITION_MAX_ACTIVE_SANDBOXES: "100"
+  # Registry hosts the image-admission resolver (internal/imagecatalog) may
+  # contact. Comma-separated bare hosts; empty would mean "any host" (the
+  # resolver still refuses loopback / private / link-local / metadata
+  # addresses unconditionally). Add "index.docker.io" etc. to allow public
+  # source images. Every sandbox/base image today lives in Artifact Registry.
+  IGNITION_IMAGE_REGISTRY_ALLOWLIST: "us-central1-docker.pkg.dev"
 ---
 apiVersion: apps/v1
 kind: Deployment

@@ -23,11 +23,11 @@ const (
 )
 
 // checkSourceRef bounds the length of an image reference before it reaches
-// the resolver. It intentionally does not otherwise restrict which registry
-// or reference a project may name — the image data layer design's registry
-// identity/signature/provenance/policy checks are not implemented (see
-// docs/design/ignition-image-delivery.md); admission here is purely
-// digest-pinning, not a security gate.
+// the resolver. Registry-host allowlisting and the SSRF / non-public-address
+// guard live in the resolver itself (internal/imagecatalog/guard.go); the
+// image data layer design's registry identity / signature / provenance /
+// policy checks are still not implemented (see
+// docs/design/ignition-image-delivery.md).
 func checkSourceRef(ref string) error {
 	if ref == "" {
 		return fmt.Errorf("sourceRef is required")

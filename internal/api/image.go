@@ -1,10 +1,13 @@
 package api
 
 import (
+	"errors"
 	"fmt"
+	"log"
 	"net/http"
 
 	"ignition.dev/ignition/internal/auth"
+	"ignition.dev/ignition/internal/imagecatalog"
 	"ignition.dev/ignition/internal/store"
 )
 
@@ -53,7 +56,17 @@ func (s *Server) createImage(w http.ResponseWriter, r *http.Request) {
 
 	resolved, err := s.resolver.Resolve(r.Context(), body.SourceRef)
 	if err != nil {
-		writeStatus(w, rid, http.StatusBadRequest, "IMAGE_UNAVAILABLE", fmt.Sprintf("could not resolve sourceRef: %v", err), false, 0)
+		// The underlying registry error is a network-topology oracle (it
+		// distinguishes "nothing listening" from "refused" from "TLS
+		// failure"), so it is logged, not returned.
+		log.Printf("image resolve failed (project=%s imageId=%s): %v", project, body.ImageID, err)
+		if errors.Is(err, imagecatalog.ErrSourceNotAllowed) {
+			writeStatus(w, rid, http.StatusBadRequest, "IMAGE_SOURCE_NOT_ALLOWED",
+				"sourceRef names a registry or address this deployment will not resolve", false, 0)
+			return
+		}
+		writeStatus(w, rid, http.StatusBadRequest, "IMAGE_UNAVAILABLE",
+			"could not resolve sourceRef against its source registry", false, 0)
 		return
 	}
 
