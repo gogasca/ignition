@@ -130,21 +130,45 @@ python -m swe_mini.train --steps 3 --topology a --run-id loop
 Each step: rollouts → GRPO batch → `policy_version += 1` → `reload_inference()`
 (a no-op hook). Ignition appears only in the rollout step (`--topology a`/`b`).
 
-## 5. Closing the loop (next step — not in the example)
+## 5. The real GRPO step — `trl.GRPOTrainer`
 
-`swe_mini/trainer/grpo_step.py` stops at the training batch and a reported stub
-loss. To actually train:
+`swe_mini/trainer/grpo_step.py` is the stub (batch + reported loss, no
+optimizer). `swe_mini/trainer/grpo_trl.py` is the real thing, wired to
+`train.py` as `--backend trl`:
 
-1. `pip install -e '.[train]'` (`torch`, `trl`, `transformers`).
-2. In `swe_mini/train.py`, after `grpo_step.run(...)`, feed
-   `training_batch/<run>.jsonl` to `trl.GRPOTrainer` (or the `verifiers`
-   library — the row shape `{prompt, completion, advantage, token_logprobs}`
-   matches both). Needs the L4 (or a bigger trainer box).
-3. Implement `reload_inference()` to publish the new weights to the vLLM
-   fleet (LoRA swap or full reload) and block until they are live.
-4. Tag trajectories with `policy_version` (already done) and apply an
-   off-policy correction / staleness cutoff — sandboxes launched under version
-   *N* can land after *N+1*.
+```bash
+pip install -e '.[train]'            # torch, transformers, trl>=1.0, datasets
+
+# vLLM must expose exact token ids + logprobs so what the harness records lines
+# up with what the trainer optimizes:
+vllm serve Qwen/Qwen3-0.6B --return-tokens-as-token-ids \
+    --logprobs-mode processed_logprobs --max-logprobs -1
+
+export INFERENCE_URL=http://localhost:8000/v1 INFERENCE_MODEL=Qwen/Qwen3-0.6B
+python -m swe_mini.train --backend trl --topology b --model Qwen/Qwen3-0.6B --steps 20
+```
+
+It uses TRL's `rollout_func` hook: **TRL owns the optimizer and the
+group-relative advantage; we own generation (the agent harness on Ignition) and
+the reward (the in-sandbox verifier).** Per step, for each task TRL asks for
+`num_generations` rollouts; `grpo_trl` runs them (`--topology b` → real Ignition
+sandboxes, else locally), flattens each multi-turn trajectory into
+`(prompt_ids, completion_ids, logprobs)` (assistant tokens only — observations
+are not trained on), and returns them plus the verified `reward`. TRL groups,
+computes advantages, and does the policy step.
+
+Verified end to end against `trl==1.13.0` with a tiny model on CPU (mocked
+rollout); a real run needs a GPU and the vLLM flags above.
+
+**Still to do for a production loop:**
+- `oracle://` / `random://` policies have no logprobs — the trl backend requires
+  a real vLLM endpoint.
+- Weight sync: TRL's colocated vLLM (`use_vllm=True, vllm_mode="colocate"`) or
+  the server + NCCL path handles pushing new weights to inference.
+- Staleness: trajectories are tagged with `policy_version`; apply an off-policy
+  correction / cutoff for rollouts that land a version late.
+- For an agent that must run its *own* loop unchanged, see TRL's experimental
+  `AsyncGRPOTrainer` + `HarnessRolloutWorker` (black-box / loop-owning) path.
 
 ## Operational notes
 

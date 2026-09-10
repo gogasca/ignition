@@ -29,14 +29,17 @@ class ToolCall:
 
 @dataclass
 class Completion:
-    """One policy output. ``token_logprobs`` is populated only when the inference
-    endpoint returns per-token logprobs (vLLM / OpenAI ``logprobs=True``); the
-    offline policies leave it ``None`` and the trainer degrades to
-    sequence-level advantage."""
+    """One policy output. ``token_logprobs`` / ``tokens`` are populated only when
+    the inference endpoint returns per-token logprobs (vLLM / OpenAI
+    ``logprobs=True``); the offline policies leave them ``None``. ``tokens`` are
+    the raw token strings from the endpoint — with vLLM
+    ``--return-tokens-as-token-ids`` they are ``"token_id:<int>"`` and line up
+    1:1 with ``token_logprobs`` (what the TRL backend needs)."""
 
     text: str
     tool_call: ToolCall | None = None
     token_logprobs: list[float] | None = None
+    tokens: list[str] | None = None
 
 
 @dataclass
@@ -78,6 +81,7 @@ class Trajectory:
                         text=c.get("text", ""),
                         tool_call=ToolCall(**tc) if tc else None,
                         token_logprobs=c.get("token_logprobs"),
+                        tokens=c.get("tokens"),
                     ),
                     observation=t.get("observation", ""),
                 )

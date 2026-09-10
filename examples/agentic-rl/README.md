@@ -89,15 +89,23 @@ Each step: run rollouts → build the GRPO batch → bump `policy_version` →
 vLLM weight reload into `swe_mini/train.py` closes the loop — see
 [`docs/guides/agentic-rl-example.md`](../../docs/guides/agentic-rl-example.md).
 
+## The GRPO step
+
+- `trainer/grpo_step.py` — stub: group-relative advantages + a `trl`/`verifiers`-shaped
+  batch + a reported loss. No optimizer. Default (`--backend stub`).
+- `trainer/grpo_trl.py` — real: `trl.GRPOTrainer` via its `rollout_func` hook,
+  rollouts from Ignition. `python -m swe_mini.train --backend trl` (needs
+  `pip install -e '.[train]'`, a GPU, and a vLLM endpoint — see the guide).
+  Verified against `trl==1.13.0` with a tiny model on CPU.
+
 ## What this example does not do
 
-- **No optimizer.** `trainer/` stops at the training batch + a reported stub
-  loss. The `[train]` extra (`torch`, `trl`) and the `reload_inference()` hook
-  are the seams for a real step.
 - **No warm pool / quota tuning.** Cold start is image-pull-bound until an
   operator raises `IGNITION_MIN_WARM` on the CPU pool.
 - **Tasks are baked into the image** (no dataset mounts on Ignition yet), so a
   large task set means a rebuild.
+- **No weight sync** wired between the trainer and vLLM (TRL's colocated-vLLM
+  handles this; hook is documented).
 
 Design rationale and the Ignition constraints that shaped this:
 [`docs/design/agentic-rl-on-ignition.md`](../../docs/design/agentic-rl-on-ignition.md).

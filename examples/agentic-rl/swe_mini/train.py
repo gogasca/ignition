@@ -36,8 +36,20 @@ def main(argv: list[str]) -> int:
     cfg.add_cli(p)
     p.add_argument("--steps", type=int, default=3)
     p.add_argument("--topology", choices=["a", "b", "offline"], default="a")
+    p.add_argument("--backend", choices=["stub", "trl"], default="stub",
+                   help="stub: GRPO batch + reported loss, no optimizer. "
+                        "trl: real trl.GRPOTrainer step (needs [train] + a GPU + vLLM).")
+    p.add_argument("--model", default="Qwen/Qwen3-0.6B", help="--backend trl only")
     a = p.parse_args(argv[1:])
     cfg.apply_cli(a)
+
+    if a.backend == "trl":
+        # TRL owns the loop (rollouts via rollout_func) — hand it the whole run.
+        from .trainer import grpo_trl
+
+        rollout_mode = "ignition-b" if a.topology == "b" else "local"
+        grpo_trl.train(cfg, model=a.model, steps=a.steps, rollout_mode=rollout_mode)
+        return 0
 
     base_run = cfg.run_id
     for step in range(a.steps):

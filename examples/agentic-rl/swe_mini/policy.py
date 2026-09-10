@@ -71,20 +71,23 @@ class OpenAICompatPolicy:
             data = json.loads(resp.read())
         choice = data["choices"][0]
         text = choice["message"]["content"] or ""
-        logprobs = _extract_logprobs(choice.get("logprobs"))
-        return Completion(text=text, token_logprobs=logprobs)
+        logprobs, tokens = _extract_logprobs(choice.get("logprobs"))
+        return Completion(text=text, token_logprobs=logprobs, tokens=tokens)
 
 
-def _extract_logprobs(lp: dict | None) -> list[float] | None:
+def _extract_logprobs(lp: dict | None) -> tuple[list[float] | None, list[str] | None]:
     if not lp:
-        return None
+        return None, None
     content = lp.get("content")
     if not content:
-        return None
+        return None, None
     try:
-        return [float(tok["logprob"]) for tok in content]
+        return (
+            [float(tok["logprob"]) for tok in content],
+            [str(tok["token"]) for tok in content],
+        )
     except (KeyError, TypeError, ValueError):
-        return None
+        return None, None
 
 
 # --------------------------------------------------------------------------- #
