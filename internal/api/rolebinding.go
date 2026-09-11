@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"log"
 	"net/http"
@@ -88,16 +87,6 @@ func (s *Server) putRoleBinding(w http.ResponseWriter, r *http.Request) {
 			"role must be one of owner, admin, developer, operator, viewer", false, 0)
 		return
 	}
-	orphan, err := s.wouldOrphanProject(r.Context(), project, subject, role)
-	if err != nil {
-		writeStoreError(w, rid, err)
-		return
-	}
-	if orphan {
-		writeStatus(w, rid, http.StatusConflict, "FAILED_PRECONDITION",
-			"cannot downgrade the last owner of the project", false, 0)
-		return
-	}
 	if err := s.store.PutRoleBinding(r.Context(), project, subject, role); err != nil {
 		writeStoreError(w, rid, err)
 		return
@@ -117,16 +106,6 @@ func (s *Server) deleteRoleBinding(w http.ResponseWriter, r *http.Request) {
 	if !s.authorize(w, r, project, auth.PermRoleBindingAdmin, false) {
 		return
 	}
-	orphan, err := s.wouldOrphanProject(r.Context(), project, subject, "")
-	if err != nil {
-		writeStoreError(w, rid, err)
-		return
-	}
-	if orphan {
-		writeStatus(w, rid, http.StatusConflict, "FAILED_PRECONDITION",
-			"cannot remove the last owner of the project", false, 0)
-		return
-	}
 	existed, err := s.store.DeleteRoleBinding(r.Context(), project, subject)
 	if err != nil {
 		writeStoreError(w, rid, err)
@@ -139,28 +118,6 @@ func (s *Server) deleteRoleBinding(w http.ResponseWriter, r *http.Request) {
 	log.Printf("ignition-api: audit rolebinding.delete project=%s subject=%s by=%s rid=%s",
 		project, subject, s.principal(r.Context()).Subject, rid)
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// wouldOrphanProject reports whether setting subject to newRole ("" means
-// delete) would leave the project with no owner binding.
-func (s *Server) wouldOrphanProject(ctx context.Context, project, subject, newRole string) (bool, error) {
-	if newRole == auth.RoleOwner {
-		return false, nil
-	}
-	list, err := s.store.ListRoleBindings(ctx, project)
-	if err != nil {
-		return false, err
-	}
-	owners, subjectIsOwner := 0, false
-	for _, b := range list {
-		if b.Role == auth.RoleOwner {
-			owners++
-			if b.Subject == subject {
-				subjectIsOwner = true
-			}
-		}
-	}
-	return subjectIsOwner && owners <= 1, nil
 }
 
 // validRoleBindingSubject checks the {subject} path segment and normalizes an

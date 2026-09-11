@@ -280,6 +280,13 @@ func (c *Controller) reconcileSandbox(ctx context.Context, sb store.Sandbox) err
 		if err := c.failProcesses(ctx, sb); err != nil {
 			return err
 		}
+		// Cordon before deleting, matching the FINISHED/FAILED and TERMINATING
+		// branches above: once this Pod is gone, the sandbox goes FAILED with
+		// missing=true on the next pass and those branches' own cordon check
+		// never runs for it — this is the only chance to catch a dirty GPU here.
+		if err := c.cordonIfGPUDirty(pod); err != nil {
+			return err
+		}
 		c.taintReusePending(pod, gpu)
 		_ = c.pods.Delete(name)
 		return c.fail(ctx, sb, reason)
@@ -436,6 +443,12 @@ func (c *Controller) terminateSandbox(ctx context.Context, sb store.Sandbox, pod
 	}
 	if pod != nil && pod.Name != "" {
 		gpu := k8s.IsGPUProfile(sb.Resources.Accelerator.Type)
+		// Cordon before deleting — matching reconcileSandbox's teardown
+		// branches. Once this Pod is gone, the sandbox is terminal with the
+		// Pod missing on the next pass, and no other path re-checks the node.
+		if err := c.cordonIfGPUDirty(pod); err != nil {
+			return err
+		}
 		c.taintReusePending(pod, gpu)
 		if err := c.pods.Delete(pod.Name); err != nil && !errors.Is(err, k8s.ErrNotFound) {
 			return err
