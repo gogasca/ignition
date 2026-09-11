@@ -219,7 +219,14 @@ for attempt in $(seq 1 30); do
   sleep 1
 done
 
-TOKEN="$(gcloud auth print-identity-token --audiences="https://api.${INSTALL_NAME}.ignition.dev")"
+# No --audiences: that flag requires impersonating a service account and
+# fails outright for a plain human account ("Invalid account type for
+# --audiences. Requires valid service account" — hit live). A bare human
+# identity token's aud is gcloud's own OAuth client id
+# (32555940559.apps.googleusercontent.com), which is exactly why
+# IGNITION_OIDC_AUDIENCES on the rendered overlay includes that id — the
+# API already accepts this token as-is.
+TOKEN="$(gcloud auth print-identity-token)"
 
 # Real image admission (POST .../images resolves sourceRef -> digest); the
 # dev-bearer SeedImage shortcut does not run under real OIDC.
