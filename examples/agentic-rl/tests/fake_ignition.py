@@ -127,8 +127,13 @@ class FakeClient:
 
     def _play_harness(self, sb: FakeSandbox, kw: dict) -> None:
         time.sleep(self.harness_delay)
-        env = kw.get("env") or {}
-        task_id = env["TASK_ID"]
+        # Simulate exactly what the real sandbox does: parse the argv the
+        # controller built (CreateSandbox has no plain `environment` field —
+        # see rollout.py's docstring), not a nonexistent `env` kwarg.
+        from swe_mini.harness.rollout import _parse_args
+
+        args = _parse_args(kw.get("args") or [])
+        task_id = args.task_id
         work = Path(tempfile.mkdtemp())
         src = TASKS / task_id
         for item in src.iterdir():
@@ -136,20 +141,20 @@ class FakeClient:
                 continue
             (shutil.copytree if item.is_dir() else shutil.copy2)(item, work / item.name)
 
-        sample = int(env.get("SAMPLE", "0"))
+        sample = args.sample
         policy = self._policy_factory(src, sample)
         turns = agent.run_agent(work, (src / "PROMPT.md").read_text(), policy, max_turns=8)
         result = verify.score(work)
         traj = Trajectory(
-            key=make_key(env["RUN_ID"], task_id, int(env["POLICY_VERSION"]), sample),
-            run_id=env["RUN_ID"], task_id=task_id,
-            policy_version=int(env["POLICY_VERSION"]), sample=sample,
+            key=make_key(args.run_id, task_id, args.policy_version, sample),
+            run_id=args.run_id, task_id=task_id,
+            policy_version=args.policy_version, sample=sample,
             turns=turns, reward=result["reward"], passed=result["passed"],
             metrics={"n_turns": len(turns), **result["detail"]},
         )
         shutil.rmtree(work, ignore_errors=True)
 
-        collector_url = env.get("COLLECTOR_URL")
+        collector_url = args.collector_url
         if collector_url:
             body = traj.to_json().encode()
             req = urllib.request.Request(
