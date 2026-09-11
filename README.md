@@ -9,8 +9,8 @@ Where this is going: [`docs/design/ROADMAP.md`](docs/design/ROADMAP.md). Archite
 ```text
 cmd/                  service and CLI entrypoints
 internal/             private packages (not importable by SDKs)
-api/proto/            public sandbox API (.proto)
-api/openapi/          HTTP/JSON stub (kept in sync with protos)
+api/proto/            public sandbox API (.proto) — source of truth for the HTTP surface
+api/openapi/          generated from api/proto (make -C api/proto api-generate); never hand-edited
 internal/store/schema.sql  complete Cloud SQL schema (embedded by the API)
 deploy/               GKE manifests and Terraform
 images/sandbox-init/  container image for the in-sandbox supervisor
@@ -46,7 +46,8 @@ Requires Go 1.26.7 or a newer supported Go release. If present, the repository-l
 make build GO=.tools/go/bin/go
 make test GO=.tools/go/bin/go
 make images IMAGE_REGISTRY=us-central1-docker.pkg.dev/PROJECT/ignition IMAGE_TAG=dev
-(cd api/proto && buf lint)
+make -C api/proto lint GO=.tools/go/bin/go        # buf lint + confirm the whole proto module compiles
+make -C api/proto api-check GO=.tools/go/bin/go   # regenerate api/openapi/v1.yaml, fail if it drifted from the protos
 ```
 
 `make images` builds only `ignition-api` and `ignition-controller`. The complete GCP prerequisites, sandbox image build, project-specific overlay rendering, deployment, API verification, and teardown commands are in the [implementation guide](docs/guides/ignition-implementation.md).

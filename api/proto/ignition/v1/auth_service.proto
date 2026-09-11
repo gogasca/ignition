@@ -1,0 +1,47 @@
+syntax = "proto3";
+
+package ignition.v1;
+
+import "ignition/v1/http.proto";
+
+option go_package = "ignition.dev/ignition/api/gen/ignition/v1;ignitionv1";
+
+// Me is the authenticated principal returned by GetMe. It mirrors the
+// `principal` resolved by the auth middleware (see internal/auth/principal.go):
+// the stable Subject used for RBAC/audit, an optional Email, its Kind, and the
+// Workspace Domain (hd claim).
+//
+// This endpoint is served by the HTTP handler `Server.getMe`
+// (internal/api/me.go, route `GET /v1/me`). It is declared in the proto so the
+// OpenAPI surface stays complete and drift-free; it is not exposed over gRPC.
+message Me {
+  // Subject is the stable identifier used for RBAC and audit. For Google
+  // identities it is the verified email; for first-party RFC 9068 access
+  // tokens it is the `sub` claim.
+  string subject = 1;
+  // Email is the caller's lower-cased email, when the token carried one.
+  string email = 2;
+  // Kind is "user" or "service_account", derived from Email (empty when the
+  // token carried no email). Emitted verbatim by the implementation, hence a
+  // string rather than an enum.
+  string kind = 3;
+  // Domain is the Google Workspace primary domain (hd claim). Set for
+  // Workspace users only; empty for consumer accounts and service accounts.
+  string domain = 4;
+}
+
+// GetMeRequest is the (empty) request for [MeService.GetMe].
+message GetMeRequest {}
+
+service MeService {
+  // GetMe echoes the authenticated principal. The auth middleware has already
+  // run, so the call needs only authentication — no project scope — and no
+  // body. Clients use it to verify a token and show "signed in as ...".
+  // Returns 200 with the caller's identity, or 401 when unauthenticated.
+  rpc GetMe(GetMeRequest) returns (Me) {
+    option (ignition.v1.http) = {
+      method: "GET"
+      path: "/v1/me"
+    };
+  }
+}

@@ -51,6 +51,7 @@ enum ProcessState {
 message CreateProcessRequest {
   string project_id = 1;
   string sandbox_id = 2;
+  reserved 3;
   repeated string command = 4;
   string working_directory = 5;
   map<string, string> environment = 6;
@@ -81,6 +82,7 @@ message SignalProcessRequest {
   string project_id = 1;
   string sandbox_id = 2;
   string process_id = 3;
+  reserved 4;
   string signal = 5;
 }
 

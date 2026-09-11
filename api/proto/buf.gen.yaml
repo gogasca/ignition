@@ -1,0 +1,15 @@
+# Code generation config for the Ignition v1 API.
+#
+# The OpenAPI document is GENERATED from api/proto/ignition/v1 (the proto is the
+# single source of truth for the HTTP surface). It is committed to
+# api/openapi/v1.yaml and must be reproduced byte-for-byte by `buf generate`;
+# CI enforces this via `make api-check`.
+#
+# Run from api/proto:
+#   make api-generate
+version: v2
+plugins:
+  - local: protoc-gen-ignopenapi
+    out: ../openapi
+    # The plugin emits a single file: v1.yaml -> ../openapi/v1.yaml
+    #                                 = api/openapi/v1.yaml

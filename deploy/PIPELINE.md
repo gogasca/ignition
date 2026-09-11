@@ -4,7 +4,7 @@ Four automated flows, one GCP project, source in GitHub:
 
 | # | When | What | Config |
 |---|---|---|---|
-| 0 | **PR to `main`** | Per component: `go vet` + `go test ./...` + `docker build` the affected image. **No push** — validation only. A trigger fires only when the PR changes that binary's code or a package it compiles in. Plus `ignition-pr-examples`: the `examples/agentic-rl/` Python suite when that tree or `sdks/python/` changes. | `deploy/cloudbuild/pr.yaml` + `deploy/cloudbuild/prpaths`; `deploy/cloudbuild/pr-examples.yaml` |
+| 0 | **PR to `main`** | Per component: `go vet` + `go test ./...` + `docker build` the affected image. **No push** — validation only. A trigger fires only when the PR changes that binary's code or a package it compiles in. Plus `ignition-pr-examples`: the `examples/agentic-rl/` Python suite when that tree or `sdks/python/` changes. Plus `ignition-pr-api-spec`: `buf lint` + verify `api/openapi/v1.yaml` is exactly what the current protos generate, when `api/proto/**`, `api/openapi/**`, or the generator changes. | `deploy/cloudbuild/pr.yaml` + `deploy/cloudbuild/prpaths`; `deploy/cloudbuild/pr-examples.yaml`; `deploy/cloudbuild/pr-api-spec.yaml` |
 | 1 | Push to `main` (PR merge) | `go vet` + `go test ./...` + Postgres store tests, then build & push `ignition-api`, `ignition-controller`, `ignition-gateway`, `ignition-prober` tagged `sha-<sha>` and `main` | `deploy/cloudbuild/build.yaml` |
 | 2 | Nightly ~02:00 | Same tests + build, tagged `sha-<sha>`, `nightly`, `nightly-YYYYMMDD` | `deploy/cloudbuild/build.yaml` |
 | 3 | Daily 12:00 | `go test ./...` gate, then a Cloud Deploy release: resolve `:nightly` → digest, roll onto the staging GKE cluster, run the read-only critical-user-journey probes as the verify gate | `deploy/cloudbuild/deploy-staging.yaml` + `deploy/clouddeploy/pipeline.yaml` + `skaffold.yaml` |
@@ -204,6 +204,14 @@ gcloud builds triggers create github \
   --repository="${REPO}" --pull-request-pattern='^main$' \
   --build-config=deploy/cloudbuild/pr-examples.yaml \
   --included-files="examples/agentic-rl/**,sdks/python/**" \
+  --service-account="projects/${PROJECT}/serviceAccounts/${CB}"
+
+# Flow 0 — proto lint + verify api/openapi/v1.yaml is generated, not hand-edited.
+gcloud builds triggers create github \
+  --name=ignition-pr-api-spec --region="${REGION}" \
+  --repository="${REPO}" --pull-request-pattern='^main$' \
+  --build-config=deploy/cloudbuild/pr-api-spec.yaml \
+  --included-files="api/proto/**,api/openapi/**,cmd/protoc-gen-ignopenapi/**" \
   --service-account="projects/${PROJECT}/serviceAccounts/${CB}"
 
 # Flow 1 — PR merge → main

@@ -1,0 +1,32 @@
+syntax = "proto3";
+
+package ignition.v1;
+
+option go_package = "ignition.dev/ignition/api/gen/ignition/v1;ignitionv1";
+
+import "google/protobuf/descriptor.proto";
+
+// HttpRule is Ignition's self-contained HTTP-mapping annotation for an RPC.
+// It encodes the same information that google.api.http would, without pulling
+// in the googleapis module. The protoc plugin protoc-gen-ignopenapi reads it
+// (extension field 50000) to generate api/openapi/v1.yaml from the proto, so
+// the REST surface is defined in exactly one place.
+message HttpRule {
+  // HTTP method: "GET", "POST", "PUT", "DELETE", or "PATCH".
+  string method = 1;
+  // REST path template, e.g. "/v1/projects/{project}/sandboxes/{sandbox}".
+  string path = 2;
+  // body names the request-message field mapped to the HTTP body. "*" maps the
+  // entire request message. An empty string means the request has no body.
+  string body = 3;
+  // HTTP success status code for the RPC. Defaults to 200 when unset. Async
+  // mutations that return an Operation use 202; the generator reads
+  // ServerStreaming off the method descriptor to emit SSE for watch RPCs.
+  int32 code = 4;
+}
+
+extend google.protobuf.MethodOptions {
+  // Field number is in buf's recommended user-extension range (>= 50000 and
+  // well below the google.api extension at 72295728) to avoid collisions.
+  HttpRule http = 50000;
+}

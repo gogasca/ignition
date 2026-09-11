@@ -4,6 +4,7 @@ package ignition.v1;
 
 option go_package = "ignition.dev/ignition/api/gen/ignition/v1;ignitionv1";
 
+import "ignition/v1/http.proto";
 import "google/protobuf/timestamp.proto";
 import "ignition/v1/common.proto";
 
@@ -44,17 +45,37 @@ enum OperationState {
 
 service OperationService {
   // GET /v1/projects/{project_id}/operations/{operation_id}
-  rpc GetOperation(GetOperationRequest) returns (Operation);
+  rpc GetOperation(GetOperationRequest) returns (Operation) {
+    option (ignition.v1.http) = {
+      method: "GET"
+      path: "/v1/projects/{project}/operations/{operation}"
+    };
+  };
 
   // GET /v1/projects/{project_id}/operations
-  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse);
+  rpc ListOperations(ListOperationsRequest) returns (ListOperationsResponse) {
+    option (ignition.v1.http) = {
+      method: "GET"
+      path: "/v1/projects/{project}/operations"
+    };
+  };
 
   // GET /v1/projects/{project_id}/operations/{operation_id}:watch
   // Server stream (SSE on the public HTTP API).
-  rpc WatchOperation(WatchOperationRequest) returns (stream Operation);
+  rpc WatchOperation(WatchOperationRequest) returns (stream Operation) {
+    option (ignition.v1.http) = {
+      method: "GET"
+      path: "/v1/projects/{project}/operations/{operation}:watch"
+    };
+  };
 
   // POST /v1/projects/{project_id}/operations/{operation_id}:cancel
-  rpc CancelOperation(CancelOperationRequest) returns (Operation);
+  rpc CancelOperation(CancelOperationRequest) returns (Operation) {
+    option (ignition.v1.http) = {
+      method: "POST"
+      path: "/v1/projects/{project}/operations/{operation}:cancel"
+    };
+  };
 }
 
 message GetOperationRequest {

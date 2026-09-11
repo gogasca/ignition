@@ -1,491 +1,1253 @@
+# This file is generated from api/proto/ignition/v1 by cmd/protoc-gen-ignopenapi.
+# Do not edit by hand: run `make api-generate` (or `buf generate` from api/proto).
+# Behavioral constraints not expressible in proto3 (required fields, numeric
+# ranges) live in docs/design/ignition-api-contract.md and are enforced by
+# the ignition-api implementation and its tests.
+
 openapi: 3.1.0
 info:
-  title: Ignition API
-  version: 0.1.0
-  description: >
-    HTTP/JSON view of api/proto/ignition/v1 (SandboxService + OperationService).
-    Process create/get/list/attach/signal/cancel are on SandboxService.
-    Exec bytes travel on ignition-gateway after AttachProcess.
-    Implemented behavior: docs/guides/ignition-implementation.md
-    Full v1 contract: docs/design/ignition-api-contract.md
+    title: Ignition API
+    version: 0.1.0
+    description: 'HTTP/JSON view of api/proto/ignition/v1 (SandboxService + OperationService). Process create/get/list/attach/signal/cancel are on SandboxService. Exec bytes travel on ignition-gateway after AttachProcess. Implemented behavior: docs/guides/ignition-implementation.md. Full v1 contract: docs/design/ignition-api-contract.md.'
 servers:
-  - url: https://api.ignition.dev
+    - url: https://api.ignition.dev
 security:
-  - bearerAuth: []
+    - bearerAuth: []
 paths:
-  /v1/me:
-    get:
-      operationId: getMe
-      summary: Echo the authenticated principal (subject, email, kind, domain).
-      responses:
-        "200": { description: The caller's identity. }
-        "401": { description: Missing or invalid credential. }
-  /v1/projects/{project}/sandboxes:
-    get:
-      operationId: listSandboxes
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - name: pageSize
-          in: query
-          schema: { type: integer }
-        - name: pageToken
-          in: query
-          schema: { type: string }
-      responses:
-        "200":
-          description: List sandboxes
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ListSandboxesResponse" }
-    post:
-      operationId: createSandbox
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateSandboxRequest"
-      responses:
-        "202":
-          description: Admission accepted; sandbox is CREATING.
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/CreateSandboxResponse"
-  /v1/projects/{project}/runtimes/default:
-    get:
-      operationId: getDefaultRuntime
-      description: >-
-        The system-managed default runtime. Its fields fill any RuntimeSpec
-        value a CreateSandbox request leaves unset. Read-only.
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-      responses:
-        "200":
-          description: Default runtime spec
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/RuntimeSpec" }
-  /v1/projects/{project}/sandboxes/{sandbox}:
-    get:
-      operationId: getSandbox
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/SandboxId"
-      responses:
-        "200":
-          description: Sandbox resource
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Sandbox" }
-  /v1/projects/{project}/sandboxes/{sandbox}:terminate:
-    post:
-      operationId: terminateSandbox
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/SandboxId"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      responses:
-        "202":
-          description: Termination accepted
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/CreateSandboxResponse" }
-  /v1/projects/{project}/sandboxes/{sandbox}:watch:
-    get:
-      operationId: watchSandbox
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/SandboxId"
-        - name: Last-Event-ID
-          in: header
-          schema: { type: string }
-      responses:
-        "200":
-          description: SSE stream of Sandbox snapshots
-  /v1/projects/{project}/sandboxes/{sandbox}/processes:
-    get:
-      operationId: listProcesses
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/SandboxId"
-        - name: pageSize
-          in: query
-          schema: { type: integer }
-        - name: pageToken
-          in: query
-          schema: { type: string }
-      responses:
-        "200":
-          description: List processes
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/ListProcessesResponse" }
-    post:
-      operationId: createProcess
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/SandboxId"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: "#/components/schemas/CreateProcessRequest"
-      responses:
-        "200":
-          description: Process resource (state CREATING or STARTING)
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Process"
-  /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:
-    get:
-      operationId: getProcess
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/SandboxId"
-        - $ref: "#/components/parameters/ProcessId"
-      responses:
-        "200":
-          description: Process resource
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/Process"
-  /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:attach:
-    post:
-      operationId: attachProcess
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/SandboxId"
-        - $ref: "#/components/parameters/ProcessId"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      responses:
-        "200":
-          description: Exec stream token for ignition-gateway
-          content:
-            application/json:
-              schema:
-                $ref: "#/components/schemas/AttachProcessResponse"
-  /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:signal:
-    post:
-      operationId: signalProcess
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/SandboxId"
-        - $ref: "#/components/parameters/ProcessId"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              type: object
-              required: [signal]
-              properties:
-                signal: { type: string }
-      responses:
-        "200":
-          description: Process resource after signal
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Process" }
-  /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:cancel:
-    post:
-      operationId: cancelProcess
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/SandboxId"
-        - $ref: "#/components/parameters/ProcessId"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      responses:
-        "200":
-          description: Process cancellation accepted
-          content:
-            application/json:
-              schema: { $ref: "#/components/schemas/Process" }
-  /v1/projects/{project}/operations:
-    get:
-      operationId: listOperations
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-      responses:
-        "200":
-          description: List operations
-  /v1/projects/{project}/operations/{operation}:
-    get:
-      operationId: getOperation
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/OperationId"
-      responses:
-        "200":
-          description: Operation resource
-  /v1/projects/{project}/operations/{operation}:watch:
-    get:
-      operationId: watchOperation
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/OperationId"
-        - name: Last-Event-ID
-          in: header
-          schema: { type: string }
-      responses:
-        "200":
-          description: SSE stream of Operation snapshots
-  /v1/projects/{project}/operations/{operation}:cancel:
-    post:
-      operationId: cancelOperation
-      parameters:
-        - $ref: "#/components/parameters/ProjectId"
-        - $ref: "#/components/parameters/OperationId"
-        - $ref: "#/components/parameters/IdempotencyKey"
-      responses:
-        "200":
-          description: Cancel accepted or already terminal
+    /v1/me:
+        get:
+            operationId: getMe
+            summary: GetMe
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Me'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/operations:
+        get:
+            operationId: listOperations
+            summary: ListOperations
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListOperationsResponse'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/operations/{operation}:
+        get:
+            operationId: getOperation
+            summary: GetOperation
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: operation
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Operation'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/operations/{operation}:cancel:
+        post:
+            operationId: cancelOperation
+            summary: CancelOperation
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: operation
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: Idempotency-Key
+                  in: header
+                  description: Opaque client-provided key for idempotent retries; required for all mutations.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Operation'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/operations/{operation}:watch:
+        get:
+            operationId: watchOperation
+            summary: WatchOperation
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: operation
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Server-sent event stream of resource snapshots.
+                    content:
+                        text/event-stream:
+                            schema:
+                                type: string
+                "401":
+                    description: UNAUTHENTICATED
+    /v1/projects/{project}/runtimes/default:
+        get:
+            operationId: getDefaultRuntime
+            summary: GetDefaultRuntime
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/RuntimeSpec'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/sandboxes:
+        get:
+            operationId: listSandboxes
+            summary: ListSandboxes
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListSandboxesResponse'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+        post:
+            operationId: createSandbox
+            summary: CreateSandbox
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: Idempotency-Key
+                  in: header
+                  description: Opaque client-provided key for idempotent retries; required for all mutations.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateSandboxRequest'
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/CreateSandboxResponse'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/sandboxes/{sandbox}:
+        get:
+            operationId: getSandbox
+            summary: GetSandbox
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: sandbox
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Sandbox'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/sandboxes/{sandbox}/processes:
+        get:
+            operationId: listProcesses
+            summary: ListProcesses
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: sandbox
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ListProcessesResponse'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+        post:
+            operationId: createProcess
+            summary: CreateProcess
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: sandbox
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: Idempotency-Key
+                  in: header
+                  description: Opaque client-provided key for idempotent retries; required for all mutations.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            $ref: '#/components/schemas/CreateProcessRequest'
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Process'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:
+        get:
+            operationId: getProcess
+            summary: GetProcess
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: sandbox
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: process
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Process'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:attach:
+        post:
+            operationId: attachProcess
+            summary: AttachProcess
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: sandbox
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: process
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: Idempotency-Key
+                  in: header
+                  description: Opaque client-provided key for idempotent retries; required for all mutations.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/AttachProcessResponse'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:cancel:
+        post:
+            operationId: cancelProcess
+            summary: CancelProcess
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: sandbox
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: process
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: Idempotency-Key
+                  in: header
+                  description: Opaque client-provided key for idempotent retries; required for all mutations.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Process'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:signal:
+        post:
+            operationId: signalProcess
+            summary: SignalProcess
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: sandbox
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: process
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: Idempotency-Key
+                  in: header
+                  description: Opaque client-provided key for idempotent retries; required for all mutations.
+                  required: true
+                  schema:
+                    type: string
+            requestBody:
+                required: true
+                content:
+                    application/json:
+                        schema:
+                            type: string
+            responses:
+                "200":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Process'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/sandboxes/{sandbox}:terminate:
+        post:
+            operationId: terminateSandbox
+            summary: TerminateSandbox
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: sandbox
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: Idempotency-Key
+                  in: header
+                  description: Opaque client-provided key for idempotent retries; required for all mutations.
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "202":
+                    description: OK
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/TerminateSandboxResponse'
+                "400":
+                    description: INVALID_ARGUMENT
+                "401":
+                    description: UNAUTHENTICATED
+                "403":
+                    description: PERMISSION_DENIED
+                "404":
+                    description: NOT_FOUND
+                "409":
+                    description: IDEMPOTENCY_KEY_REUSED / IDEMPOTENCY_IN_PROGRESS
+                "429":
+                    description: QUOTA_EXCEEDED / RATE_LIMITED
+                "503":
+                    description: CAPACITY_UNAVAILABLE / UNAVAILABLE
+    /v1/projects/{project}/sandboxes/{sandbox}:watch:
+        get:
+            operationId: watchSandbox
+            summary: WatchSandbox
+            parameters:
+                - name: project
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+                - name: sandbox
+                  in: path
+                  required: true
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Server-sent event stream of resource snapshots.
+                    content:
+                        text/event-stream:
+                            schema:
+                                type: string
+                "401":
+                    description: UNAUTHENTICATED
 components:
-  securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
-      bearerFormat: RFC 9068 JWT
-  parameters:
-    ProjectId:
-      name: project
-      in: path
-      required: true
-      schema: { type: string }
-    SandboxId:
-      name: sandbox
-      in: path
-      required: true
-      schema: { type: string }
-    OperationId:
-      name: operation
-      in: path
-      required: true
-      schema: { type: string }
-    ProcessId:
-      name: process
-      in: path
-      required: true
-      schema: { type: string }
-    IdempotencyKey:
-      name: Idempotency-Key
-      in: header
-      required: true
-      schema: { type: string, minLength: 1, maxLength: 128 }
-  schemas:
-    CreateSandboxRequest:
-      type: object
-      required: [imageId]
-      description: >-
-        resources, placement, timeouts, and network are optional. Any field
-        left unset is filled from the system default runtime
-        (GET /v1/projects/{project}/runtimes/default). The resolved RuntimeSpec
-        is snapshotted onto the sandbox.
-      properties:
-        name: { type: string }
-        imageId: { type: string }
-        command:
-          type: array
-          items: { type: string }
-          description: >-
-            Kubernetes container.command semantics. nativeEntrypoint=true: overrides
-            the image ENTRYPOINT. nativeEntrypoint=false (managed): append(command, args)
-            is the argv of the sandbox's main supervised process (surfaced as a Process),
-            run verbatim; omit it and the supervisor idles waiting for a process.
-        args:
-          type: array
-          items: { type: string }
-          description: >-
-            Kubernetes container.args semantics. nativeEntrypoint=true: overrides the
-            image CMD (image ENTRYPOINT still applies unless command is also set).
-            nativeEntrypoint=false: appended to command for the main process.
-        workingDirectory: { type: string }
-        nativeEntrypoint:
-          type: boolean
-          description: >-
-            Run the admitted image's own OCI Entrypoint/Cmd (with command/args
-            overriding them, Kubernetes-style) instead of Ignition's sandbox-init
-            supervisor. Set this for any image that does not embed sandbox-init.
-            Readiness then relies on the container reaching Running (no /readyz to
-            gate on), and exec/idle-tracking are unavailable for the sandbox.
-        resources: { $ref: "#/components/schemas/ResourceSpec" }
-        placement: { $ref: "#/components/schemas/PlacementSpec" }
-        timeouts: { $ref: "#/components/schemas/TimeoutSpec" }
-        network: { $ref: "#/components/schemas/NetworkSpec" }
-        secretRefs:
-          type: array
-          items:
+    securitySchemes:
+        bearerAuth:
+            bearerFormat: RFC 9068 JWT
+            scheme: bearer
+            type: http
+    parameters:
+        IdempotencyKey:
+            name: Idempotency-Key
+            in: header
+            description: Opaque client-provided key for idempotent retries; required for all mutations.
+            required: true
+            schema:
+                type: string
+        OperationId:
+            name: operation
+            in: path
+            required: true
+            schema:
+                type: string
+        ProcessId:
+            name: process
+            in: path
+            required: true
+            schema:
+                type: string
+        ProjectId:
+            name: project
+            in: path
+            required: true
+            schema:
+                type: string
+        SandboxId:
+            name: sandbox
+            in: path
+            required: true
+            schema:
+                type: string
+    schemas:
+        AcceleratorSpec:
             type: object
-            required: [secretId, environmentName]
             properties:
-              secretId: { type: string }
-              version: { type: string }
-              environmentName: { type: string }
-        labels:
-          type: object
-          additionalProperties: { type: string }
-    CreateSandboxResponse:
-      type: object
-      required: [sandbox, operation]
-      properties:
-        sandbox:
-          $ref: "#/components/schemas/Sandbox"
-        operation:
-          $ref: "#/components/schemas/Operation"
-    ResourceSpec:
-      type: object
-      properties:
-        cpuMilli: { type: integer, minimum: 1, maximum: 8000 }
-        memoryMiB: { type: integer, minimum: 1, maximum: 32768 }
-        accelerator:
-          type: object
-          properties:
-            type:
-              type: string
-              enum: [NONE, NVIDIA_L4]
-              description: >-
-                Public JSON of proto AcceleratorType (ACCELERATOR_TYPE_ prefix
-                stripped). NONE is a CPU-only sandbox.
-            count:
-              type: integer
-              description: NONE requires 0; NVIDIA_L4 requires 1.
-    TimeoutSpec:
-      type: object
-      properties:
-        startupSeconds: { type: integer, minimum: 1, maximum: 600 }
-        maximumRuntimeSeconds: { type: integer, minimum: 1, maximum: 86400 }
-        idleSeconds: { type: integer, minimum: 1, maximum: 3600 }
-        terminationGraceSeconds: { type: integer, minimum: 1, maximum: 120 }
-    RuntimeSpec:
-      type: object
-      description: >-
-        A sandbox's run configuration. Returned by GetDefaultRuntime; its fields
-        fill any value a CreateSandbox request leaves unset.
-      properties:
-        resources: { $ref: "#/components/schemas/ResourceSpec" }
-        placement: { $ref: "#/components/schemas/PlacementSpec" }
-        timeouts: { $ref: "#/components/schemas/TimeoutSpec" }
-        network: { $ref: "#/components/schemas/NetworkSpec" }
-    NetworkSpec:
-      type: object
-      properties:
-        internetAccess:
-          type: string
-          enum: [DISABLED, ENABLED]
-          default: DISABLED
-          description: Controls outbound public internet access. It does not enable inbound access or access to private control networks.
-    PlacementSpec:
-      type: object
-      properties:
-        region:
-          type: string
-        computeEnvironment:
-          type: string
-          enum: [STANDARD, BARE_METAL]
-          default: STANDARD
-          description: STANDARD uses the managed Ignition sandbox service. BARE_METAL requires a dedicated Compute Engine bare-metal backend.
-    Sandbox:
-      type: object
-      required: [id, projectId, state, imageId, resources]
-      properties:
-        id: { type: string }
-        projectId: { type: string }
-        name: { type: string }
-        state: { type: string, enum: [CREATING, SCHEDULED, STARTED, READY, TERMINATING, FINISHED, FAILED] }
-        stateReason: { type: string }
-        imageId: { type: string }
-        operationId: { type: string }
-        createTime: { type: string, format: date-time }
-        readyTime: { type: [string, "null"], format: date-time }
-        finishTime: { type: [string, "null"], format: date-time }
-        resources: { $ref: "#/components/schemas/ResourceSpec" }
-        placement: { $ref: "#/components/schemas/PlacementSpec" }
-        timeouts: { $ref: "#/components/schemas/TimeoutSpec" }
-        network: { $ref: "#/components/schemas/NetworkSpec" }
-        labels: { type: object, additionalProperties: { type: string } }
-        command: { type: array, items: { type: string } }
-        args: { type: array, items: { type: string } }
-        workingDirectory: { type: string }
-        nativeEntrypoint: { type: boolean }
-    Operation:
-      type: object
-      required: [id, projectId, kind, state, resourceId, createTime]
-      properties:
-        id: { type: string }
-        projectId: { type: string }
-        kind: { type: string }
-        state: { type: string, enum: [PENDING, RUNNING, SUCCEEDED, FAILED, CANCELLED] }
-        resourceId: { type: string }
-        createTime: { type: string, format: date-time }
-        startTime: { type: [string, "null"], format: date-time }
-        endTime: { type: [string, "null"], format: date-time }
-        traceId: { type: string }
-        progressMessage: { type: string }
-    Status:
-      type: object
-      required: [code, message, requestId, retryable]
-      properties:
-        code: { type: string }
-        message: { type: string }
-        requestId: { type: string }
-        retryable: { type: boolean }
-        retryAfterSeconds: { type: integer, minimum: 0 }
-    ListSandboxesResponse:
-      type: object
-      required: [sandboxes]
-      properties:
-        sandboxes: { type: array, items: { $ref: "#/components/schemas/Sandbox" } }
-        nextPageToken: { type: string }
-    ListProcessesResponse:
-      type: object
-      required: [processes]
-      properties:
-        processes: { type: array, items: { $ref: "#/components/schemas/Process" } }
-    Process:
-      type: object
-      properties:
-        id: { type: string }
-        projectId: { type: string }
-        sandboxId: { type: string }
-        state:
-          type: string
-          enum: [CREATING, STARTING, RUNNING, CANCELLING, EXITED, FAILED]
-        command:
-          type: array
-          items: { type: string }
-        workingDirectory: { type: string }
-        pty: { type: boolean }
-        ptyRows: { type: integer }
-        ptyCols: { type: integer }
-        exitCode: { type: integer }
-        terminatingSignal: { type: string }
-    CreateProcessRequest:
-      type: object
-      required: [command]
-      properties:
-        command:
-          type: array
-          items: { type: string }
-        workingDirectory: { type: string }
-        environment:
-          type: object
-          additionalProperties: { type: string }
-        pty: { type: boolean }
-        ptyRows: { type: integer, minimum: 0, maximum: 1000, description: "Initial PTY rows; requires pty: true." }
-        ptyCols: { type: integer, minimum: 0, maximum: 1000, description: "Initial PTY columns; requires pty: true." }
-    AttachProcessResponse:
-      type: object
-      required: [streamToken, gatewayUrl]
-      properties:
-        streamToken: { type: string }
-        gatewayUrl: { type: string }
-        expireTime: { type: string, format: date-time }
-        streamEpoch: { type: integer, format: int64 }
+                count:
+                    type: integer
+                type:
+                    type: string
+                    enum:
+                        - NONE
+                        - NVIDIA_L4
+        AttachProcessRequest:
+            type: object
+            properties:
+                processId:
+                    type: string
+                projectId:
+                    type: string
+                sandboxId:
+                    type: string
+        AttachProcessResponse:
+            type: object
+            properties:
+                expireTime:
+                    type: [string, null]
+                    format: date-time
+                gatewayUrl:
+                    type: string
+                streamEpoch:
+                    type: integer
+                streamToken:
+                    type: string
+        CancelOperationRequest:
+            type: object
+            properties:
+                operationId:
+                    type: string
+                projectId:
+                    type: string
+        CancelProcessRequest:
+            type: object
+            properties:
+                processId:
+                    type: string
+                projectId:
+                    type: string
+                sandboxId:
+                    type: string
+        CreateProcessRequest:
+            type: object
+            properties:
+                command:
+                    type: array
+                    items:
+                        type: string
+                environment:
+                    type: object
+                    additionalProperties:
+                        type: string
+                projectId:
+                    type: string
+                pty:
+                    type: boolean
+                ptyCols:
+                    type: integer
+                ptyRows:
+                    type: integer
+                sandboxId:
+                    type: string
+                workingDirectory:
+                    type: string
+        CreateSandboxRequest:
+            type: object
+            properties:
+                args:
+                    type: array
+                    items:
+                        type: string
+                command:
+                    type: array
+                    items:
+                        type: string
+                imageId:
+                    type: string
+                labels:
+                    type: object
+                    additionalProperties:
+                        type: string
+                name:
+                    type: string
+                nativeEntrypoint:
+                    type: boolean
+                network:
+                    $ref: '#/components/schemas/NetworkSpec'
+                placement:
+                    $ref: '#/components/schemas/PlacementSpec'
+                projectId:
+                    type: string
+                resources:
+                    $ref: '#/components/schemas/ResourceSpec'
+                secretRefs:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/SecretRef'
+                timeouts:
+                    $ref: '#/components/schemas/TimeoutSpec'
+                workingDirectory:
+                    type: string
+        CreateSandboxResponse:
+            type: object
+            properties:
+                operation:
+                    $ref: '#/components/schemas/Operation'
+                sandbox:
+                    $ref: '#/components/schemas/Sandbox'
+        ExecFrame:
+            type: object
+            properties:
+                ackThrough:
+                    type: integer
+                byteEnd:
+                    type: integer
+                byteStart:
+                    type: integer
+                channel:
+                    type: string
+                    enum:
+                        - STDIN
+                        - STDOUT
+                        - STDERR
+                        - CONTROL
+                exitCode:
+                    type: integer
+                generation:
+                    type: integer
+                kind:
+                    type: string
+                    enum:
+                        - DATA
+                        - ACK
+                        - EOF
+                        - EXIT
+                        - TRUNCATED
+                        - GAP
+                        - RESIZE_PTY
+                        - SIGNAL
+                        - HEARTBEAT
+                        - ERROR
+                payload:
+                    type: string
+                    format: byte
+                processId:
+                    type: string
+                reason:
+                    type: string
+                sandboxId:
+                    type: string
+                signal:
+                    type: string
+                streamEpoch:
+                    type: integer
+                version:
+                    type: integer
+        GetDefaultRuntimeRequest:
+            type: object
+            properties:
+                projectId:
+                    type: string
+        GetMeRequest:
+            type: object
+        GetOperationRequest:
+            type: object
+            properties:
+                operationId:
+                    type: string
+                projectId:
+                    type: string
+        GetProcessRequest:
+            type: object
+            properties:
+                processId:
+                    type: string
+                projectId:
+                    type: string
+                sandboxId:
+                    type: string
+        GetSandboxRequest:
+            type: object
+            properties:
+                projectId:
+                    type: string
+                sandboxId:
+                    type: string
+        LifecycleTimestamps:
+            type: object
+            properties:
+                createTime:
+                    type: [string, null]
+                    format: date-time
+                deleteTime:
+                    type: [string, null]
+                    format: date-time
+                updateTime:
+                    type: [string, null]
+                    format: date-time
+        ListOperationsRequest:
+            type: object
+            properties:
+                filter:
+                    type: string
+                page:
+                    $ref: '#/components/schemas/PageRequest'
+                projectId:
+                    type: string
+        ListOperationsResponse:
+            type: object
+            properties:
+                operations:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Operation'
+                page:
+                    $ref: '#/components/schemas/PageResponse'
+        ListProcessesRequest:
+            type: object
+            properties:
+                page:
+                    $ref: '#/components/schemas/PageRequest'
+                projectId:
+                    type: string
+                sandboxId:
+                    type: string
+        ListProcessesResponse:
+            type: object
+            properties:
+                page:
+                    $ref: '#/components/schemas/PageResponse'
+                processes:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Process'
+        ListSandboxesRequest:
+            type: object
+            properties:
+                filter:
+                    type: string
+                page:
+                    $ref: '#/components/schemas/PageRequest'
+                projectId:
+                    type: string
+        ListSandboxesResponse:
+            type: object
+            properties:
+                page:
+                    $ref: '#/components/schemas/PageResponse'
+                sandboxes:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/Sandbox'
+        Me:
+            type: object
+            properties:
+                domain:
+                    type: string
+                email:
+                    type: string
+                kind:
+                    type: string
+                subject:
+                    type: string
+        NetworkSpec:
+            type: object
+            properties:
+                internetAccess:
+                    type: string
+                    enum:
+                        - DISABLED
+                        - ENABLED
+        Operation:
+            type: object
+            properties:
+                createTime:
+                    type: [string, null]
+                    format: date-time
+                endTime:
+                    type: [string, null]
+                    format: date-time
+                error:
+                    $ref: '#/components/schemas/Status'
+                id:
+                    type: string
+                kind:
+                    type: string
+                    enum:
+                        - CREATE_SANDBOX
+                        - TERMINATE_SANDBOX
+                        - IMPORT_IMAGE
+                        - ROTATE_SECRET
+                        - DELETE_SECRET
+                progressMessage:
+                    type: string
+                projectId:
+                    type: string
+                resourceId:
+                    type: string
+                startTime:
+                    type: [string, null]
+                    format: date-time
+                state:
+                    type: string
+                    enum:
+                        - PENDING
+                        - RUNNING
+                        - SUCCEEDED
+                        - FAILED
+                        - CANCELLED
+                traceId:
+                    type: string
+        PageRequest:
+            type: object
+            properties:
+                pageSize:
+                    type: integer
+                pageToken:
+                    type: string
+        PageResponse:
+            type: object
+            properties:
+                nextPageToken:
+                    type: string
+        PlacementSpec:
+            type: object
+            properties:
+                computeEnvironment:
+                    type: string
+                    enum:
+                        - STANDARD
+                        - BARE_METAL
+                region:
+                    type: string
+        Process:
+            type: object
+            properties:
+                command:
+                    type: array
+                    items:
+                        type: string
+                createTime:
+                    type: [string, null]
+                    format: date-time
+                environment:
+                    type: object
+                    additionalProperties:
+                        type: string
+                error:
+                    $ref: '#/components/schemas/Status'
+                exitCode:
+                    type: integer
+                exitTime:
+                    type: [string, null]
+                    format: date-time
+                id:
+                    type: string
+                projectId:
+                    type: string
+                pty:
+                    type: boolean
+                ptyCols:
+                    type: integer
+                ptyRows:
+                    type: integer
+                sandboxId:
+                    type: string
+                startTime:
+                    type: [string, null]
+                    format: date-time
+                state:
+                    type: string
+                    enum:
+                        - CREATING
+                        - STARTING
+                        - RUNNING
+                        - CANCELLING
+                        - EXITED
+                        - FAILED
+                terminatingSignal:
+                    type: string
+                workingDirectory:
+                    type: string
+        ResourceSpec:
+            type: object
+            properties:
+                accelerator:
+                    $ref: '#/components/schemas/AcceleratorSpec'
+                cpuMilli:
+                    type: integer
+                memoryMib:
+                    type: integer
+        RuntimeSpec:
+            type: object
+            properties:
+                network:
+                    $ref: '#/components/schemas/NetworkSpec'
+                placement:
+                    $ref: '#/components/schemas/PlacementSpec'
+                resources:
+                    $ref: '#/components/schemas/ResourceSpec'
+                timeouts:
+                    $ref: '#/components/schemas/TimeoutSpec'
+        Sandbox:
+            type: object
+            properties:
+                args:
+                    type: array
+                    items:
+                        type: string
+                command:
+                    type: array
+                    items:
+                        type: string
+                createTime:
+                    type: [string, null]
+                    format: date-time
+                error:
+                    $ref: '#/components/schemas/Status'
+                finishTime:
+                    type: [string, null]
+                    format: date-time
+                id:
+                    type: string
+                imageId:
+                    type: string
+                labels:
+                    type: object
+                    additionalProperties:
+                        type: string
+                name:
+                    type: string
+                nativeEntrypoint:
+                    type: boolean
+                network:
+                    $ref: '#/components/schemas/NetworkSpec'
+                operationId:
+                    type: string
+                placement:
+                    $ref: '#/components/schemas/PlacementSpec'
+                projectId:
+                    type: string
+                readyTime:
+                    type: [string, null]
+                    format: date-time
+                resources:
+                    $ref: '#/components/schemas/ResourceSpec'
+                state:
+                    type: string
+                    enum:
+                        - CREATING
+                        - SCHEDULED
+                        - STARTED
+                        - READY
+                        - TERMINATING
+                        - FINISHED
+                        - FAILED
+                stateReason:
+                    type: string
+                timeouts:
+                    $ref: '#/components/schemas/TimeoutSpec'
+                workingDirectory:
+                    type: string
+        SecretRef:
+            type: object
+            properties:
+                environmentName:
+                    type: string
+                secretId:
+                    type: string
+                version:
+                    type: string
+        SignalProcessRequest:
+            type: object
+            properties:
+                processId:
+                    type: string
+                projectId:
+                    type: string
+                sandboxId:
+                    type: string
+                signal:
+                    type: string
+        Status:
+            type: object
+            properties:
+                code:
+                    type: string
+                    enum:
+                        - INVALID_ARGUMENT
+                        - UNAUTHENTICATED
+                        - PERMISSION_DENIED
+                        - NOT_FOUND
+                        - IDEMPOTENCY_KEY_REUSED
+                        - IDEMPOTENCY_IN_PROGRESS
+                        - IMAGE_NOT_READY
+                        - WORKLOAD_NOT_SUPPORTED
+                        - QUOTA_EXCEEDED
+                        - RATE_LIMITED
+                        - CAPACITY_UNAVAILABLE
+                        - UNAVAILABLE
+                        - FAILED_PRECONDITION
+                        - ABORTED
+                        - DEADLINE_EXCEEDED
+                details:
+                    type: [object, null]
+                    additionalProperties: {}
+                message:
+                    type: string
+                requestId:
+                    type: string
+                retryAfterSeconds:
+                    type: integer
+                retryable:
+                    type: boolean
+        TerminateSandboxRequest:
+            type: object
+            properties:
+                projectId:
+                    type: string
+                sandboxId:
+                    type: string
+        TerminateSandboxResponse:
+            type: object
+            properties:
+                operation:
+                    $ref: '#/components/schemas/Operation'
+                sandbox:
+                    $ref: '#/components/schemas/Sandbox'
+        TimeoutSpec:
+            type: object
+            properties:
+                idleSeconds:
+                    type: integer
+                maximumRuntimeSeconds:
+                    type: integer
+                startupSeconds:
+                    type: integer
+                terminationGraceSeconds:
+                    type: integer
+        WatchOperationRequest:
+            type: object
+            properties:
+                lastEventId:
+                    type: string
+                operationId:
+                    type: string
+                projectId:
+                    type: string
+        WatchSandboxRequest:
+            type: object
+            properties:
+                lastEventId:
+                    type: string
+                projectId:
+                    type: string
+                sandboxId:
+                    type: string
