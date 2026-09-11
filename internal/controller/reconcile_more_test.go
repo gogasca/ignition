@@ -17,13 +17,15 @@ func TestStartupTimeoutAfterScheduled(t *testing.T) {
 	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
 	c := controller.New(m, fake, fake, controller.Options{Now: func() time.Time { return now }})
 	sb := store.Sandbox{
-		ID:         "sbx_timeoutsched0000001",
-		ProjectID:  "prj_dev",
-		State:      "SCHEDULED",
-		ImageID:    "img_seed",
+		ID:        "sbx_timeoutsched0000001",
+		ProjectID: "prj_dev",
+		State:     "SCHEDULED",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 30},
+			Resources: store.ResourceSpec{CPUMilli: 1, MemoryMiB: 1},
+		},
 		CreateTime: now.Add(-2 * time.Minute),
-		Timeouts:   store.TimeoutSpec{StartupSeconds: 30},
-		Resources:  store.ResourceSpec{CPUMilli: 1, MemoryMiB: 1},
 	}
 	m.SeedSandbox(sb)
 	spec := k8s.SandboxPod(sb, "img")
@@ -206,10 +208,15 @@ func TestSecretEnvInjectedAtPodCreate(t *testing.T) {
 	m.SeedImage("prj_dev", "img_seed")
 	m.SeedSecret("prj_dev", "sec_token")
 	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
-		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
-		ImageID:    "img_seed",
-		Resources:  store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
-		Timeouts:   store.TimeoutSpec{StartupSeconds: 120},
+		ProjectID: "prj_dev",
+		Principal: "alice",
+		IdemKey:   t.Name(),
+		IdemHash:  t.Name(),
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		},
 		SecretRefs: []store.SecretRef{{SecretID: "sec_token", EnvironmentName: "MODEL_TOKEN"}},
 		MaxActive:  10,
 	})
@@ -239,10 +246,15 @@ func TestMissingSecretFailsWithoutPod(t *testing.T) {
 	// distinct from the project-registration check in store.CreateSandbox.
 	m.SeedSecret("prj_dev", "missing")
 	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
-		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
-		ImageID:    "img_seed",
-		Resources:  store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
-		Timeouts:   store.TimeoutSpec{StartupSeconds: 120},
+		ProjectID: "prj_dev",
+		Principal: "alice",
+		IdemKey:   t.Name(),
+		IdemHash:  t.Name(),
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		},
 		SecretRefs: []store.SecretRef{{SecretID: "missing", EnvironmentName: "TOKEN"}},
 		MaxActive:  10,
 	})
@@ -291,15 +303,17 @@ func admitWithMain(t *testing.T, m *store.Memory) store.CreateSandboxResult {
 	t.Helper()
 	m.SeedImage("prj_dev", "img_seed")
 	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
-		ProjectID:   "prj_dev",
-		Principal:   "alice",
-		IdemKey:     t.Name(),
-		IdemHash:    t.Name(),
-		ImageID:     "img_seed",
-		Command:     []string{"sleep", "1"},
+		ProjectID: "prj_dev",
+		Principal: "alice",
+		IdemKey:   t.Name(),
+		IdemHash:  t.Name(),
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Command:   []string{"sleep", "1"},
+			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 30},
+		},
 		MainCommand: []string{"sleep", "1"},
-		Resources:   store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
-		Timeouts:    store.TimeoutSpec{StartupSeconds: 30},
 		MaxActive:   10,
 	})
 	if err != nil {

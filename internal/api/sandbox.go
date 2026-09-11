@@ -51,31 +51,21 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hash := canonicalHash(r.Method, r.URL.Path, raw)
-	res, err := s.store.CreateSandbox(r.Context(), store.CreateSandboxInput{
-		ProjectID:        project,
-		Principal:        s.principal(r.Context()).Subject,
-		IdemKey:          key,
-		IdemHash:         hash,
-		Name:             in.Name,
-		ImageID:          in.ImageID,
-		Command:          in.Command,
-		Args:             in.Args,
-		MainCommand:      in.MainCommand,
-		WorkingDir:       in.WorkingDir,
-		NativeEntrypoint: in.NativeEntrypoint,
-		Environment:      in.Environment,
-		Resources:        in.Resources,
-		Placement:        in.Placement,
-		Timeouts:         in.Timeouts,
-		Network:          in.Network,
-		Labels:           in.Labels,
-		SecretRefs:       in.SecretRefs,
-		TraceID:          rid,
-		MaxActive:        s.cfg.MaxActiveSandboxes,
-		Admit: func(_ context.Context, img store.Image) error {
-			return admitEagerPull(img, in.Timeouts.StartupSeconds, in.ImageID, s.cfg.AssumedEagerPullMBps)
-		},
-	})
+	// in is already a fully-populated store.CreateSandboxInput (parseCreate's
+	// return type): fill in the request-scoped fields parseCreate can't know
+	// about rather than rebuilding a second, parallel literal from its
+	// fields — that second literal is exactly the shape of bug that slipped
+	// the environment field through only partially in an earlier change.
+	in.ProjectID = project
+	in.Principal = s.principal(r.Context()).Subject
+	in.IdemKey = key
+	in.IdemHash = hash
+	in.TraceID = rid
+	in.MaxActive = s.cfg.MaxActiveSandboxes
+	in.Admit = func(_ context.Context, img store.Image) error {
+		return admitEagerPull(img, in.Timeouts.StartupSeconds, in.ImageID, s.cfg.AssumedEagerPullMBps)
+	}
+	res, err := s.store.CreateSandbox(r.Context(), in)
 	if err != nil {
 		writeStoreError(w, rid, err)
 		return
@@ -216,20 +206,22 @@ func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 	}
 
 	return store.CreateSandboxInput{
-		Name:             body.Name,
-		ImageID:          body.ImageID,
-		Command:          body.Command,
-		Args:             body.Args,
-		MainCommand:      mainCommand,
-		WorkingDir:       body.WorkingDirectory,
-		NativeEntrypoint: body.NativeEntrypoint,
-		Environment:      body.Environment,
-		Resources:        rt.Resources,
-		Placement:        rt.Placement,
-		Timeouts:         rt.Timeouts,
-		Network:          rt.Network,
-		Labels:           body.Labels,
-		SecretRefs:       body.SecretRefs,
+		Name: body.Name,
+		SandboxSpec: store.SandboxSpec{
+			ImageID:          body.ImageID,
+			Command:          body.Command,
+			Args:             body.Args,
+			WorkingDir:       body.WorkingDirectory,
+			NativeEntrypoint: body.NativeEntrypoint,
+			Environment:      body.Environment,
+			Resources:        rt.Resources,
+			Placement:        rt.Placement,
+			Timeouts:         rt.Timeouts,
+			Network:          rt.Network,
+			Labels:           body.Labels,
+		},
+		MainCommand: mainCommand,
+		SecretRefs:  body.SecretRefs,
 	}, nil
 }
 

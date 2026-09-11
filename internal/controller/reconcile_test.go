@@ -25,10 +25,12 @@ func admit(t *testing.T, m *store.Memory, timeouts store.TimeoutSpec) store.Crea
 		Principal: "alice",
 		IdemKey:   t.Name(),
 		IdemHash:  t.Name(),
-		ImageID:   "img_seed",
-		Command:   []string{"sleep", "1"},
-		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
-		Timeouts:  timeouts,
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Command:   []string{"sleep", "1"},
+			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+			Timeouts:  timeouts,
+		},
 		MaxActive: 10,
 	})
 	if err != nil {
@@ -80,10 +82,12 @@ func TestBareMetalFailsWithoutFallingBackToGKE(t *testing.T) {
 		Principal: "alice",
 		IdemKey:   t.Name(),
 		IdemHash:  t.Name(),
-		ImageID:   "img_seed",
-		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
-		Placement: store.PlacementSpec{ComputeEnvironment: store.ComputeEnvironmentBareMetal},
-		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+			Placement: store.PlacementSpec{ComputeEnvironment: store.ComputeEnvironmentBareMetal},
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		},
 		MaxActive: 10,
 	})
 	if err != nil {
@@ -111,9 +115,11 @@ func TestCPUSandboxSchedulesAndReachesReady(t *testing.T) {
 		Principal: "alice",
 		IdemKey:   t.Name(),
 		IdemHash:  t.Name(),
-		ImageID:   "img_seed",
-		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
-		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		},
 		MaxActive: 10,
 	})
 	if err != nil {
@@ -156,10 +162,15 @@ func TestUnknownAcceleratorFailsClosed(t *testing.T) {
 	c := controller.New(m, fake, fake, controller.Options{})
 	m.SeedImage("prj_dev", "img_seed")
 	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
-		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
-		ImageID:   "img_seed",
-		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: "TPU_V5E"}},
-		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		ProjectID: "prj_dev",
+		Principal: "alice",
+		IdemKey:   t.Name(),
+		IdemHash:  t.Name(),
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: "TPU_V5E"}},
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		},
 		MaxActive: 10,
 	})
 	if err != nil {
@@ -302,13 +313,15 @@ func TestStartupTimeoutUnschedulable(t *testing.T) {
 	now := time.Date(2026, 8, 27, 12, 0, 0, 0, time.UTC)
 	c := controller.New(m, fake, fake, controller.Options{Now: func() time.Time { return now }})
 	m.SeedSandbox(store.Sandbox{
-		ID:         "sbx_timeout0000000001",
-		ProjectID:  "prj_dev",
-		State:      "CREATING",
-		ImageID:    "img_seed",
+		ID:        "sbx_timeout0000000001",
+		ProjectID: "prj_dev",
+		State:     "CREATING",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 30},
+			Resources: store.ResourceSpec{CPUMilli: 1, MemoryMiB: 1},
+		},
 		CreateTime: now.Add(-2 * time.Minute),
-		Timeouts:   store.TimeoutSpec{StartupSeconds: 30},
-		Resources:  store.ResourceSpec{CPUMilli: 1, MemoryMiB: 1},
 	})
 	if err := c.Reconcile(context.Background()); err != nil {
 		t.Fatal(err)
@@ -450,10 +463,15 @@ func TestCPUTeardownDoesNotTaintNode(t *testing.T) {
 	m.SeedImage("prj_dev", "img_seed")
 	ctx := context.Background()
 	res, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: "prj_dev", Principal: "alice", IdemKey: "cpu", IdemHash: "cpu",
-		ImageID:   "img_seed",
-		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
-		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		ProjectID: "prj_dev",
+		Principal: "alice",
+		IdemKey:   "cpu",
+		IdemHash:  "cpu",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		},
 		MaxActive: 10,
 	})
 	if err != nil {
@@ -528,10 +546,15 @@ func TestReconcileStopsMutatingOnMidPassLeaseLoss(t *testing.T) {
 	for i := 0; i < total; i++ {
 		key := fmt.Sprintf("k%d", i)
 		if _, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
-			ProjectID: "prj_dev", Principal: "alice", IdemKey: key, IdemHash: key,
-			ImageID:   "img_seed",
-			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
-			Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+			ProjectID: "prj_dev",
+			Principal: "alice",
+			IdemKey:   key,
+			IdemHash:  key,
+			SandboxSpec: store.SandboxSpec{
+				ImageID:   "img_seed",
+				Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+				Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+			},
 			MaxActive: total,
 		}); err != nil {
 			t.Fatal(err)
@@ -801,10 +824,15 @@ func TestCPUSupervisorBackedKubeReadyIsPublicReady(t *testing.T) {
 	c := controller.New(m, fake, fake, controller.Options{})
 	m.SeedImage("prj_dev", "img_seed")
 	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
-		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
-		ImageID:   "img_seed",
-		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
-		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		ProjectID: "prj_dev",
+		Principal: "alice",
+		IdemKey:   t.Name(),
+		IdemHash:  t.Name(),
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		},
 		MaxActive: 10,
 	})
 	if err != nil {
@@ -832,12 +860,17 @@ func TestCPUNativeEntrypointKubeReadyIsPublicReady(t *testing.T) {
 	c := controller.New(m, fake, fake, controller.Options{})
 	m.SeedImage("prj_dev", "img_seed")
 	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
-		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
-		ImageID:          "img_seed",
-		NativeEntrypoint: true,
-		Resources:        store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
-		Timeouts:         store.TimeoutSpec{StartupSeconds: 120},
-		MaxActive:        10,
+		ProjectID: "prj_dev",
+		Principal: "alice",
+		IdemKey:   t.Name(),
+		IdemHash:  t.Name(),
+		SandboxSpec: store.SandboxSpec{
+			ImageID:          "img_seed",
+			NativeEntrypoint: true,
+			Resources:        store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+			Timeouts:         store.TimeoutSpec{StartupSeconds: 120},
+		},
+		MaxActive: 10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -958,10 +991,15 @@ func TestResolveImagePrefersCatalogDigest(t *testing.T) {
 		t.Fatal(err)
 	}
 	res, err := m.CreateSandbox(context.Background(), store.CreateSandboxInput{
-		ProjectID: "prj_dev", Principal: "alice", IdemKey: t.Name(), IdemHash: t.Name(),
-		ImageID:   "img_pinned",
-		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
-		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		ProjectID: "prj_dev",
+		Principal: "alice",
+		IdemKey:   t.Name(),
+		IdemHash:  t.Name(),
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_pinned",
+			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		},
 		MaxActive: 10,
 	})
 	if err != nil {
@@ -989,9 +1027,11 @@ func TestInvalidImageIDDoesNotCreatePod(t *testing.T) {
 		Principal: "alice",
 		IdemKey:   t.Name(),
 		IdemHash:  t.Name(),
-		ImageID:   "evil/../other",
-		Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
-		Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "evil/../other",
+			Resources: store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Count: 1, Type: store.AcceleratorNVIDIAL4}},
+			Timeouts:  store.TimeoutSpec{StartupSeconds: 120},
+		},
 		MaxActive: 10,
 	})
 	if err != nil {

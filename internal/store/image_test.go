@@ -113,8 +113,15 @@ func TestMemoryLaunchCountIncrementsOnlyOnSuccessfulCreateSandbox(t *testing.T) 
 	m.SeedImage("prj_dev", "img_a")
 	in := func(key string) store.CreateSandboxInput {
 		return store.CreateSandboxInput{
-			ProjectID: "prj_dev", Principal: "alice", IdemKey: key, IdemHash: key,
-			ImageID: "img_a", Resources: spec(), MaxActive: 10,
+			ProjectID: "prj_dev",
+			Principal: "alice",
+			IdemKey:   key,
+			IdemHash:  key,
+			SandboxSpec: store.SandboxSpec{
+				ImageID:   "img_a",
+				Resources: spec(),
+			},
+			MaxActive: 10,
 		}
 	}
 	if _, err := m.CreateSandbox(ctx, in("k1")); err != nil {
@@ -149,8 +156,15 @@ func TestMemoryTopImagesByLaunchCount(t *testing.T) {
 		for i := 0; i < n; i++ {
 			key := projectID + "-" + imageID + "-" + string(rune('a'+i))
 			if _, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-				ProjectID: projectID, Principal: "alice", IdemKey: key, IdemHash: key,
-				ImageID: imageID, Resources: spec(), MaxActive: 100,
+				ProjectID: projectID,
+				Principal: "alice",
+				IdemKey:   key,
+				IdemHash:  key,
+				SandboxSpec: store.SandboxSpec{
+					ImageID:   imageID,
+					Resources: spec(),
+				},
+				MaxActive: 100,
 			}); err != nil {
 				t.Fatal(err)
 			}

@@ -5,19 +5,20 @@ import (
 	"time"
 )
 
-type Sandbox struct {
-	ID          string     `json:"id"`
-	ProjectID   string     `json:"projectId"`
-	Name        string     `json:"name,omitempty"`
-	State       string     `json:"state"`
-	StateReason string     `json:"stateReason,omitempty"`
-	ImageID     string     `json:"imageId"`
-	OperationID string     `json:"operationId,omitempty"`
-	Generation  int64      `json:"-"`
-	CreateTime  time.Time  `json:"createTime"`
-	ReadyTime   *time.Time `json:"readyTime,omitempty"`
-	FinishTime  *time.Time `json:"finishTime,omitempty"`
-	CreatedBy   string     `json:"-"`
+// SandboxSpec is a sandbox's run configuration: the image plus everything
+// CreateSandbox accepts to shape it (command, resources, placement, timeouts,
+// network, labels, env). It is embedded, unchanged, by both Sandbox (the
+// resource, where it holds the resolved snapshot — defaults merged in — for
+// an existing sandbox) and CreateSandboxInput (the request, where every field
+// is optional and merged over the project's default runtime by the API layer
+// before the input is built). Declaring it once and embedding it means a new
+// spec field is added — and threaded through the API/store/k8s wiring — in
+// exactly one place instead of being kept in sync by hand across two parallel
+// struct definitions; see the proto's Sandbox/CreateSandboxRequest field
+// comments for why the wire messages themselves stay flat (JSON
+// wire-compatibility) even though the Go types no longer are.
+type SandboxSpec struct {
+	ImageID string `json:"imageId"`
 	// Command and Args follow Kubernetes container semantics.
 	//   nativeEntrypoint=true : Command -> container.command (overrides the
 	//     image ENTRYPOINT), Args -> container.args (overrides the image CMD);
@@ -47,7 +48,26 @@ type Sandbox struct {
 	Timeouts         TimeoutSpec       `json:"timeouts"`
 	Network          NetworkSpec       `json:"network"`
 	Labels           map[string]string `json:"labels,omitempty"`
-	SecretRefs       []SecretRef       `json:"-"`
+}
+
+type Sandbox struct {
+	ID          string     `json:"id"`
+	ProjectID   string     `json:"projectId"`
+	Name        string     `json:"name,omitempty"`
+	State       string     `json:"state"`
+	StateReason string     `json:"stateReason,omitempty"`
+	OperationID string     `json:"operationId,omitempty"`
+	Generation  int64      `json:"-"`
+	CreateTime  time.Time  `json:"createTime"`
+	ReadyTime   *time.Time `json:"readyTime,omitempty"`
+	FinishTime  *time.Time `json:"finishTime,omitempty"`
+	CreatedBy   string     `json:"-"`
+	// SandboxSpec's fields are promoted (encoding/json inlines an untagged
+	// anonymous struct field), so the public JSON shape is unchanged: e.g.
+	// "resources"/"environment" still sit at the top level, not nested under
+	// a "sandboxSpec" key.
+	SandboxSpec
+	SecretRefs []SecretRef `json:"-"`
 }
 
 type SecretRef struct {
@@ -183,28 +203,18 @@ type Process struct {
 }
 
 type CreateSandboxInput struct {
-	ProjectID        string
-	Principal        string
-	IdemKey          string
-	IdemHash         string
-	Name             string
-	ImageID          string
-	Command          []string
-	Args             []string
-	WorkingDir       string
-	NativeEntrypoint bool
-	Environment      map[string]string
+	ProjectID string
+	Principal string
+	IdemKey   string
+	IdemHash  string
+	Name      string
+	SandboxSpec
 	// MainCommand, when non-empty, is the resolved argv of the sandbox's main
 	// process for a managed (nativeEntrypoint=false) sandbox. CreateSandbox
 	// inserts it as a processes row in the same transaction so it flows
 	// through the normal supervisor path. The API resolves it from
 	// Command/Args; the store does not look at the image.
 	MainCommand []string
-	Resources   ResourceSpec
-	Placement   PlacementSpec
-	Timeouts    TimeoutSpec
-	Network     NetworkSpec
-	Labels      map[string]string
 	SecretRefs  []SecretRef
 	TraceID     string
 	MaxActive   int

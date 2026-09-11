@@ -16,10 +16,12 @@ func TestToCorev1SandboxProfile(t *testing.T) {
 	sb := store.Sandbox{
 		ID:        "sbx_abc123def4567890ab",
 		ProjectID: "prj_dev",
-		ImageID:   "img_seed",
-		Command:   []string{"python", "-m", "server"},
-		Resources: store.ResourceSpec{CPUMilli: 4000, MemoryMiB: 16384, Accelerator: store.AcceleratorSpec{Count: 1}},
-		Timeouts:  store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Command:   []string{"python", "-m", "server"},
+			Resources: store.ResourceSpec{CPUMilli: 4000, MemoryMiB: 16384, Accelerator: store.AcceleratorSpec{Count: 1}},
+			Timeouts:  store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
+		},
 	}
 	internal := k8s.SandboxPod(sb, "img@sha256:abc")
 	core, err := k8s.ToCorev1(internal)
