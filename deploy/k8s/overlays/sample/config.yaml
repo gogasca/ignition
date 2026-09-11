@@ -13,6 +13,17 @@ data:
   # it uses this to compose sandbox image references in responses.
   IGNITION_GCP_PROJECT: "__ONBOARD_PROJECT__"
   IGNITION_OIDC_ISSUER: "https://accounts.google.com"
+  # Terraform's node egress is default-deny with specific Google-API
+  # allowances via Private Google Access (private DNS zones for
+  # googleapis.com/gcr.io/pkg.dev only — see deploy/terraform/main.tf).
+  # accounts.google.com is NOT on that path, so OIDC discovery
+  # (issuer + /.well-known/openid-configuration) is unreachable from the
+  # pod; pin the JWKS URL directly so the verifier never needs it. Caught
+  # live: every request 401'd with a bare UNAUTHENTICATED and no server
+  # log line, because the JWT verifier folds a keyfunc/JWKS-fetch error
+  # into the same generic error as a bad signature (internal/auth/jwt.go
+  # Authenticate). Matches the working anyscale-staging overlay.
+  IGNITION_OIDC_JWKS_URL: "https://www.googleapis.com/oauth2/v3/certs"
   # Fixed opaque audience — no public DNS required, matches the working
   # anyscale-staging overlay. Rendered by deploy/scripts/onboard.sh from the
   # install name; change only if you also change it on ignition-gateway below.
