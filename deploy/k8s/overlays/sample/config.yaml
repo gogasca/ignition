@@ -11,12 +11,12 @@ data:
   # Required by config.Validate() in prod: SandboxImagePrefix or GCPProject
   # must be set even though ignition-api never talks to Kubernetes itself —
   # it uses this to compose sandbox image references in responses.
-  IGNITION_GCP_PROJECT: "PROJECT"
+  IGNITION_GCP_PROJECT: "__ONBOARD_PROJECT__"
   IGNITION_OIDC_ISSUER: "https://accounts.google.com"
   # Fixed opaque audience — no public DNS required, matches the working
   # anyscale-staging overlay. Rendered by deploy/scripts/onboard.sh from the
   # install name; change only if you also change it on ignition-gateway below.
-  IGNITION_OIDC_AUDIENCE: "https://api.INSTALL.ignition.dev"
+  IGNITION_OIDC_AUDIENCE: "https://api.__ONBOARD_INSTALL__.ignition.dev"
   # Accepts the gcloud CLI's own client id as an additional audience so
   # `gcloud auth print-identity-token` works directly, without impersonating
   # a service account first.
@@ -34,8 +34,8 @@ data:
   # afterward (internal/api/server.go bootstrapAdmin). This is the onboarding
   # mechanism: the customer's first project + admin, without hand-running
   # db/rolebindings.sql.
-  IGNITION_BOOTSTRAP_PROJECT: "BOOTSTRAP_PROJECT"
-  IGNITION_BOOTSTRAP_ADMIN: "BOOTSTRAP_ADMIN"
+  IGNITION_BOOTSTRAP_PROJECT: "__ONBOARD_BOOTSTRAP_PROJECT__"
+  IGNITION_BOOTSTRAP_ADMIN: "__ONBOARD_BOOTSTRAP_ADMIN__"
   # Restrict image admission (POST .../images) to this install's own
   # Artifact Registry host — internal/imagecatalog's SSRF guard blocks
   # loopback/private/link-local/metadata addresses unconditionally, but an
@@ -52,7 +52,7 @@ data:
   IGNITION_ENV: "prod"
   IGNITION_MIN_WARM: "0"
   IGNITION_MAX_WARM: "0"
-  IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/PROJECT/sandboxes"
+  IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/__ONBOARD_PROJECT__/sandboxes"
 ---
 apiVersion: v1
 kind: ConfigMap

@@ -155,11 +155,19 @@ trap cleanup EXIT
 cp -R deploy/k8s "${RENDER_DIR}/k8s"
 OVERLAY="${RENDER_DIR}/k8s/overlays/sample"
 
+# Tokens are wrapped (__ONBOARD_X__) rather than bare words like PROJECT or
+# BOOTSTRAP_ADMIN: a bare-word sed pattern also matches inside unrelated YAML
+# *keys* that happen to contain the same substring (IGNITION_GCP_PROJECT,
+# IGNITION_BOOTSTRAP_PROJECT, IGNITION_BOOTSTRAP_ADMIN), corrupting the key
+# name itself — caught live corrupting the ignition-api ConfigMap into an
+# invalid key "IGNITION_<admin-email>". The post-substitution leftover-check
+# below can't catch that class of bug either, since the bare word *is* fully
+# consumed — it's just consumed in the wrong place.
 declare -A SUBS=(
-  [PROJECT]="${CUSTOMER_PROJECT_ID}"
-  [INSTALL]="${INSTALL_NAME}"
-  [BOOTSTRAP_PROJECT]="${BOOTSTRAP_PROJECT}"
-  [BOOTSTRAP_ADMIN]="${BOOTSTRAP_ADMIN}"
+  [__ONBOARD_PROJECT__]="${CUSTOMER_PROJECT_ID}"
+  [__ONBOARD_INSTALL__]="${INSTALL_NAME}"
+  [__ONBOARD_BOOTSTRAP_PROJECT__]="${BOOTSTRAP_PROJECT}"
+  [__ONBOARD_BOOTSTRAP_ADMIN__]="${BOOTSTRAP_ADMIN}"
 )
 for file in kustomization config serviceaccount-wi cloud-sql-instance; do
   for key in "${!SUBS[@]}"; do
