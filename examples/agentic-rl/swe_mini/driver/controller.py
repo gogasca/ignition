@@ -62,7 +62,7 @@ class _RemoteCollector:
 
 def _rollout_one(client: Client, cfg: RunConfig, collector, task_id: str, sample: int) -> Trajectory:
     key = make_key(cfg.run_id, task_id, cfg.policy_version, sample)
-    env = cfg.sandbox_env(task_id, sample, collector.url)
+    command, args = cfg.sandbox_command_and_args(task_id, sample, collector.url)
     last_err = ""
 
     for attempt in range(2):
@@ -70,11 +70,12 @@ def _rollout_one(client: Client, cfg: RunConfig, collector, task_id: str, sample
         try:
             sb = client.sandboxes.create(
                 cfg.env_image,
+                command=command,
+                args=args,
                 accelerator="NONE",
                 cpu_milli=cfg.cpu_milli,
                 memory_mib=cfg.memory_mib,
                 internet=True,  # topology A: harness dials inference + collector
-                env=env,
                 secret_refs=cfg.secret_refs() or None,
                 labels={"run": cfg.run_id, "task": task_id, "pv": str(cfg.policy_version)},
                 maximum_runtime_seconds=cfg.episode_seconds,

@@ -104,26 +104,24 @@ class RunConfig:
         return self
 
     # -- helpers ---------------------------------------------------
-    def sandbox_env(self, task_id: str, sample: int, collector_url: str) -> dict[str, str]:
-        """Plain (non-secret) environment for a topology-A rollout sandbox."""
-        env = {
-            "TASK_ID": task_id,
-            "RUN_ID": self.run_id,
-            "POLICY_VERSION": str(self.policy_version),
-            "SAMPLE": str(sample),
-            "MAX_TURNS": str(self.max_turns),
-            "INFERENCE_URL": self.inference_url,
-            "INFERENCE_MODEL": self.inference_model,
-            "WORK_DIR": "/scratch/work",
-        }
+    def sandbox_command_and_args(self, task_id: str, sample: int, collector_url: str) -> tuple[list[str], list[str]]:
+        """The ``command``/``args`` for a topology-A rollout sandbox's main
+        process. Ignition's ``CreateSandbox`` has no plain ``environment``
+        field (only ``secretRefs``), so non-secret config travels as argv —
+        see ``swe_mini/harness/rollout.py``'s module docstring."""
+        command = ["python", "-m", "swe_mini.harness.rollout"]
+        args = [
+            "--task-id", task_id,
+            "--run-id", self.run_id,
+            "--policy-version", str(self.policy_version),
+            "--sample", str(sample),
+            "--max-turns", str(self.max_turns),
+            "--inference-url", self.inference_url,
+            "--inference-model", self.inference_model,
+        ]
         if collector_url:
-            env["COLLECTOR_URL"] = collector_url
-        if self.inference_token and self.inference_url.startswith(("http://", "https://")):
-            # local / non-secret path only
-            env["INFERENCE_TOKEN"] = self.inference_token
-        if self.collector_token and not self.collector_token_secret:
-            env["COLLECTOR_TOKEN"] = self.collector_token
-        return env
+            args += ["--collector-url", collector_url]
+        return command, args
 
     def secret_refs(self) -> list[dict]:
         refs = []
