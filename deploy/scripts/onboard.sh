@@ -236,7 +236,13 @@ curl --fail-with-body -sS -X POST "http://127.0.0.1:18080/v1/projects/${BOOTSTRA
 
 "${SECRETS_DIR}/ignitionctl" login --server http://127.0.0.1:18080 --token "${TOKEN}" --project "${BOOTSTRAP_PROJECT}"
 "${SECRETS_DIR}/ignitionctl" whoami
-SBX="$("${SECRETS_DIR}/ignitionctl" sandbox create --image img_seed --cpu 1000 --memory 2048 --wait -o json | jq -r '.sandbox.id')"
+# --accelerator NONE is required: ignitionctl's default is NVIDIA_L4
+# (internal/cli/sandbox.go), not NONE, so omitting it silently requests a
+# GPU sandbox -- guaranteed CAPACITY_UNAVAILABLE when GPU_MAX_NODES=0 since
+# that node pool can never scale above zero. Caught live: the verification
+# sandbox failed with CAPACITY_UNAVAILABLE against a pool sized for zero
+# GPU nodes by design.
+SBX="$("${SECRETS_DIR}/ignitionctl" sandbox create --image img_seed --accelerator NONE --cpu 1000 --memory 2048 --wait -o json | jq -r '.sandbox.id')"
 "${SECRETS_DIR}/ignitionctl" exec "${SBX}" -- true
 "${SECRETS_DIR}/ignitionctl" sandbox terminate "${SBX}" --wait
 
