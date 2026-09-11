@@ -21,8 +21,10 @@ __pycache__/
 sdks/python/.venv/
 sdks/typescript/node_modules/
 deploy/terraform/.terraform/
-deploy/terraform/terraform.tfvars
+deploy/terraform/*.tfvars
+!deploy/terraform/terraform.tfvars.example
 deploy/terraform/tfplan
+deploy/scripts/.onboard-secrets/
 deploy/terraform/crash.log
 deploy/terraform/crash.*.log
 deploy/terraform/*.tfstate

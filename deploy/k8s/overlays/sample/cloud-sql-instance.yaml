@@ -10,8 +10,9 @@ spec:
         - name: cloud-sql-proxy
           args:
             - "--structured-logs"
+            - "--private-ip"
             - "--port=5432"
-            - "PROJECT:us-central1:ignition-sql"
+            - "__ONBOARD_PROJECT__:us-central1:ignition-sql"
 ---
 apiVersion: apps/v1
 kind: Deployment
@@ -25,5 +26,6 @@ spec:
         - name: cloud-sql-proxy
           args:
             - "--structured-logs"
+            - "--private-ip"
             - "--port=5432"
-            - "PROJECT:us-central1:ignition-sql"
+            - "__ONBOARD_PROJECT__:us-central1:ignition-sql"

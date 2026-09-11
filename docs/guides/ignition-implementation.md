@@ -6,7 +6,9 @@
 **What is built vs not:** [STATUS.md](../design/STATUS.md)  
 **Contract:** [API contract](../design/ignition-api-contract.md), [`api/proto/ignition/v1/`](../../api/proto/ignition/v1/)
 
-This is the **only** build-and-deploy runbook: one regional GKE **dev** environment in one GCP project. Commands are bash and target Cloud Shell or another Linux shell. Run every block in the same shell unless the text says otherwise. Architecture stays in `docs/design/`. Overlay: `deploy/k8s/overlays/dev`.
+This is the manual build-and-deploy runbook: one regional GKE **dev** environment in one GCP project, using `IGNITION_DEV_BEARER` instead of real auth. Commands are bash and target Cloud Shell or another Linux shell. Run every block in the same shell unless the text says otherwise. Architecture stays in `docs/design/`. Overlay: `deploy/k8s/overlays/dev`.
+
+Standing up a real customer install (real Google OIDC, no dev bearer) is scripted, not manual — see [customer onboarding](customer-onboarding.md) and `deploy/scripts/onboard.sh`. Much of what follows (auth model, admission/store behavior, environment variables, `ignitionctl`) is still the reference for both paths.
 
 `gcloud` here is the copy/paste bootstrap. The equivalent Terraform configuration is in `deploy/terraform`; choose one infrastructure owner per environment and do not create the same resources with both.
 
