@@ -75,16 +75,21 @@ func checkEnv(env map[string]string) error {
 	return nil
 }
 
-// checkSandboxEnvironment validates CreateSandbox's plain environment map:
-// bounded key count and total size, valid environment-variable names, and no
-// name in the IGNITION_ namespace the controller reserves for its own Pod env
-// (sandbox id, project id, accelerator, and any future one). Accepting a
-// collision here would let a client silently override sandbox-init's own view
-// of its identity/accelerator, so this fails closed with a clear error
-// instead of silently dropping or overriding it — see internal/k8s.SandboxPod.
-// A collision against a secretRefs environmentName is checked separately
-// (parseCreate), since that needs both maps at once.
-func checkSandboxEnvironment(env map[string]string) error {
+// checkEnvironment validates a client-supplied environment map — both
+// CreateSandbox's sandbox-level environment and CreateProcess's per-process
+// one: bounded key count and total size, valid environment-variable names,
+// and no name in the IGNITION_ namespace the controller reserves for its own
+// Pod env (sandbox id, project id, accelerator, and any future one).
+// Accepting a reserved key here would let a client override it downstream —
+// internal/k8s.SandboxPod for the container env, or sandbox-init's
+// flattenEnv (internal/sandboxinit/supervisor.go), which appends a spawned
+// process's Environment onto its own os.Environ() and so is exposed to
+// whichever occurrence a given language runtime's env lookup prefers — so
+// this fails closed with a clear error instead of silently dropping or
+// overriding it. A collision between CreateSandbox's environment and a
+// secretRefs environmentName is checked separately (parseCreate), since that
+// needs both maps at once.
+func checkEnvironment(env map[string]string) error {
 	if err := checkEnv(env); err != nil {
 		return err
 	}

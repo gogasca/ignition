@@ -235,7 +235,7 @@ func TestSandboxPodEnvironment(t *testing.T) {
 
 // Defense in depth: even if a Sandbox row somehow carried a reserved key (the
 // API layer is supposed to reject this at admission — internal/api's
-// checkSandboxEnvironment), the Pod builder must never let it override the
+// checkEnvironment), the Pod builder must never let it override the
 // controller's own identity/accelerator env.
 func TestSandboxPodEnvironmentCannotOverrideReservedKeys(t *testing.T) {
 	sb := store.Sandbox{

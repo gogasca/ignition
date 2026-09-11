@@ -66,6 +66,8 @@ func writeStoreError(w http.ResponseWriter, requestID string, err error) {
 		writeStatus(w, requestID, http.StatusBadRequest, "FAILED_PRECONDITION", "sandbox is not READY", false, 0)
 	case errors.Is(err, store.ErrInvalidArgument):
 		writeStatus(w, requestID, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error(), false, 0)
+	case errors.Is(err, store.ErrLastOwner):
+		writeStatus(w, requestID, http.StatusConflict, "FAILED_PRECONDITION", err.Error(), false, 0)
 	default:
 		writeStatus(w, requestID, http.StatusInternalServerError, "UNAVAILABLE", "internal error", true, 1)
 	}

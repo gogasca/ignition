@@ -67,7 +67,7 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 		EnvAccelerator:        accel,
 	}
 	// sb.Environment is validated at admission (internal/api's
-	// checkSandboxEnvironment) to exclude store.ReservedEnvPrefix, but this is
+	// checkEnvironment) to exclude store.ReservedEnvPrefix, but this is
 	// defense in depth: the prefix check here — not just membership in the
 	// three keys already in env above — always wins regardless of what a
 	// Sandbox row happens to carry, including a reserved key added here later

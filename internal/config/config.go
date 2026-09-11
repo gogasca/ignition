@@ -26,6 +26,14 @@ const (
 	// Defaults for the Cloud IAP assertion verifier.
 	defaultIAPIssuer  = "https://cloud.google.com/iap"
 	defaultIAPJWKSURL = "https://www.gstatic.com/iap/verify/public_key-jwk"
+
+	// DefaultGatewayURL is the fallback when IGNITION_GATEWAY_URL is unset.
+	// Exported so callers that guard against a zero-value Config (e.g. one
+	// built directly in a test, bypassing Load) use this exact literal
+	// instead of an inline copy that could drift from it — see
+	// internal/api's attachProcess/mintStreamToken, which both need the same
+	// URL to end up in the response and the token audience.
+	DefaultGatewayURL = "https://gateway.us-central1.ignition.dev"
 )
 
 // Config is process configuration shared by control-plane binaries.
@@ -178,7 +186,7 @@ func loadBase() (Config, error) {
 		IAPJWKSURL:        getenv("IGNITION_IAP_JWKS_URL", defaultIAPJWKSURL),
 		BootstrapProject:  strings.TrimSpace(os.Getenv("IGNITION_BOOTSTRAP_PROJECT")),
 		BootstrapAdmin:    strings.ToLower(strings.TrimSpace(os.Getenv("IGNITION_BOOTSTRAP_ADMIN"))),
-		GatewayURL:        getenv("IGNITION_GATEWAY_URL", "https://gateway.us-central1.ignition.dev"),
+		GatewayURL:        getenv("IGNITION_GATEWAY_URL", DefaultGatewayURL),
 		StreamTokenSecret: secret,
 		DevBearer:         strings.TrimSpace(os.Getenv("IGNITION_DEV_BEARER")),
 		EnabledRegion:     getenv("IGNITION_REGION", "us-central1"),

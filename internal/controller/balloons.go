@@ -2,8 +2,10 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -36,6 +38,18 @@ func (c *Controller) warmClasses() []warmClass {
 func balloonPrefix(accel string) string {
 	slug := strings.ToLower(strings.ReplaceAll(accel, "_", "-"))
 	return "balloon-" + slug + "-"
+}
+
+// balloonIndex parses the "<N>" a scale-up assigned after prefix. A name that
+// doesn't parse (wrong prefix, or a Pod named some other way) sorts first,
+// same as index 0 would; the later strings.HasPrefix check in the scale-down
+// loop is what actually protects a non-matching name from being deleted.
+func balloonIndex(name, prefix string) int {
+	n, err := strconv.Atoi(strings.TrimPrefix(name, prefix))
+	if err != nil {
+		return -1
+	}
+	return n
 }
 
 func (c *Controller) reconcileBalloons(ctx context.Context, sbs []store.Sandbox) error {
@@ -89,7 +103,15 @@ func (c *Controller) reconcileBalloons(ctx context.Context, sbs []store.Sandbox)
 	for _, cl := range classes {
 		accel := cl.profile.Accelerator
 		balloons := balloonsByClass[accel]
-		sort.Slice(balloons, func(i, j int) bool { return balloons[i].Name < balloons[j].Name })
+		prefix := balloonPrefix(accel)
+		// Numeric, not lexicographic: names are "<prefix><N>", and string
+		// order puts "...-10" before "...-2". A wrong sort here means
+		// scale-down below deletes the wrong Pod (leaving a gap instead of
+		// the highest index), and the next scale-up's name — derived from
+		// len(balloons) — then collides with a Pod that was never deleted.
+		sort.Slice(balloons, func(i, j int) bool {
+			return balloonIndex(balloons[i].Name, prefix) < balloonIndex(balloons[j].Name, prefix)
+		})
 		want := capacity.DesiredWarm(capacity.Inputs{
 			CreatePerMinute:  capacity.P95CreatesPerMinute(createdByClass[accel], now, c.opts.WarmWindow),
 			NodeProvisionMin: c.opts.NodeProvisionTime.Minutes(),
@@ -111,10 +133,9 @@ func (c *Controller) reconcileBalloons(ctx context.Context, sbs []store.Sandbox)
 		} else {
 			c.balloonExcessSince[accel] = time.Time{}
 		}
-		prefix := balloonPrefix(accel)
 		for len(balloons) < want {
 			name := fmt.Sprintf("%s%d", prefix, len(balloons))
-			if err := c.pods.Create(k8s.BalloonPod(name, cl.profile)); err != nil {
+			if err := c.pods.Create(k8s.BalloonPod(name, cl.profile)); err != nil && !errors.Is(err, k8s.ErrAlreadyExists) {
 				return err
 			}
 			balloons = append(balloons, k8s.Pod{Name: name})

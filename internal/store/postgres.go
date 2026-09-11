@@ -14,6 +14,8 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+
+	"ignition.dev/ignition/internal/auth"
 )
 
 //go:embed schema.sql
@@ -229,24 +231,82 @@ func (p *Postgres) ResolveRole(ctx context.Context, projectID, subject, domain s
 }
 
 func (p *Postgres) PutRoleBinding(ctx context.Context, projectID, subject, role string) error {
-	// Upsert the project row: there is no Projects API yet, so a role
-	// binding is often the first thing created for a project. Remove this
-	// once project lifecycle management exists.
-	if _, err := p.pool.Exec(ctx, `INSERT INTO projects (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, projectID); err != nil {
+	return p.withTx(ctx, func(tx pgx.Tx) error {
+		// Upsert the project row: there is no Projects API yet, so a role
+		// binding is often the first thing created for a project. Remove this
+		// once project lifecycle management exists.
+		if _, err := tx.Exec(ctx, `INSERT INTO projects (id, name) VALUES ($1, $1) ON CONFLICT (id) DO NOTHING`, projectID); err != nil {
+			return err
+		}
+		if role != auth.RoleOwner {
+			orphan, err := wouldOrphanProjectTx(ctx, tx, projectID, subject)
+			if err != nil {
+				return err
+			}
+			if orphan {
+				return ErrLastOwner
+			}
+		}
+		_, err := tx.Exec(ctx, `
+			INSERT INTO role_bindings (project_id, subject, role) VALUES ($1, $2, $3)
+			ON CONFLICT (project_id, subject) DO UPDATE SET role = EXCLUDED.role`, projectID, subject, role)
 		return err
-	}
-	_, err := p.pool.Exec(ctx, `
-		INSERT INTO role_bindings (project_id, subject, role) VALUES ($1, $2, $3)
-		ON CONFLICT (project_id, subject) DO UPDATE SET role = EXCLUDED.role`, projectID, subject, role)
-	return err
+	})
 }
 
 func (p *Postgres) DeleteRoleBinding(ctx context.Context, projectID, subject string) (bool, error) {
-	tag, err := p.pool.Exec(ctx, `DELETE FROM role_bindings WHERE project_id=$1 AND subject=$2`, projectID, subject)
+	var existed bool
+	err := p.withTx(ctx, func(tx pgx.Tx) error {
+		orphan, err := wouldOrphanProjectTx(ctx, tx, projectID, subject)
+		if err != nil {
+			return err
+		}
+		if orphan {
+			return ErrLastOwner
+		}
+		tag, err := tx.Exec(ctx, `DELETE FROM role_bindings WHERE project_id=$1 AND subject=$2`, projectID, subject)
+		if err != nil {
+			return err
+		}
+		existed = tag.RowsAffected() > 0
+		return nil
+	})
 	if err != nil {
 		return false, err
 	}
-	return tag.RowsAffected() > 0, nil
+	return existed, nil
+}
+
+// wouldOrphanProjectTx reports whether subject is currently the project's
+// sole owner. FOR UPDATE locks every role_bindings row for the project for
+// the rest of the transaction, so a concurrent PutRoleBinding/
+// DeleteRoleBinding on the same project blocks until this one commits or
+// rolls back, instead of both reading the same "still has an owner" snapshot
+// and jointly orphaning it — see ErrLastOwner.
+func wouldOrphanProjectTx(ctx context.Context, tx pgx.Tx, projectID, subject string) (bool, error) {
+	rows, err := tx.Query(ctx,
+		`SELECT subject, role FROM role_bindings WHERE project_id=$1 FOR UPDATE`, projectID)
+	if err != nil {
+		return false, err
+	}
+	defer rows.Close()
+	owners, subjectIsOwner := 0, false
+	for rows.Next() {
+		var s, r string
+		if err := rows.Scan(&s, &r); err != nil {
+			return false, err
+		}
+		if r == auth.RoleOwner {
+			owners++
+			if s == subject {
+				subjectIsOwner = true
+			}
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, err
+	}
+	return subjectIsOwner && owners <= 1, nil
 }
 
 func (p *Postgres) ListRoleBindings(ctx context.Context, projectID string) ([]RoleBinding, error) {

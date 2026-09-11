@@ -32,7 +32,7 @@ type Sandbox struct {
 	// Environment is plain (non-secret) container env, applied regardless of
 	// NativeEntrypoint. Keys in the IGNITION_ namespace are reserved for the
 	// controller's own Pod env and are rejected on CreateSandbox (see
-	// internal/api's checkSandboxEnvironment) — never silently dropped.
+	// internal/api's checkEnvironment) — never silently dropped.
 	// Anything sensitive belongs in SecretRefs instead.
 	Environment map[string]string `json:"environment,omitempty"`
 	// NativeEntrypoint runs the admitted image's own OCI Entrypoint/Cmd as

@@ -10,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"ignition.dev/ignition/internal/auth"
 	"ignition.dev/ignition/internal/id"
 )
 
@@ -184,6 +185,9 @@ func (m *Memory) ResolveRole(_ context.Context, projectID, subject, domain strin
 func (m *Memory) PutRoleBinding(_ context.Context, projectID, subject, role string) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if role != auth.RoleOwner && m.wouldOrphanLocked(projectID, subject) {
+		return ErrLastOwner
+	}
 	m.roles[bindKey(projectID, subject)] = role
 	return nil
 }
@@ -195,8 +199,31 @@ func (m *Memory) DeleteRoleBinding(_ context.Context, projectID, subject string)
 	if _, ok := m.roles[key]; !ok {
 		return false, nil
 	}
+	if m.wouldOrphanLocked(projectID, subject) {
+		return false, ErrLastOwner
+	}
 	delete(m.roles, key)
 	return true, nil
+}
+
+// wouldOrphanLocked reports whether subject is currently the project's sole
+// owner, i.e. changing or removing its binding would leave no owner. Callers
+// hold m.mu, so this check and the write it gates are one atomic step — two
+// concurrent PutRoleBinding/DeleteRoleBinding calls on the same project can
+// never both observe "safe" before either commits.
+func (m *Memory) wouldOrphanLocked(projectID, subject string) bool {
+	prefix := projectID + "\x1f"
+	owners, subjectIsOwner := 0, false
+	for key, role := range m.roles {
+		if !strings.HasPrefix(key, prefix) || role != auth.RoleOwner {
+			continue
+		}
+		owners++
+		if strings.TrimPrefix(key, prefix) == subject {
+			subjectIsOwner = true
+		}
+	}
+	return subjectIsOwner && owners <= 1
 }
 
 func (m *Memory) ListRoleBindings(_ context.Context, projectID string) ([]RoleBinding, error) {

@@ -153,7 +153,7 @@ func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 	if err := checkSecretRefs(body.SecretRefs); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
-	if err := checkSandboxEnvironment(body.Environment); err != nil {
+	if err := checkEnvironment(body.Environment); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
 	// A name can be a plain environment value or a secretRefs target, never

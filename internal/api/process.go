@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"ignition.dev/ignition/internal/auth"
+	"ignition.dev/ignition/internal/config"
 	"ignition.dev/ignition/internal/store"
 )
 
@@ -60,7 +61,7 @@ func (s *Server) createProcess(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error(), false, 0)
 		return
 	}
-	if err := checkEnv(body.Environment); err != nil {
+	if err := checkEnvironment(body.Environment); err != nil {
 		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error(), false, 0)
 		return
 	}
@@ -174,7 +175,7 @@ func (s *Server) attachProcess(w http.ResponseWriter, r *http.Request) {
 		}
 		gw := s.cfg.GatewayURL
 		if gw == "" {
-			gw = "https://gateway.us-central1.ignition.dev"
+			gw = config.DefaultGatewayURL
 		}
 		body, err := json.Marshal(attachResponse{
 			StreamToken: token,
@@ -287,7 +288,7 @@ func (s *Server) mintStreamToken(p auth.Principal, sb store.Sandbox, proc store.
 	}
 	aud := s.cfg.GatewayURL
 	if aud == "" {
-		aud = "https://gateway.us-central1.ignition.dev"
+		aud = config.DefaultGatewayURL
 	}
 	now := s.now()
 	return signStreamToken(secret, aud, p.Subject, sb.ProjectID, sb.ID, proc.ID, sb.Generation, epoch, now, exp)

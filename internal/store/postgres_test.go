@@ -537,6 +537,37 @@ func TestPostgresRoleBindingAdmin(t *testing.T) {
 	}
 }
 
+// The last-owner guard is enforced atomically inside PutRoleBinding /
+// DeleteRoleBinding themselves (one locked transaction), not as a
+// separate check the caller could race against — see store.ErrLastOwner.
+func TestPostgresRoleBindingLastOwnerGuard(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+
+	if err := p.PutRoleBinding(ctx, project, "owner@corp.example", auth.RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PutRoleBinding(ctx, project, "owner@corp.example", auth.RoleAdmin); !errors.Is(err, store.ErrLastOwner) {
+		t.Fatalf("downgrade sole owner: err = %v, want ErrLastOwner", err)
+	}
+	if _, err := p.DeleteRoleBinding(ctx, project, "owner@corp.example"); !errors.Is(err, store.ErrLastOwner) {
+		t.Fatalf("delete sole owner: err = %v, want ErrLastOwner", err)
+	}
+
+	// A second owner clears the guard for the first.
+	if err := p.PutRoleBinding(ctx, project, "owner2@corp.example", auth.RoleOwner); err != nil {
+		t.Fatal(err)
+	}
+	if err := p.PutRoleBinding(ctx, project, "owner@corp.example", auth.RoleAdmin); err != nil {
+		t.Fatalf("downgrade with a co-owner present: %v", err)
+	}
+	// owner2@corp.example is now the sole owner again — the guard follows.
+	if _, err := p.DeleteRoleBinding(ctx, project, "owner2@corp.example"); !errors.Is(err, store.ErrLastOwner) {
+		t.Fatalf("delete the now-sole owner: err = %v, want ErrLastOwner", err)
+	}
+}
+
 func TestPostgresChangeNotifierDeliversOnWrite(t *testing.T) {
 	ctx := context.Background()
 	p := postgresForTest(t)
