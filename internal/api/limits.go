@@ -15,6 +15,7 @@ const (
 	maxCommandArgs    = 32
 	maxCommandBytes   = 16 << 10
 	maxEnvKeys        = 32
+	maxEnvBytes       = 16 << 10
 	maxLabels         = 32
 	maxSecretRefs     = 16
 	maxIdempotencyKey = 128
@@ -75,22 +76,29 @@ func checkEnv(env map[string]string) error {
 }
 
 // checkSandboxEnvironment validates CreateSandbox's plain environment map:
-// bounded size, valid environment-variable names, and no name in the
-// IGNITION_ namespace the controller reserves for its own Pod env (sandbox
-// id, project id, accelerator, and any future one). Accepting a collision
-// here would let a client silently override sandbox-init's own view of its
-// identity/accelerator, so this fails closed with a clear error instead of
-// silently dropping or overriding it — see internal/k8s.SandboxPod.
+// bounded key count and total size, valid environment-variable names, and no
+// name in the IGNITION_ namespace the controller reserves for its own Pod env
+// (sandbox id, project id, accelerator, and any future one). Accepting a
+// collision here would let a client silently override sandbox-init's own view
+// of its identity/accelerator, so this fails closed with a clear error
+// instead of silently dropping or overriding it — see internal/k8s.SandboxPod.
+// A collision against a secretRefs environmentName is checked separately
+// (parseCreate), since that needs both maps at once.
 func checkSandboxEnvironment(env map[string]string) error {
-	if len(env) > maxEnvKeys {
-		return fmt.Errorf("too many environment variables")
+	if err := checkEnv(env); err != nil {
+		return err
 	}
-	for k := range env {
+	size := 0
+	for k, v := range env {
 		if !envNameRe.MatchString(k) {
 			return fmt.Errorf("environment key %q is not a valid environment variable name", k)
 		}
-		if strings.HasPrefix(k, "IGNITION_") {
+		if store.IsReservedEnvName(k) {
 			return fmt.Errorf("environment key %q is reserved", k)
+		}
+		size += len(k) + len(v)
+		if size > maxEnvBytes {
+			return fmt.Errorf("environment is too large")
 		}
 	}
 	return nil
@@ -120,7 +128,7 @@ func checkSecretRefs(refs []store.SecretRef) error {
 		if ref.EnvironmentName == "" || !envNameRe.MatchString(ref.EnvironmentName) {
 			return fmt.Errorf("secretRefs.environmentName is invalid")
 		}
-		if strings.HasPrefix(ref.EnvironmentName, "IGNITION_") {
+		if store.IsReservedEnvName(ref.EnvironmentName) {
 			return fmt.Errorf("secretRefs.environmentName %q is reserved", ref.EnvironmentName)
 		}
 		if _, ok := seen[ref.EnvironmentName]; ok {

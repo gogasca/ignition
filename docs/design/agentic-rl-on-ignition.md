@@ -29,7 +29,7 @@ this up (see Sources at the end), then mapped onto what Ignition ships today
 | No dataset / artifact mounts yet ("Read-only dataset mounts — PROPOSED") | Task data (repo, tests, fixtures) is baked into the image or fetched over egress at rollout start. |
 | Timeouts: `startupSeconds` ≤ 600, `maximumRuntimeSeconds` ≤ 86400 (24 h, hard kill), `idleSeconds` ≤ 3600 | Set `maximumRuntimeSeconds` to your episode budget + margin. Set `idleSeconds: 0` for topology A (the agent may pause to think). |
 | `secretRefs` → Secret Manager, injected as env at Pod create, never stored in SQL | Ship the inference token / collector token this way. Never bake tokens into the image or pass them as plaintext env. |
-| **`CreateSandbox` has no plain `environment` field** — only `command`/`args` and `secretRefs`. (Both SDKs accept an `env=`/`o.env` parameter on sandbox create that silently does nothing today — a real SDK bug, tracked separately.) | Non-secret per-rollout config (`TASK_ID`, `RUN_ID`, `INFERENCE_URL`, ...) must travel as `args` on the sandbox's main process, not as environment variables. Tokens still go via `secretRefs`, which *is* real. |
+| `CreateSandbox` has a plain `environment` map (both SDKs' `env=`/`o.env` on sandbox create) alongside `secretRefs`, applied to the container regardless of `nativeEntrypoint`; an `IGNITION_`-prefixed key is rejected, not silently dropped | Non-secret per-rollout config (`TASK_ID`, `RUN_ID`, `INFERENCE_URL`, ...) can travel as plain `environment`, or as `args` on the sandbox's main process — either works. Tokens still go via `secretRefs`. |
 | Image admission (`POST /v1/projects/{project}/images`) pins a registry ref to a digest | Free reproducibility: admit once per image build, schedule by digest. |
 | Warm pool is implemented but off (`IGNITION_MIN_WARM=0` in every overlay) | Cold start today = image pull + Pod create. Ask the operator to set `IGNITION_MIN_WARM>0` (CPU pool) for the duration of a training run. |
 
@@ -64,8 +64,8 @@ this up (see Sources at the end), then mapped onto what Ignition ships today
 **Topology A — in-sandbox agent (recommended for the training run; SkyRL/Harbor-style)**
 
 - The sandbox's **main process is the agent**: `python -m rollout`, given
-  `INFERENCE_URL`, `COLLECTOR_URL`, `TASK_ID`, `POLICY_VERSION` as argv
-  (`CreateSandbox` has no plain `environment` field), tokens via `secretRefs`.
+  `INFERENCE_URL`, `COLLECTOR_URL`, `TASK_ID`, `POLICY_VERSION` as plain
+  `environment` or argv (either works), tokens via `secretRefs`.
 - `network.internetAccess: ENABLED`. Each turn the harness calls `INFERENCE_URL`,
   executes the tool call locally in `/scratch`, loops; at the end it runs
   `verify.py` in-process and `POST`s `{trajectory, reward, metrics, policy_version}`
@@ -144,14 +144,13 @@ def rollout(client: Client, run_id: str, task_id: str, policy_version: int):
     try:
         sb = client.sandboxes.create(
             image=ENV_IMAGE_ID,
-            # CreateSandbox has no plain `environment` field — only
-            # `secretRefs` (below). Non-secret config travels as argv, which
-            # `command`/`args` deliver reliably to the sandbox's main process.
+            # Non-secret config: plain `environment` (below) or argv, either
+            # works. Tokens always go via secretRefs, never here.
             command=["python", "-m", "harness.rollout"],
-            args=["--task-id", task_id,
-                  "--policy-version", str(policy_version),
-                  "--inference-url", INFERENCE_URL,
-                  "--collector-url", COLLECTOR_URL],
+            environment={"TASK_ID": task_id,
+                         "POLICY_VERSION": str(policy_version),
+                         "INFERENCE_URL": INFERENCE_URL,
+                         "COLLECTOR_URL": COLLECTOR_URL},
             accelerator="NONE",
             cpu_milli=2000, memory_mib=4096,
             internet=True,                         # topology A; False for B
