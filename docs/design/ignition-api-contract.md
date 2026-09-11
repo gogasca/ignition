@@ -10,7 +10,11 @@ are the canonical public contract and are runtime-agnostic. Provisioning behind
 the contract is in [shipped architecture](ignition-shipped-architecture.md).
 
 **Machine-readable schema:** [`api/proto/ignition/v1/`](../../api/proto/ignition/v1/)
-(`SandboxService`, `OperationService`) · [`api/openapi/v1.yaml`](../../api/openapi/v1.yaml)
+(`SandboxService`, `OperationService`, `MeService`) is the source of truth for
+the HTTP surface — each RPC's `option (ignition.v1.http)` declares its
+method/path/body/status. [`api/openapi/v1.yaml`](../../api/openapi/v1.yaml) is
+*generated* from it (`make -C api/proto api-generate`; `api-check` fails CI if
+it drifts) and must never be hand-edited.
 
 ## 1. Identity
 

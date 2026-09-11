@@ -22,7 +22,7 @@ headed — sandboxes for **agents** and **RL environments** — is in
 | `ignition-api` — HTTP/JSON public API, auth, admission, quota, idempotency | **SHIPPED** | No Kubernetes access. |
 | `ignition-controller` — reconciles sandboxes into GKE Pods | **SHIPPED** | Sole holder of Pod RBAC. CPU lifecycle verified end to end. |
 | Google OIDC authentication | **SHIPPED** | Verified end to end on staging. |
-| Cloud IAP authentication | **PARTIAL** | Verifier + `deploy/k8s/components/iap` component are built and tested. Turning it on is an operator step: include the component, deploy so the backend service exists, set `IGNITION_IAP_AUDIENCE` to its resource path, grant `roles/iap.httpsResourceAccessor`. Not enabled in any overlay. |
+| Cloud IAP authentication | **PARTIAL** | Verifier + `deploy/k8s/components/iap` component built and tested. Enabling it is an operator step (include the component, set `IGNITION_IAP_AUDIENCE`, grant `roles/iap.httpsResourceAccessor`); not enabled in any overlay. |
 | SQL-backed project RBAC (`roleBindings`, last-owner guard, audit line) | **SHIPPED** | |
 | Sandbox lifecycle: create / get / list / terminate / watch (SSE) | **SHIPPED** | `:watch` pushes on change via Postgres `LISTEN/NOTIFY` (10s poll backstop), stays open to terminal / disconnect / 30-min cap. |
 | Process control plane: create / get / list / attach / signal / cancel | **SHIPPED** | |
@@ -42,8 +42,8 @@ headed — sandboxes for **agents** and **RL environments** — is in
 | `sandbox-init` — readiness probe + tenant-process supervision | **SHIPPED** | |
 | Server-owned Pod spec (gVisor, read-only root, dropped caps, no SA token) | **SHIPPED** | No client field maps to hooks/devices/mounts/scheduling. |
 | System-managed default runtime (`RuntimeSpec`, optional `CreateSandbox` fields) | **SHIPPED** | `GET /v1/projects/{project}/runtimes/default`. |
-| Timeouts: `startupSeconds`, `maximumRuntimeSeconds`, `idleSeconds` | **SHIPPED** | Startup deadline in the controller; max runtime via Pod `activeDeadlineSeconds`; idle via `sandbox-init` `idleSeconds` + controller (`FINISHED`/`IDLE_TIMEOUT`). Idle enforcement needs a live supervisor probe, so it is also skipped for any tick where the probe fails (crash/unreachable/non-200), not only `nativeEntrypoint` (no supervisor) or an old supervisor; `maximumRuntimeSeconds` is the backstop and every probe failure is logged. |
-| Warm-node capacity via balloon Pods | **PARTIAL** | Implemented; `IGNITION_MIN_WARM=0` in every overlay so no standing warm pool. The 9s p95 API-to-`READY` SLO is unmeasured — needs `MIN_WARM>0` + a load run against real capacity (the `ignition_sandbox_stage_latency_seconds` per-stage metric is already emitted). |
+| Timeouts: `startupSeconds`, `maximumRuntimeSeconds`, `idleSeconds` | **SHIPPED** | Startup deadline in the controller; max runtime via Pod `activeDeadlineSeconds`; idle via `sandbox-init` `idleSeconds` + controller (`FINISHED`/`IDLE_TIMEOUT`). Idle enforcement needs a live supervisor probe, so any tick where the probe fails (crash/unreachable/non-200) is skipped and logged; `maximumRuntimeSeconds` is the backstop. |
+| Warm-node capacity via balloon Pods | **PARTIAL** | Implemented; `IGNITION_MIN_WARM=0` in every overlay, so no standing warm pool and the 9s p95 API-to-`READY` SLO is unmeasured (`ignition_sandbox_stage_latency_seconds` is already emitted for when a load run happens). |
 | `nativeEntrypoint` (run the image's own entrypoint as PID 1) | **PARTIAL** | Works; weaker readiness, no exec/idle-tracking, same security context. `command`/`args` override the image `ENTRYPOINT`/`CMD` Kubernetes-style. |
 | Managed `command`/`args` → supervised main process | **SHIPPED** | `CreateSandbox` with `command`/`args` (and `nativeEntrypoint: false`) creates a `Process` row for the argv in the same transaction; `exec`/PTY/idle apply to it. |
 | Ephemeral `/scratch` emptyDir | **SHIPPED** | Lost on node loss — part of the public contract. |
@@ -84,7 +84,7 @@ public API, they are not platform features.
 | Capability | Status | Notes |
 |---|---|---|
 | Image delivery on GKE | **SHIPPED** | Delegated to GKE image streaming; no Ignition-owned data path. |
-| v0 image admission (`POST/GET /v1/projects/{project}/images`) — resolve `sourceRef` to a digest, static streaming-eligibility check | **PARTIAL** | `internal/imagecatalog`. Registry-host allowlist (`IGNITION_IMAGE_REGISTRY_ALLOWLIST`) + SSRF guard (no loopback / private / link-local / `169.254.169.254` dials, post-DNS) + resolve timeout + sanitized client errors are **now in place** (`guard.go`). Still missing: signature / provenance / scan, and a same-region Ignition-owned copy — see [image-delivery](ignition-image-delivery.md#security-status). Resolve + digest-pinned scheduling verified end to end on a live GKE cluster (`anyscale-demo`). |
+| v0 image admission (`POST/GET /v1/projects/{project}/images`) — resolve `sourceRef` to a digest, static streaming-eligibility check | **PARTIAL** | `internal/imagecatalog`. Registry-host allowlist + SSRF guard (no loopback/private/link-local/`169.254.169.254`, post-DNS) + resolve timeout + sanitized client errors are in place (`guard.go`); verified end to end with digest-pinned scheduling on `anyscale-demo`. Still missing: signature/provenance/scan, same-region Ignition-owned copy — see [image-delivery](ignition-image-delivery.md#security-status). |
 | Digest-pinned `imageId` | **not built** | Controller resolves a bare path under the Artifact Registry sandbox prefix. |
 | Same-region import, signature/provenance verification, scanning, signed catalog | **PROPOSED** | |
 | Secondary boot-disk cache cohorts, adaptive lazy/eager selection, access profiles | **PROPOSED** | |

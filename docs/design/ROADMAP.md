@@ -51,13 +51,13 @@ cheaply, reproducibly."
 
 ## Near-term — make rollout fan-out cheap and reproducible
 
-| Work | Why it matters for agents / RL envs | STATUS today |
-|---|---|---|
-| **Warm CPU pools** (`IGNITION_MIN_WARM > 0`, load-tested to the 9s p95 SLO) | Rollout throughput is create-latency-bound; a cold pull per attempt kills fan-out | implemented, off in every overlay |
-| **Read-only dataset / artifact mounts** | Ship task sets, repos, eval suites, fixtures without rebuilding the image per change | PROPOSED |
-| **Signature / provenance / scan; same-region Ignition-owned copy** | Registry-host allowlist + SSRF guard + resolve timeout landed (`internal/imagecatalog/guard.go`); identity/provenance verification and a copy that removes the source-registry dependency are still open | PARTIAL |
-| **Usage / metering ledger + reconciler** | Per-run, per-project cost accounting for large rollout batches | PROPOSED |
-| **Project / Secret / Event public APIs** | Self-serve project + secret management instead of seed rows | PROPOSED (contract exists) |
+| Work | Why it matters for agents / RL envs |
+|---|---|
+| **Warm CPU pools** (`IGNITION_MIN_WARM > 0`) | Rollout throughput is create-latency-bound; a cold pull per attempt kills fan-out. Implemented but off in every overlay — needs a load run against the 9s p95 SLO. |
+| **Read-only dataset / artifact mounts** | Ship task sets, repos, eval suites, fixtures without rebuilding the image per change. Not yet built. |
+| **Signature / provenance / scan; same-region Ignition-owned copy** | Registry-host allowlist + SSRF guard + resolve timeout are in (`internal/imagecatalog/guard.go`); identity/provenance verification and a copy that removes the source-registry dependency are still open. |
+| **Usage / metering ledger + reconciler** | Per-run, per-project cost accounting for large rollout batches. Not yet built. |
+| **Project / Secret / Event public APIs** | Self-serve project + secret management instead of seed rows. Contract exists; not yet built. |
 
 ## Later — scale and latency
 
@@ -71,6 +71,20 @@ cheaply, reproducibly."
 - **Higher-level rollout API** — a batch/collection primitive so a driver asks
   for "N rollouts of image X across these inputs" instead of N `CreateSandbox`
   calls, with server-side concurrency + retry.
+- **Durable exec reconnect** — replace the in-memory replay buffer with a
+  durable spool + offset-based reconnect (`ignition-ingress`, route table), so
+  a long rollout can resume its exec stream past a gateway restart.
+- **SDK ergonomics** — native `async` Python client, mid-session PTY resize,
+  text-mode wrappers / backpressure helpers for high-volume rollout output.
+
+## Operational hardening
+
+- **SPIFFE/SPIRE internal identity** — a unified workload identity for
+  service-to-service calls; today Google API auth and internal auth are
+  separate mechanisms.
+- **Cross-region DR drills, launch gates, threat-model review** — needed before
+  a broader production rollout; targets in
+  [production-operations](ignition-production-operations.md).
 
 ## Explicitly out of scope
 

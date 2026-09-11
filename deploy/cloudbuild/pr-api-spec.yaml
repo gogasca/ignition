@@ -1,0 +1,37 @@
+# PR validation for the proto-defined API surface (api/proto/**) and its
+# generated OpenAPI document (api/openapi/**).
+#
+# api/proto/ignition/v1 is the single source of truth for the HTTP surface —
+# each RPC's `option (ignition.v1.http)` declares method/path/body/status.
+# api/openapi/v1.yaml is generated from it by cmd/protoc-gen-ignopenapi and
+# must never be hand-edited. This lints the protos and fails if the committed
+# OpenAPI file is not exactly what the current protos produce.
+#
+# Wire a Cloud Build trigger with includedFiles:
+#   api/proto/**
+#   api/openapi/**
+#   cmd/protoc-gen-ignopenapi/**
+# See deploy/PIPELINE.md "Flow 0".
+
+options:
+  logging: CLOUD_LOGGING_ONLY
+  machineType: E2_HIGHCPU_8
+
+timeout: 600s
+
+steps:
+  - name: golang:1.26.7-bookworm
+    id: api-spec-check
+    entrypoint: bash
+    volumes:
+      - name: go-mod
+        path: /go/pkg/mod
+    args:
+      - -euo
+      - pipefail
+      - -c
+      - |
+        go install github.com/bufbuild/buf/cmd/buf@v1.72.0
+        export PATH="$(go env GOPATH)/bin:$PATH"
+        make -C api/proto lint
+        make -C api/proto api-check

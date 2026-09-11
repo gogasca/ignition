@@ -4,6 +4,7 @@ package ignition.v1;
 
 option go_package = "ignition.dev/ignition/api/gen/ignition/v1;ignitionv1";
 
+import "ignition/v1/http.proto";
 import "ignition/v1/process.proto";
 import "ignition/v1/sandbox.proto";
 
@@ -15,41 +16,105 @@ import "ignition/v1/sandbox.proto";
 service SandboxService {
   // POST /v1/projects/{project_id}/sandboxes
   // Returns 202 with sandbox CREATING and a CREATE_SANDBOX operation.
-  rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse);
+  rpc CreateSandbox(CreateSandboxRequest) returns (CreateSandboxResponse) {
+    option (ignition.v1.http) = {
+      method: "POST"
+      path: "/v1/projects/{project}/sandboxes"
+      body: "*"
+    };
+  };
 
   // GET /v1/projects/{project_id}/sandboxes/{sandbox_id}
-  rpc GetSandbox(GetSandboxRequest) returns (Sandbox);
+  rpc GetSandbox(GetSandboxRequest) returns (Sandbox) {
+    option (ignition.v1.http) = {
+      method: "GET"
+      path: "/v1/projects/{project}/sandboxes/{sandbox}"
+    };
+  };
 
   // GET /v1/projects/{project_id}/sandboxes
-  rpc ListSandboxes(ListSandboxesRequest) returns (ListSandboxesResponse);
+  rpc ListSandboxes(ListSandboxesRequest) returns (ListSandboxesResponse) {
+    option (ignition.v1.http) = {
+      method: "GET"
+      path: "/v1/projects/{project}/sandboxes"
+    };
+  };
 
   // GET /v1/projects/{project_id}/runtimes/default
   // Returns the system-managed default runtime used to fill unset fields on
   // CreateSandbox. Read-only; there is no template resource to manage.
-  rpc GetDefaultRuntime(GetDefaultRuntimeRequest) returns (RuntimeSpec);
+  rpc GetDefaultRuntime(GetDefaultRuntimeRequest) returns (RuntimeSpec) {
+    option (ignition.v1.http) = {
+      method: "GET"
+      path: "/v1/projects/{project}/runtimes/default"
+    };
+  };
 
   // POST /v1/projects/{project_id}/sandboxes/{sandbox_id}:terminate
-  rpc TerminateSandbox(TerminateSandboxRequest) returns (TerminateSandboxResponse);
+  rpc TerminateSandbox(TerminateSandboxRequest) returns (TerminateSandboxResponse) {
+    option (ignition.v1.http) = {
+      method: "POST"
+      path: "/v1/projects/{project}/sandboxes/{sandbox}:terminate"
+      code: 202
+    };
+  };
 
   // GET /v1/projects/{project_id}/sandboxes/{sandbox_id}:watch
-  rpc WatchSandbox(WatchSandboxRequest) returns (stream Sandbox);
+  rpc WatchSandbox(WatchSandboxRequest) returns (stream Sandbox) {
+    option (ignition.v1.http) = {
+      method: "GET"
+      path: "/v1/projects/{project}/sandboxes/{sandbox}:watch"
+    };
+  };
 
   // POST /v1/projects/{project_id}/sandboxes/{sandbox_id}/processes
-  rpc CreateProcess(CreateProcessRequest) returns (Process);
+  rpc CreateProcess(CreateProcessRequest) returns (Process) {
+    option (ignition.v1.http) = {
+      method: "POST"
+      path: "/v1/projects/{project}/sandboxes/{sandbox}/processes"
+      body: "*"
+    };
+  };
 
   // GET /v1/projects/{project_id}/sandboxes/{sandbox_id}/processes/{process_id}
-  rpc GetProcess(GetProcessRequest) returns (Process);
+  rpc GetProcess(GetProcessRequest) returns (Process) {
+    option (ignition.v1.http) = {
+      method: "GET"
+      path: "/v1/projects/{project}/sandboxes/{sandbox}/processes/{process}"
+    };
+  };
 
   // GET /v1/projects/{project_id}/sandboxes/{sandbox_id}/processes
-  rpc ListProcesses(ListProcessesRequest) returns (ListProcessesResponse);
+  rpc ListProcesses(ListProcessesRequest) returns (ListProcessesResponse) {
+    option (ignition.v1.http) = {
+      method: "GET"
+      path: "/v1/projects/{project}/sandboxes/{sandbox}/processes"
+    };
+  };
 
   // POST /v1/projects/{project_id}/sandboxes/{sandbox_id}/processes/{process_id}:signal
-  rpc SignalProcess(SignalProcessRequest) returns (Process);
+  rpc SignalProcess(SignalProcessRequest) returns (Process) {
+    option (ignition.v1.http) = {
+      method: "POST"
+      path: "/v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:signal"
+      body: "signal"
+    };
+  };
 
   // POST /v1/projects/{project_id}/sandboxes/{sandbox_id}/processes/{process_id}:cancel
-  rpc CancelProcess(CancelProcessRequest) returns (Process);
+  rpc CancelProcess(CancelProcessRequest) returns (Process) {
+    option (ignition.v1.http) = {
+      method: "POST"
+      path: "/v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:cancel"
+    };
+  };
 
   // POST /v1/projects/{project_id}/sandboxes/{sandbox_id}/processes/{process_id}:attach
   // Mints a short-lived exec stream token. The client then attaches via gateway.
-  rpc AttachProcess(AttachProcessRequest) returns (AttachProcessResponse);
+  rpc AttachProcess(AttachProcessRequest) returns (AttachProcessResponse) {
+    option (ignition.v1.http) = {
+      method: "POST"
+      path: "/v1/projects/{project}/sandboxes/{sandbox}/processes/{process}:attach"
+    };
+  };
 }
