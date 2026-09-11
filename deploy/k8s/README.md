@@ -6,4 +6,6 @@ The supported runbook is the [regional dev deployment](../../docs/guides/ignitio
 
 Before applying an overlay, create `ignition-control-plane` in `ignition-system`. Its keys are `DATABASE_URL`, `STREAM_TOKEN_SECRET`, optional `OIDC_ISSUER`, and optional dev-only `DEV_BEARER`. The private Auth Proxy sidecar listens on loopback, so the application DSN is `postgres://ignition:…@127.0.0.1:5432/ignition?sslmode=disable`.
 
-`overlays/staging`, `overlays/prod`, and `overlays/sample` are templates, not validated production runbooks. They include Ingress resources and fixed project/domain placeholders that must be reviewed before use. No overlay deploys `ignition-gateway` or a sandbox workload; the controller creates sandbox Pods dynamically.
+`overlays/staging` and `overlays/prod` are templates, not validated production runbooks. They include Ingress resources and fixed project/domain placeholders that must be reviewed before use. No overlay deploys a sandbox workload; the controller creates sandbox Pods dynamically.
+
+`overlays/sample` is the customer-install template: [`deploy/scripts/onboard.sh`](../scripts/onboard.sh) renders it (real OIDC audience, bootstrap project/admin, and Terraform-derived registry/SA/SQL values) and deploys it end to end. See [customer onboarding](../../docs/guides/customer-onboarding.md).

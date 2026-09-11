@@ -4,10 +4,44 @@ metadata:
   name: ignition-api
   namespace: ignition-system
 data:
-  IGNITION_ENV: "sample"
-  IGNITION_OIDC_AUDIENCE: "http://ignition-api.example"
-  IGNITION_GATEWAY_URL: "http://ignition-gateway.example"
+  # "prod" (not "sample") so config.RequiresDatabase gates on it: real
+  # Postgres, no IGNITION_DEV_BEARER, non-default IGNITION_STREAM_TOKEN_SECRET,
+  # a real OIDC issuer. See internal/config/config.go Validate().
+  IGNITION_ENV: "prod"
+  # Required by config.Validate() in prod: SandboxImagePrefix or GCPProject
+  # must be set even though ignition-api never talks to Kubernetes itself —
+  # it uses this to compose sandbox image references in responses.
+  IGNITION_GCP_PROJECT: "PROJECT"
+  IGNITION_OIDC_ISSUER: "https://accounts.google.com"
+  # Fixed opaque audience — no public DNS required, matches the working
+  # anyscale-staging overlay. Rendered by deploy/scripts/onboard.sh from the
+  # install name; change only if you also change it on ignition-gateway below.
+  IGNITION_OIDC_AUDIENCE: "https://api.INSTALL.ignition.dev"
+  # Accepts the gcloud CLI's own client id as an additional audience so
+  # `gcloud auth print-identity-token` works directly, without impersonating
+  # a service account first.
+  IGNITION_OIDC_AUDIENCES: "32555940559.apps.googleusercontent.com"
+  # Uncomment and set to your Workspace domain to reject tokens from outside
+  # it. Service-account callers are exempt regardless.
+  # IGNITION_OIDC_HOSTED_DOMAINS: "your-domain.com"
+  # No public DNS/Ingress for the gateway by default — reach it with
+  # `kubectl port-forward -n ignition-system svc/ignition-gateway 8443:8080`.
+  # Must be identical to ignition-gateway's IGNITION_GATEWAY_URL below.
+  IGNITION_GATEWAY_URL: "http://127.0.0.1:8443"
   IGNITION_MAX_ACTIVE_SANDBOXES: "1"
+  # Seeds one owner binding on IGNITION_BOOTSTRAP_PROJECT the first time
+  # ignition-api starts and that project has no owner yet; idempotent no-op
+  # afterward (internal/api/server.go bootstrapAdmin). This is the onboarding
+  # mechanism: the customer's first project + admin, without hand-running
+  # db/rolebindings.sql.
+  IGNITION_BOOTSTRAP_PROJECT: "BOOTSTRAP_PROJECT"
+  IGNITION_BOOTSTRAP_ADMIN: "BOOTSTRAP_ADMIN"
+  # Restrict image admission (POST .../images) to this install's own
+  # Artifact Registry host — internal/imagecatalog's SSRF guard blocks
+  # loopback/private/link-local/metadata addresses unconditionally, but an
+  # empty allowlist still lets any project member point the resolver at an
+  # arbitrary public host. See internal/imagecatalog/guard.go.
+  IGNITION_IMAGE_REGISTRY_ALLOWLIST: "us-central1-docker.pkg.dev"
 ---
 apiVersion: v1
 kind: ConfigMap
@@ -15,7 +49,7 @@ metadata:
   name: ignition-controller
   namespace: ignition-system
 data:
-  IGNITION_ENV: "sample"
+  IGNITION_ENV: "prod"
   IGNITION_MIN_WARM: "0"
   IGNITION_MAX_WARM: "0"
   IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/PROJECT/sandboxes"
@@ -26,5 +60,6 @@ metadata:
   name: ignition-gateway
   namespace: ignition-system
 data:
+  IGNITION_ENV: "prod"
   # Must equal ignition-api's IGNITION_GATEWAY_URL (the exec-stream audience).
-  IGNITION_GATEWAY_URL: "http://ignition-gateway.example"
+  IGNITION_GATEWAY_URL: "http://127.0.0.1:8443"

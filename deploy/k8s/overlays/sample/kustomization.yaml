@@ -4,7 +4,10 @@ resources:
   - ../../base
   - ingress.yaml
 components:
-  - ../../components/cloud-sql-proxy
+  # Terraform provisions Cloud SQL with ipv4_enabled=false (private network
+  # only, deploy/terraform/main.tf) — the private-ip proxy variant is
+  # required, the public one will never reach the instance.
+  - ../../components/cloud-sql-proxy-private
 images:
   - name: ignition-api
     newName: us-central1-docker.pkg.dev/PROJECT/ignition/ignition-api

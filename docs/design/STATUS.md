@@ -100,6 +100,7 @@ public API, they are not platform features.
 | Audit-log lines on RBAC mutations | **SHIPPED** | |
 | CI pipeline (PR-merge / nightly / staging), Terraform for cluster + SQL + prober + IAP | **SHIPPED** | `deploy/PIPELINE.md`. |
 | Critical-user-journey prober | **SHIPPED** | Runs on staging. |
+| Scripted new-customer install (`deploy/scripts/onboard.sh`): project + Terraform + images + rendered overlay + bootstrap owner + verified sandbox create/exec/terminate | **PARTIAL** | [customer-onboarding](../guides/customer-onboarding.md). Dry-run-validated, not yet exercised against a live GCP project. Still one dedicated install per customer project (BYOC); no self-serve signup. |
 | SPIFFE/SPIRE internal identity | **PROPOSED** | Google API auth + internal auth are separate mechanisms today. |
 | Usage / metering ledger, reconciler | **PROPOSED** | |
 | Cross-region DR drills, launch gates, threat-model review | **PROPOSED** | Targets in [production-operations](ignition-production-operations.md). |
