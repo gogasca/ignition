@@ -168,13 +168,13 @@ declare -A SUBS=(
   [__ONBOARD_INSTALL__]="${INSTALL_NAME}"
   [__ONBOARD_BOOTSTRAP_PROJECT__]="${BOOTSTRAP_PROJECT}"
   [__ONBOARD_BOOTSTRAP_ADMIN__]="${BOOTSTRAP_ADMIN}"
+  [__ONBOARD_SHORT_SHA__]="${SHORT_SHA}"
 )
 for file in kustomization config serviceaccount-wi cloud-sql-instance; do
   for key in "${!SUBS[@]}"; do
     sed -i "s#${key}#${SUBS[${key}]}#g" "${OVERLAY}/${file}.yaml"
   done
 done
-sed -i "s#:sample#:${SHORT_SHA}#g" "${OVERLAY}/kustomization.yaml"
 for key in "${!SUBS[@]}"; do
   if grep -Rq "${key}" "${OVERLAY}"; then
     echo "unrendered ${key} placeholder remains in ${OVERLAY}" >&2

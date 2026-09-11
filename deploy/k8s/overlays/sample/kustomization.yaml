@@ -11,13 +11,13 @@ components:
 images:
   - name: ignition-api
     newName: us-central1-docker.pkg.dev/__ONBOARD_PROJECT__/ignition/ignition-api
-    newTag: sample
+    newTag: __ONBOARD_SHORT_SHA__
   - name: ignition-controller
     newName: us-central1-docker.pkg.dev/__ONBOARD_PROJECT__/ignition/ignition-controller
-    newTag: sample
+    newTag: __ONBOARD_SHORT_SHA__
   - name: ignition-gateway
     newName: us-central1-docker.pkg.dev/__ONBOARD_PROJECT__/ignition/ignition-gateway
-    newTag: sample
+    newTag: __ONBOARD_SHORT_SHA__
 patches:
   - path: replicas.yaml
   - path: config.yaml
