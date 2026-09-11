@@ -2,6 +2,7 @@ package k8s
 
 import (
 	"fmt"
+	"sort"
 
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/api/resource"
@@ -162,8 +163,17 @@ func toContainer(c Container, spec PodSpec) (corev1.Container, error) {
 	}
 	ctr.LivenessProbe = probe(c.LivenessPath)
 	ctr.ReadinessProbe = probe(c.ReadinessPath)
-	for k, v := range c.Env {
-		ctr.Env = append(ctr.Env, corev1.EnvVar{Name: k, Value: v})
+	// Sorted for a deterministic Pod spec: c.Env's key order (a map) would
+	// otherwise vary from call to call for the exact same input, which is
+	// only more visible now that CreateSandbox's environment field lets it
+	// hold client-supplied keys, not just the 3 fixed IGNITION_* ones.
+	envKeys := make([]string, 0, len(c.Env))
+	for k := range c.Env {
+		envKeys = append(envKeys, k)
+	}
+	sort.Strings(envKeys)
+	for _, k := range envKeys {
+		ctr.Env = append(ctr.Env, corev1.EnvVar{Name: k, Value: c.Env[k]})
 	}
 	if c.VolumeMountPath != "" && len(spec.Volumes) > 0 {
 		ctr.VolumeMounts = append(ctr.VolumeMounts, corev1.VolumeMount{

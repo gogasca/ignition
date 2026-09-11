@@ -156,6 +156,16 @@ func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 	if err := checkSandboxEnvironment(body.Environment); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
+	// A name can be a plain environment value or a secretRefs target, never
+	// both — otherwise which one actually reaches the container depends on
+	// controller apply order (secretRefs currently wins), not on anything
+	// admission validated or a client can rely on.
+	for _, ref := range body.SecretRefs {
+		if _, dup := body.Environment[ref.EnvironmentName]; dup {
+			return store.CreateSandboxInput{}, fmt.Errorf(
+				"environment key %q is also targeted by secretRefs; a value cannot be both plain and secret", ref.EnvironmentName)
+		}
+	}
 	for k := range body.Labels {
 		if strings.HasPrefix(k, "ignition.") {
 			return store.CreateSandboxInput{}, fmt.Errorf("label key %q is reserved", k)

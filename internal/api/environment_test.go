@@ -44,6 +44,22 @@ func TestCreateSandboxRejectsReservedEnvironmentKey(t *testing.T) {
 	}
 }
 
+// A name can be a plain environment value or a secretRefs target, never both:
+// which one actually reaches the container would otherwise depend on
+// controller apply order, not on anything a client can rely on.
+func TestCreateSandboxRejectsEnvironmentSecretRefCollision(t *testing.T) {
+	h := newHarness(t)
+	h.mem.SeedSecret("prj_dev", "sec_shared")
+	body := `{"imageId":"img_seed",
+		"environment":{"MODEL_TOKEN":"placeholder"},
+		"secretRefs":[{"secretId":"sec_shared","version":"latest","environmentName":"MODEL_TOKEN"}]}`
+	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "idem-collide", body)
+	got := decode(t, resp)
+	if resp.StatusCode != http.StatusBadRequest || got["code"] != "INVALID_ARGUMENT" {
+		t.Fatalf("status = %d body=%v", resp.StatusCode, got)
+	}
+}
+
 func TestCreateSandboxRejectsInvalidEnvironmentKeyName(t *testing.T) {
 	h := newHarness(t)
 	body := `{"imageId":"img_seed","environment":{"not a valid name!":"x"}}`
