@@ -43,14 +43,9 @@ func (p *Postgres) ListSandboxesAll(ctx context.Context) ([]Sandbox, error) {
 }
 
 // UpdateObserved applies a controller-observed sandbox state and mirrors it
-// onto the sandbox's operation. It rejects any update to an already-terminal
-// sandbox but performs no other monotonicity check: ordering is the caller's
-// responsibility. The controller's observeWrite enforces rank-forward
-// transitions between non-terminal states, while fail/failSandbox
-// deliberately move a live sandbox straight to a terminal state — so a naive
-// forward-only guard here would block legitimate failures. A future caller
-// that passes a stale or reordered non-terminal state could silently regress
-// a non-terminal sandbox.
+// onto the sandbox's operation. Transitions are validated against the state
+// locked in this transaction so a stale controller replica cannot resurrect a
+// terminating or terminal sandbox.
 func (p *Postgres) UpdateObserved(ctx context.Context, in ObservedUpdate) error {
 	return p.withTx(ctx, func(tx pgx.Tx) error {
 		sb, err := p.getSandboxTx(ctx, tx, in.ProjectID, in.SandboxID)
@@ -58,7 +53,7 @@ func (p *Postgres) UpdateObserved(ctx context.Context, in ObservedUpdate) error 
 			return err
 		}
 		prev := sb.State
-		if prev == "FINISHED" || prev == "FAILED" {
+		if !validObservedTransition(prev, in.State) {
 			return nil
 		}
 		now := time.Now().UTC()
@@ -154,6 +149,9 @@ func (p *Postgres) UpdateProcessObserved(ctx context.Context, in ProcessObserved
 		proc, err := p.getProcessTx(ctx, tx, in.ProjectID, in.SandboxID, in.ProcessID)
 		if err != nil {
 			return err
+		}
+		if !validProcessTransition(proc.State, in.State) {
+			return nil
 		}
 		now := time.Now().UTC()
 		proc.State = in.State

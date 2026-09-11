@@ -58,6 +58,13 @@ func (p *Postgres) CreateProcess(ctx context.Context, in CreateProcessInput) (Pr
 		if sb.State != "READY" {
 			return ErrFailedPrecondition
 		}
+		var processCount int
+		if err := tx.QueryRow(ctx, `SELECT count(*) FROM processes WHERE project_id=$1 AND sandbox_id=$2`, in.ProjectID, in.SandboxID).Scan(&processCount); err != nil {
+			return err
+		}
+		if processCount >= maxProcessesPerSandbox {
+			return ErrQuotaExceeded
+		}
 		now := time.Now().UTC()
 		proc = Process{
 			ID:               id.New("prc"),
