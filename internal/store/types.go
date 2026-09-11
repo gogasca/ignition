@@ -29,6 +29,12 @@ type Sandbox struct {
 	Command    []string `json:"command,omitempty"`
 	Args       []string `json:"args,omitempty"`
 	WorkingDir string   `json:"workingDirectory,omitempty"`
+	// Environment is plain (non-secret) container env, applied regardless of
+	// NativeEntrypoint. Keys in the IGNITION_ namespace are reserved for the
+	// controller's own Pod env and are rejected on CreateSandbox (see
+	// internal/api's checkSandboxEnvironment) — never silently dropped.
+	// Anything sensitive belongs in SecretRefs instead.
+	Environment map[string]string `json:"environment,omitempty"`
 	// NativeEntrypoint runs the admitted image's own OCI Entrypoint/Cmd as
 	// PID 1 instead of Ignition's managed init supervisor. Set this for an
 	// arbitrary/generic image that does not embed sandbox-init: readiness
@@ -187,6 +193,7 @@ type CreateSandboxInput struct {
 	Args             []string
 	WorkingDir       string
 	NativeEntrypoint bool
+	Environment      map[string]string
 	// MainCommand, when non-empty, is the resolved argv of the sandbox's main
 	// process for a managed (nativeEntrypoint=false) sandbox. CreateSandbox
 	// inserts it as a processes row in the same transaction so it flows

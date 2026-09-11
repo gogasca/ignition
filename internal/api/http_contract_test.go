@@ -72,24 +72,6 @@ func TestGetDefaultRuntime(t *testing.T) {
 	}
 }
 
-func TestCreateIgnoresRemovedSandboxEnvironment(t *testing.T) {
-	h := newHarness(t)
-	body := `{
-		"imageId": "img_seed",
-		"environment": {"LOG_LEVEL": "info"},
-		"resources": {"cpuMilli": 1, "memoryMiB": 1, "accelerator": {"count": 1, "type": "NVIDIA_L4"}}
-	}`
-	resp := h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "no-sandbox-env", body)
-	out := decode(t, resp)
-	if resp.StatusCode != http.StatusAccepted {
-		t.Fatalf("status=%d body=%v", resp.StatusCode, out)
-	}
-	sb := out["sandbox"].(map[string]any)
-	if _, ok := sb["environment"]; ok {
-		t.Fatalf("removed environment leaked into sandbox: %v", sb)
-	}
-}
-
 func TestCreateAcceptsCPUAccelerator(t *testing.T) {
 	h := newHarness(t)
 	body := `{

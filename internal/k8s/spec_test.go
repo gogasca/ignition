@@ -218,6 +218,51 @@ func TestSandboxPodManagedEntrypointAnnotation(t *testing.T) {
 	}
 }
 
+func TestSandboxPodEnvironment(t *testing.T) {
+	sb := store.Sandbox{
+		ID: "sbx_envtest0000000000", ProjectID: "prj_dev", ImageID: "img_seed",
+		Environment: map[string]string{"TASK_ID": "task_0001", "RUN_ID": "demo"},
+	}
+	env := k8s.SandboxPod(sb, "img@sha256:abc").Spec.Containers[0].Env
+	if env["TASK_ID"] != "task_0001" || env["RUN_ID"] != "demo" {
+		t.Fatalf("container env = %v", env)
+	}
+	// The controller's own Pod env is always present alongside it.
+	if env["IGNITION_SANDBOX_ID"] != sb.ID || env["IGNITION_PROJECT_ID"] != sb.ProjectID {
+		t.Fatalf("reserved env missing: %v", env)
+	}
+}
+
+// Defense in depth: even if a Sandbox row somehow carried a reserved key (the
+// API layer is supposed to reject this at admission — internal/api's
+// checkSandboxEnvironment), the Pod builder must never let it override the
+// controller's own identity/accelerator env.
+func TestSandboxPodEnvironmentCannotOverrideReservedKeys(t *testing.T) {
+	sb := store.Sandbox{
+		ID: "sbx_envtest0000000001", ProjectID: "prj_dev", ImageID: "img_seed",
+		Resources: store.ResourceSpec{Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+		Environment: map[string]string{
+			"IGNITION_SANDBOX_ID": "evil",
+			"IGNITION_PROJECT_ID": "evil",
+			k8s.EnvAccelerator:    "evil",
+			"SAFE_KEY":            "ok",
+		},
+	}
+	env := k8s.SandboxPod(sb, "img@sha256:abc").Spec.Containers[0].Env
+	if env["IGNITION_SANDBOX_ID"] != sb.ID {
+		t.Fatalf("IGNITION_SANDBOX_ID = %q, want %q (must not be overridable)", env["IGNITION_SANDBOX_ID"], sb.ID)
+	}
+	if env["IGNITION_PROJECT_ID"] != sb.ProjectID {
+		t.Fatalf("IGNITION_PROJECT_ID = %q, want %q", env["IGNITION_PROJECT_ID"], sb.ProjectID)
+	}
+	if env[k8s.EnvAccelerator] == "evil" {
+		t.Fatalf("%s was overridden: %q", k8s.EnvAccelerator, env[k8s.EnvAccelerator])
+	}
+	if env["SAFE_KEY"] != "ok" {
+		t.Fatalf("non-reserved key was dropped: %v", env)
+	}
+}
+
 func TestFakeCreateIdempotent(t *testing.T) {
 	f := k8s.NewFake()
 	p := &k8s.Pod{Name: "sbx-a", Namespace: k8s.Namespace}

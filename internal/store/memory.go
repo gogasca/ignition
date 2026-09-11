@@ -316,6 +316,7 @@ func (m *Memory) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Crea
 		Args:             in.Args,
 		WorkingDir:       in.WorkingDir,
 		NativeEntrypoint: in.NativeEntrypoint,
+		Environment:      in.Environment,
 		Resources:        in.Resources,
 		Placement:        in.Placement,
 		Timeouts:         in.Timeouts,
