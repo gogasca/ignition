@@ -183,8 +183,15 @@ func TestPostgresLaunchCountIncrementsOnlyOnSuccessfulCreateSandbox(t *testing.T
 	p.SeedImage(project, "img_a")
 	in := func(key string) store.CreateSandboxInput {
 		return store.CreateSandboxInput{
-			ProjectID: project, Principal: "alice", IdemKey: key, IdemHash: key,
-			ImageID: "img_a", Resources: spec(), MaxActive: 10,
+			ProjectID: project,
+			Principal: "alice",
+			IdemKey:   key,
+			IdemHash:  key,
+			SandboxSpec: store.SandboxSpec{
+				ImageID:   "img_a",
+				Resources: spec(),
+			},
+			MaxActive: 10,
 		}
 	}
 	if _, err := p.CreateSandbox(ctx, in("k1")); err != nil {
@@ -220,8 +227,15 @@ func TestPostgresTopImagesByLaunchCount(t *testing.T) {
 		for i := 0; i < n; i++ {
 			key := projectID + "-" + imageID + "-" + string(rune('a'+i))
 			if _, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
-				ProjectID: projectID, Principal: "alice", IdemKey: key, IdemHash: key,
-				ImageID: imageID, Resources: spec(), MaxActive: 100,
+				ProjectID: projectID,
+				Principal: "alice",
+				IdemKey:   key,
+				IdemHash:  key,
+				SandboxSpec: store.SandboxSpec{
+					ImageID:   imageID,
+					Resources: spec(),
+				},
+				MaxActive: 100,
 			}); err != nil {
 				t.Fatal(err)
 			}
@@ -262,8 +276,10 @@ func TestPostgresCreateSandboxIdempotency(t *testing.T) {
 		Principal: "alice",
 		IdemKey:   "k1",
 		IdemHash:  "hash-a",
-		ImageID:   "img",
-		Resources: spec(),
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
 		MaxActive: 10,
 	}
 	a, err := p.CreateSandbox(ctx, in)
@@ -296,8 +312,15 @@ func TestPostgresCreateSandboxAdmitIsTransactional(t *testing.T) {
 	project := "prj_pg_" + t.Name()
 	p.SeedImage(project, "img")
 	in := store.CreateSandboxInput{
-		ProjectID: project, Principal: "alice", IdemKey: "k", IdemHash: "h",
-		ImageID: "img", Resources: spec(), MaxActive: 10,
+		ProjectID: project,
+		Principal: "alice",
+		IdemKey:   "k",
+		IdemHash:  "h",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 10,
 		Admit: func(context.Context, store.Image) error {
 			return &store.AdmissionError{Code: "IMAGE_UNAVAILABLE", Message: "nope"}
 		},
@@ -343,12 +366,14 @@ func TestPostgresCreateSandboxRejectsUnregisteredSecret(t *testing.T) {
 	// Registered to a different project: must not be usable from project.
 	p.SeedSecret(other, "sec_token")
 	in := store.CreateSandboxInput{
-		ProjectID:  project,
-		Principal:  "alice",
-		IdemKey:    "k1",
-		IdemHash:   "hash-a",
-		ImageID:    "img",
-		Resources:  spec(),
+		ProjectID: project,
+		Principal: "alice",
+		IdemKey:   "k1",
+		IdemHash:  "hash-a",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
 		SecretRefs: []store.SecretRef{{SecretID: "sec_token", EnvironmentName: "TOKEN"}},
 		MaxActive:  10,
 	}
@@ -367,12 +392,14 @@ func TestPostgresCreateSandboxAcceptsRegisteredSecret(t *testing.T) {
 	p.SeedImage(project, "img")
 	p.SeedSecret(project, "sec_token")
 	in := store.CreateSandboxInput{
-		ProjectID:  project,
-		Principal:  "alice",
-		IdemKey:    "k1",
-		IdemHash:   "hash-a",
-		ImageID:    "img",
-		Resources:  spec(),
+		ProjectID: project,
+		Principal: "alice",
+		IdemKey:   "k1",
+		IdemHash:  "hash-a",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
 		SecretRefs: []store.SecretRef{{SecretID: "sec_token", EnvironmentName: "TOKEN"}},
 		MaxActive:  10,
 	}
@@ -402,15 +429,29 @@ func TestPostgresListSandboxesAllBoundsTerminalHistory(t *testing.T) {
 	project := "prj_pg_" + t.Name()
 	p.SeedImage(project, "img")
 	old, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: project, Principal: "alice", IdemKey: "old", IdemHash: "old",
-		ImageID: "img", Resources: spec(), MaxActive: 10,
+		ProjectID: project,
+		Principal: "alice",
+		IdemKey:   "old",
+		IdemHash:  "old",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 10,
 	})
 	if err != nil {
 		t.Fatal(err)
 	}
 	active, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: project, Principal: "alice", IdemKey: "active", IdemHash: "active",
-		ImageID: "img", Resources: spec(), MaxActive: 10,
+		ProjectID: project,
+		Principal: "alice",
+		IdemKey:   "active",
+		IdemHash:  "active",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -442,8 +483,15 @@ func TestPostgresQuotaAndLease(t *testing.T) {
 	project := "prj_pg_" + t.Name()
 	p.SeedImage(project, "img")
 	res, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: project, Principal: "alice", IdemKey: "c", IdemHash: "h",
-		ImageID: "img", Resources: spec(), MaxActive: 1,
+		ProjectID: project,
+		Principal: "alice",
+		IdemKey:   "c",
+		IdemHash:  "h",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -452,8 +500,15 @@ func TestPostgresQuotaAndLease(t *testing.T) {
 		t.Fatalf("quota = %d", p.QuotaActive(project))
 	}
 	if _, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: project, Principal: "alice", IdemKey: "c2", IdemHash: "h2",
-		ImageID: "img", Resources: spec(), MaxActive: 1,
+		ProjectID: project,
+		Principal: "alice",
+		IdemKey:   "c2",
+		IdemHash:  "h2",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 1,
 	}); !errors.Is(err, store.ErrQuotaExceeded) {
 		t.Fatalf("err = %v", err)
 	}
@@ -580,8 +635,15 @@ func TestPostgresChangeNotifierDeliversOnWrite(t *testing.T) {
 	time.Sleep(200 * time.Millisecond)
 
 	res, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: project, Principal: "alice", IdemKey: "k1", IdemHash: "k1",
-		ImageID: "img", Resources: spec(), MaxActive: 10,
+		ProjectID: project,
+		Principal: "alice",
+		IdemKey:   "k1",
+		IdemHash:  "k1",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -623,13 +685,19 @@ func TestPostgresSandboxCommandArgsAndMainProcess(t *testing.T) {
 	p.SeedImage(project, "img_a")
 
 	res, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: project, Principal: "alice", IdemKey: "k1", IdemHash: "k1",
-		ImageID:     "img_a",
-		Command:     []string{"python", "-m", "server"},
-		Args:        []string{"--port", "9000"},
+		ProjectID: project,
+		Principal: "alice",
+		IdemKey:   "k1",
+		IdemHash:  "k1",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:    "img_a",
+			Command:    []string{"python", "-m", "server"},
+			Args:       []string{"--port", "9000"},
+			WorkingDir: "/app",
+			Resources:  spec(),
+		},
 		MainCommand: []string{"python", "-m", "server", "--port", "9000"},
-		WorkingDir:  "/app",
-		Resources:   spec(), MaxActive: 10,
+		MaxActive:   10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -661,10 +729,18 @@ func TestPostgresSandboxCommandArgsAndMainProcess(t *testing.T) {
 
 	// Native mode never seeds a process even with MainCommand set defensively.
 	nres, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: project, Principal: "alice", IdemKey: "k2", IdemHash: "k2",
-		ImageID: "img_a", NativeEntrypoint: true,
-		Command: []string{"/bin/app"}, MainCommand: []string{"/bin/app"},
-		Resources: spec(), MaxActive: 10,
+		ProjectID: project,
+		Principal: "alice",
+		IdemKey:   "k2",
+		IdemHash:  "k2",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:          "img_a",
+			NativeEntrypoint: true,
+			Command:          []string{"/bin/app"},
+			Resources:        spec(),
+		},
+		MainCommand: []string{"/bin/app"},
+		MaxActive:   10,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -681,10 +757,16 @@ func TestPostgresSandboxEnvironmentRoundTrips(t *testing.T) {
 	p.SeedImage(project, "img_a")
 
 	res, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: project, Principal: "alice", IdemKey: "k1", IdemHash: "k1",
-		ImageID:     "img_a",
-		Environment: map[string]string{"TASK_ID": "task_0001", "RUN_ID": "demo"},
-		Resources:   spec(), MaxActive: 10,
+		ProjectID: project,
+		Principal: "alice",
+		IdemKey:   "k1",
+		IdemHash:  "k1",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:     "img_a",
+			Environment: map[string]string{"TASK_ID": "task_0001", "RUN_ID": "demo"},
+			Resources:   spec(),
+		},
+		MaxActive: 10,
 	})
 	if err != nil {
 		t.Fatal(err)

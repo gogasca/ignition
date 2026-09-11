@@ -21,12 +21,14 @@ func TestPodNameRoundTrip(t *testing.T) {
 
 func TestSandboxPodProfile(t *testing.T) {
 	sb := store.Sandbox{
-		ID:         "sbx_abc123def4567890ab",
-		ProjectID:  "prj_dev",
-		ImageID:    "img_seed",
-		Command:    []string{"python", "-m", "server"},
-		Resources:  store.ResourceSpec{CPUMilli: 4000, MemoryMiB: 16384, Accelerator: store.AcceleratorSpec{Count: 1}},
-		Timeouts:   store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
+		ID:        "sbx_abc123def4567890ab",
+		ProjectID: "prj_dev",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Command:   []string{"python", "-m", "server"},
+			Resources: store.ResourceSpec{CPUMilli: 4000, MemoryMiB: 16384, Accelerator: store.AcceleratorSpec{Count: 1}},
+			Timeouts:  store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
+		},
 		Generation: 1,
 	}
 	p := k8s.SandboxPod(sb, "img@sha256:abc")
@@ -125,9 +127,11 @@ func TestSandboxPodCPUProfile(t *testing.T) {
 	sb := store.Sandbox{
 		ID:        "sbx_cpu0000000000000000",
 		ProjectID: "prj_dev",
-		ImageID:   "img_seed",
-		Resources: store.ResourceSpec{CPUMilli: 2000, MemoryMiB: 4096, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
-		Timeouts:  store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Resources: store.ResourceSpec{CPUMilli: 2000, MemoryMiB: 4096, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+			Timeouts:  store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
+		},
 	}
 	p := k8s.SandboxPod(sb, "img@sha256:abc")
 	spec := p.Spec
@@ -152,7 +156,11 @@ func TestSandboxPodCPUProfile(t *testing.T) {
 }
 
 func TestSandboxPodNetworkProfile(t *testing.T) {
-	sb := store.Sandbox{Network: store.NetworkSpec{InternetAccess: store.InternetAccessDisabled}}
+	sb := store.Sandbox{
+		SandboxSpec: store.SandboxSpec{
+			Network: store.NetworkSpec{InternetAccess: store.InternetAccessDisabled},
+		},
+	}
 	if got := k8s.SandboxPod(sb, "img@sha256:abc").Labels[k8s.LabelNetworkAccess]; got != k8s.NetworkAccessDisabled {
 		t.Fatalf("disabled network label = %q", got)
 	}
@@ -171,12 +179,14 @@ func TestSandboxPodNetworkProfile(t *testing.T) {
 
 func TestSandboxPodNativeEntrypoint(t *testing.T) {
 	sb := store.Sandbox{
-		ID:               "sbx_native0000000000",
-		ProjectID:        "prj_dev",
-		ImageID:          "img_seed",
-		NativeEntrypoint: true,
-		Resources:        store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
-		Timeouts:         store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
+		ID:        "sbx_native0000000000",
+		ProjectID: "prj_dev",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:          "img_seed",
+			NativeEntrypoint: true,
+			Resources:        store.ResourceSpec{CPUMilli: 1000, MemoryMiB: 2048, Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+			Timeouts:         store.TimeoutSpec{MaximumRuntimeSeconds: 3600, TerminationGraceSeconds: 20},
+		},
 	}
 	c := k8s.SandboxPod(sb, "docker.io/library/nginx@sha256:abc").Spec.Containers[0]
 	// No command/args set: the image's own ENTRYPOINT/CMD must stand (nil, not []).
@@ -211,7 +221,13 @@ func TestSandboxPodNativeEntrypoint(t *testing.T) {
 }
 
 func TestSandboxPodManagedEntrypointAnnotation(t *testing.T) {
-	sb := store.Sandbox{ID: "sbx_managed000000000", ProjectID: "prj_dev", ImageID: "img_seed"}
+	sb := store.Sandbox{
+		ID:        "sbx_managed000000000",
+		ProjectID: "prj_dev",
+		SandboxSpec: store.SandboxSpec{
+			ImageID: "img_seed",
+		},
+	}
 	p := k8s.SandboxPod(sb, "img@sha256:abc")
 	if p.Annotations[k8s.AnnotNativeEntrypoint] != "false" {
 		t.Fatalf("managed entrypoint annotation = %q", p.Annotations[k8s.AnnotNativeEntrypoint])
@@ -220,8 +236,12 @@ func TestSandboxPodManagedEntrypointAnnotation(t *testing.T) {
 
 func TestSandboxPodEnvironment(t *testing.T) {
 	sb := store.Sandbox{
-		ID: "sbx_envtest0000000000", ProjectID: "prj_dev", ImageID: "img_seed",
-		Environment: map[string]string{"TASK_ID": "task_0001", "RUN_ID": "demo"},
+		ID:        "sbx_envtest0000000000",
+		ProjectID: "prj_dev",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:     "img_seed",
+			Environment: map[string]string{"TASK_ID": "task_0001", "RUN_ID": "demo"},
+		},
 	}
 	env := k8s.SandboxPod(sb, "img@sha256:abc").Spec.Containers[0].Env
 	if env["TASK_ID"] != "task_0001" || env["RUN_ID"] != "demo" {
@@ -239,13 +259,17 @@ func TestSandboxPodEnvironment(t *testing.T) {
 // controller's own identity/accelerator env.
 func TestSandboxPodEnvironmentCannotOverrideReservedKeys(t *testing.T) {
 	sb := store.Sandbox{
-		ID: "sbx_envtest0000000001", ProjectID: "prj_dev", ImageID: "img_seed",
-		Resources: store.ResourceSpec{Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
-		Environment: map[string]string{
-			"IGNITION_SANDBOX_ID": "evil",
-			"IGNITION_PROJECT_ID": "evil",
-			k8s.EnvAccelerator:    "evil",
-			"SAFE_KEY":            "ok",
+		ID:        "sbx_envtest0000000001",
+		ProjectID: "prj_dev",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img_seed",
+			Resources: store.ResourceSpec{Accelerator: store.AcceleratorSpec{Type: store.AcceleratorNone}},
+			Environment: map[string]string{
+				"IGNITION_SANDBOX_ID": "evil",
+				"IGNITION_PROJECT_ID": "evil",
+				k8s.EnvAccelerator:    "evil",
+				"SAFE_KEY":            "ok",
+			},
 		},
 	}
 	env := k8s.SandboxPod(sb, "img@sha256:abc").Spec.Containers[0].Env

@@ -14,8 +14,15 @@ func TestCancelOperationFailsCreateSandbox(t *testing.T) {
 	m := store.NewMemory()
 	m.SeedImage("prj", "img")
 	res, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: "prj", Principal: "alice", IdemKey: "c", IdemHash: "h",
-		ImageID: "img", Resources: spec(), MaxActive: 5,
+		ProjectID: "prj",
+		Principal: "alice",
+		IdemKey:   "c",
+		IdemHash:  "h",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 5,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -44,8 +51,15 @@ func TestCancelOperationIdempotent(t *testing.T) {
 	m := store.NewMemory()
 	m.SeedImage("prj", "img")
 	res, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: "prj", Principal: "alice", IdemKey: "c", IdemHash: "h",
-		ImageID: "img", Resources: spec(), MaxActive: 5,
+		ProjectID: "prj",
+		Principal: "alice",
+		IdemKey:   "c",
+		IdemHash:  "h",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 5,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -79,8 +93,15 @@ func TestCreateProcessIdempotent(t *testing.T) {
 	m := store.NewMemory()
 	m.SeedImage("prj", "img")
 	res, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: "prj", Principal: "alice", IdemKey: "c", IdemHash: "h",
-		ImageID: "img", Resources: spec(), MaxActive: 5,
+		ProjectID: "prj",
+		Principal: "alice",
+		IdemKey:   "c",
+		IdemHash:  "h",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 5,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -113,8 +134,15 @@ func TestUpdateObservedIgnoresTerminal(t *testing.T) {
 	m := store.NewMemory()
 	m.SeedImage("prj", "img")
 	res, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: "prj", Principal: "alice", IdemKey: "c", IdemHash: "h",
-		ImageID: "img", Resources: spec(), MaxActive: 5,
+		ProjectID: "prj",
+		Principal: "alice",
+		IdemKey:   "c",
+		IdemHash:  "h",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 5,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -176,8 +204,15 @@ func TestGetSandboxWrongProjectIsNotFound(t *testing.T) {
 	m := store.NewMemory()
 	m.SeedImage("prj", "img")
 	res, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: "prj", Principal: "alice", IdemKey: "c", IdemHash: "h",
-		ImageID: "img", Resources: spec(), MaxActive: 5,
+		ProjectID: "prj",
+		Principal: "alice",
+		IdemKey:   "c",
+		IdemHash:  "h",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 5,
 	})
 	if err != nil {
 		t.Fatal(err)

@@ -28,8 +28,10 @@ func TestCreateSandboxIdempotency(t *testing.T) {
 		Principal: "alice",
 		IdemKey:   "k1",
 		IdemHash:  "hash-a",
-		ImageID:   "img",
-		Resources: spec(),
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
 		MaxActive: 10,
 	}
 	a, err := m.CreateSandbox(ctx, in)
@@ -58,9 +60,16 @@ func TestCreateSandboxReplaySkipsAdmit(t *testing.T) {
 	m := store.NewMemory()
 	m.SeedImage("prj", "img")
 	in := store.CreateSandboxInput{
-		ProjectID: "prj", Principal: "alice", IdemKey: "k", IdemHash: "h",
-		ImageID: "img", Resources: spec(), MaxActive: 10,
-		Admit: func(context.Context, store.Image) error { return nil },
+		ProjectID: "prj",
+		Principal: "alice",
+		IdemKey:   "k",
+		IdemHash:  "h",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 10,
+		Admit:     func(context.Context, store.Image) error { return nil },
 	}
 	first, err := m.CreateSandbox(ctx, in)
 	if err != nil || first.Replay != nil {
@@ -91,8 +100,15 @@ func TestCreateSandboxAdmitRejectionRollsBack(t *testing.T) {
 	m := store.NewMemory()
 	m.SeedImage("prj", "img")
 	in := store.CreateSandboxInput{
-		ProjectID: "prj", Principal: "alice", IdemKey: "k", IdemHash: "h",
-		ImageID: "img", Resources: spec(), MaxActive: 10,
+		ProjectID: "prj",
+		Principal: "alice",
+		IdemKey:   "k",
+		IdemHash:  "h",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 10,
 		Admit: func(context.Context, store.Image) error {
 			return &store.AdmissionError{Code: "IMAGE_UNAVAILABLE", Message: "nope"}
 		},
@@ -116,8 +132,10 @@ func TestCreateSandboxImageAndQuota(t *testing.T) {
 		Principal: "alice",
 		IdemKey:   "k",
 		IdemHash:  "h",
-		ImageID:   "missing",
-		Resources: spec(),
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "missing",
+			Resources: spec(),
+		},
 		MaxActive: 1,
 	}
 	if _, err := m.CreateSandbox(ctx, in); !errors.Is(err, store.ErrImageNotReady) {
@@ -141,8 +159,15 @@ func TestTerminateReleasesQuota(t *testing.T) {
 	m := store.NewMemory()
 	m.SeedImage("prj", "img")
 	res, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: "prj", Principal: "alice", IdemKey: "c", IdemHash: "h",
-		ImageID: "img", Resources: spec(), MaxActive: 1,
+		ProjectID: "prj",
+		Principal: "alice",
+		IdemKey:   "c",
+		IdemHash:  "h",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -151,8 +176,15 @@ func TestTerminateReleasesQuota(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: "prj", Principal: "alice", IdemKey: "c2", IdemHash: "h2",
-		ImageID: "img", Resources: spec(), MaxActive: 1,
+		ProjectID: "prj",
+		Principal: "alice",
+		IdemKey:   "c2",
+		IdemHash:  "h2",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 1,
 	}); err != nil {
 		t.Fatalf("quota not released: %v", err)
 	}
@@ -163,8 +195,15 @@ func TestProcessRequiresReady(t *testing.T) {
 	m := store.NewMemory()
 	m.SeedImage("prj", "img")
 	res, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: "prj", Principal: "alice", IdemKey: "c", IdemHash: "h",
-		ImageID: "img", Resources: spec(), MaxActive: 1,
+		ProjectID: "prj",
+		Principal: "alice",
+		IdemKey:   "c",
+		IdemHash:  "h",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 1,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -255,8 +294,15 @@ func TestListPagination(t *testing.T) {
 	m.SeedImage("prj", "img")
 	for i := 0; i < 3; i++ {
 		if _, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-			ProjectID: "prj", Principal: "alice", IdemKey: string(rune('a' + i)), IdemHash: string(rune('A' + i)),
-			ImageID: "img", Resources: spec(), MaxActive: 10,
+			ProjectID: "prj",
+			Principal: "alice",
+			IdemKey:   string(rune('a' + i)),
+			IdemHash:  string(rune('A' + i)),
+			SandboxSpec: store.SandboxSpec{
+				ImageID:   "img",
+				Resources: spec(),
+			},
+			MaxActive: 10,
 		}); err != nil {
 			t.Fatal(err)
 		}
@@ -300,8 +346,15 @@ func TestUpdateObservedReleasesQuotaOnFail(t *testing.T) {
 	m := store.NewMemory()
 	m.SeedImage("prj", "img")
 	res, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: "prj", Principal: "alice", IdemKey: "c", IdemHash: "h",
-		ImageID: "img", Resources: spec(), MaxActive: 5,
+		ProjectID: "prj",
+		Principal: "alice",
+		IdemKey:   "c",
+		IdemHash:  "h",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 5,
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -328,8 +381,15 @@ func TestMemoryChangeNotifier(t *testing.T) {
 	defer cancel()
 
 	res, err := m.CreateSandbox(ctx, store.CreateSandboxInput{
-		ProjectID: "prj_dev", Principal: "alice", IdemKey: "k1", IdemHash: "k1",
-		ImageID: "img", Resources: spec(), MaxActive: 10,
+		ProjectID: "prj_dev",
+		Principal: "alice",
+		IdemKey:   "k1",
+		IdemHash:  "k1",
+		SandboxSpec: store.SandboxSpec{
+			ImageID:   "img",
+			Resources: spec(),
+		},
+		MaxActive: 10,
 	})
 	if err != nil {
 		t.Fatal(err)
