@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS sandboxes (
     network       JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(network) = 'object'),
     labels        JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(labels) = 'object'),
     secret_refs   JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(secret_refs) = 'array'),
+    environment   JSONB NOT NULL DEFAULT '{}' CHECK (jsonb_typeof(environment) = 'object'),
     UNIQUE (project_id, id)
 );
 

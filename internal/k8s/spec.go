@@ -66,6 +66,16 @@ func SandboxPod(sb store.Sandbox, imageRef string) *Pod {
 		"IGNITION_PROJECT_ID": sb.ProjectID,
 		EnvAccelerator:        accel,
 	}
+	// sb.Environment is validated at admission (internal/api's
+	// checkSandboxEnvironment) to exclude the IGNITION_ namespace, but that
+	// guard is defense in depth here too: reserved keys always win regardless
+	// of what a Sandbox row happens to carry.
+	for k, v := range sb.Environment {
+		if _, reserved := env[k]; reserved {
+			continue
+		}
+		env[k] = v
+	}
 	spec := PodSpec{
 		RuntimeClassName:             RuntimeClass,
 		PriorityClassName:            PrioritySandbox,

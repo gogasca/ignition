@@ -27,6 +27,7 @@ type createSandboxBody struct {
 	Network          *store.NetworkSpec   `json:"network"`
 	Labels           map[string]string    `json:"labels"`
 	SecretRefs       []store.SecretRef    `json:"secretRefs"`
+	Environment      map[string]string    `json:"environment"`
 }
 
 func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
@@ -62,6 +63,7 @@ func (s *Server) createSandbox(w http.ResponseWriter, r *http.Request) {
 		MainCommand:      in.MainCommand,
 		WorkingDir:       in.WorkingDir,
 		NativeEntrypoint: in.NativeEntrypoint,
+		Environment:      in.Environment,
 		Resources:        in.Resources,
 		Placement:        in.Placement,
 		Timeouts:         in.Timeouts,
@@ -151,6 +153,9 @@ func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 	if err := checkSecretRefs(body.SecretRefs); err != nil {
 		return store.CreateSandboxInput{}, err
 	}
+	if err := checkSandboxEnvironment(body.Environment); err != nil {
+		return store.CreateSandboxInput{}, err
+	}
 	for k := range body.Labels {
 		if strings.HasPrefix(k, "ignition.") {
 			return store.CreateSandboxInput{}, fmt.Errorf("label key %q is reserved", k)
@@ -208,6 +213,7 @@ func (s *Server) parseCreate(raw []byte) (store.CreateSandboxInput, error) {
 		MainCommand:      mainCommand,
 		WorkingDir:       body.WorkingDirectory,
 		NativeEntrypoint: body.NativeEntrypoint,
+		Environment:      body.Environment,
 		Resources:        rt.Resources,
 		Placement:        rt.Placement,
 		Timeouts:         rt.Timeouts,

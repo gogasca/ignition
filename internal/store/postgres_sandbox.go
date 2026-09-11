@@ -14,15 +14,15 @@ import (
 
 const sandboxCols = `id, project_id, name, state, state_reason, image_id, operation_id, generation,
 	create_time, ready_time, finish_time, created_by, command, args, working_dir, native_entrypoint,
-	resources, placement, timeouts, network, labels, secret_refs`
+	resources, placement, timeouts, network, labels, secret_refs, environment`
 
 func scanSandbox(scan func(dest ...any) error) (Sandbox, error) {
 	var sb Sandbox
-	var command, args, resources, placement, timeouts, network, labels, secretRefs []byte
+	var command, args, resources, placement, timeouts, network, labels, secretRefs, environment []byte
 	err := scan(
 		&sb.ID, &sb.ProjectID, &sb.Name, &sb.State, &sb.StateReason, &sb.ImageID, &sb.OperationID, &sb.Generation,
 		&sb.CreateTime, &sb.ReadyTime, &sb.FinishTime, &sb.CreatedBy, &command, &args, &sb.WorkingDir, &sb.NativeEntrypoint,
-		&resources, &placement, &timeouts, &network, &labels, &secretRefs,
+		&resources, &placement, &timeouts, &network, &labels, &secretRefs, &environment,
 	)
 	if err != nil {
 		return Sandbox{}, mapErr(err)
@@ -35,6 +35,7 @@ func scanSandbox(scan func(dest ...any) error) (Sandbox, error) {
 	unmarshalJSON(network, &sb.Network)
 	unmarshalJSON(labels, &sb.Labels)
 	unmarshalJSON(secretRefs, &sb.SecretRefs)
+	unmarshalJSON(environment, &sb.Environment)
 	return sb, nil
 }
 
@@ -162,6 +163,7 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 			Args:             in.Args,
 			WorkingDir:       in.WorkingDir,
 			NativeEntrypoint: in.NativeEntrypoint,
+			Environment:      in.Environment,
 			Resources:        in.Resources,
 			Placement:        in.Placement,
 			Timeouts:         in.Timeouts,
@@ -186,14 +188,14 @@ func (p *Postgres) CreateSandbox(ctx context.Context, in CreateSandboxInput) (Cr
 			INSERT INTO sandboxes (
 				id, project_id, name, state, state_reason, image_id, operation_id, generation,
 				create_time, created_by, command, args, working_dir, native_entrypoint,
-				resources, placement, timeouts, network, labels, secret_refs
+				resources, placement, timeouts, network, labels, secret_refs, environment
 			) VALUES (
-				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20
+				$1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21
 			)`,
 			sb.ID, sb.ProjectID, sb.Name, sb.State, sb.StateReason, sb.ImageID, sb.OperationID, sb.Generation,
 			sb.CreateTime, sb.CreatedBy, jsonSlice(sb.Command), jsonSlice(sb.Args), sb.WorkingDir, sb.NativeEntrypoint,
 			jsonVal(sb.Resources), jsonVal(sb.Placement), jsonVal(sb.Timeouts), jsonVal(sb.Network), jsonMap(sb.Labels),
-			jsonVal(sb.SecretRefs),
+			jsonVal(sb.SecretRefs), jsonMap(sb.Environment),
 		)
 		if err != nil {
 			return err

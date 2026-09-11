@@ -642,3 +642,39 @@ func TestPostgresSandboxCommandArgsAndMainProcess(t *testing.T) {
 		t.Fatalf("native sandbox seeded %d processes", len(procs))
 	}
 }
+
+func TestPostgresSandboxEnvironmentRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	p.SeedImage(project, "img_a")
+
+	res, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
+		ProjectID: project, Principal: "alice", IdemKey: "k1", IdemHash: "k1",
+		ImageID:     "img_a",
+		Environment: map[string]string{"TASK_ID": "task_0001", "RUN_ID": "demo"},
+		Resources:   spec(), MaxActive: 10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if res.Sandbox.Environment["TASK_ID"] != "task_0001" || res.Sandbox.Environment["RUN_ID"] != "demo" {
+		t.Fatalf("create response environment = %v", res.Sandbox.Environment)
+	}
+
+	got, err := p.GetSandbox(ctx, project, res.Sandbox.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got.Environment["TASK_ID"] != "task_0001" || got.Environment["RUN_ID"] != "demo" {
+		t.Fatalf("GetSandbox environment = %v", got.Environment)
+	}
+
+	list, _, err := p.ListSandboxes(ctx, project, 10, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(list) != 1 || list[0].Environment["TASK_ID"] != "task_0001" {
+		t.Fatalf("ListSandboxes environment = %+v", list)
+	}
+}

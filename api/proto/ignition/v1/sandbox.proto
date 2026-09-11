@@ -48,6 +48,12 @@ message Sandbox {
   repeated string command = 18;
   repeated string args = 19;
   string working_directory = 20;
+  // Plain (non-secret) container environment, applied regardless of
+  // native_entrypoint. Keys in the IGNITION_ namespace are reserved for the
+  // controller's own Pod env (sandbox id, project id, accelerator) and are
+  // rejected on CreateSandbox, never silently dropped or overridden. Use
+  // secret_refs, not this field, for anything sensitive.
+  map<string, string> environment = 21;
 }
 
 enum SandboxState {
@@ -148,6 +154,8 @@ message CreateSandboxRequest {
   map<string, string> labels = 11;
   // See Sandbox.native_entrypoint.
   bool native_entrypoint = 12;
+  // See Sandbox.environment.
+  map<string, string> environment = 14;
 }
 
 message GetDefaultRuntimeRequest {

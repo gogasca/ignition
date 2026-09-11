@@ -74,6 +74,28 @@ func checkEnv(env map[string]string) error {
 	return nil
 }
 
+// checkSandboxEnvironment validates CreateSandbox's plain environment map:
+// bounded size, valid environment-variable names, and no name in the
+// IGNITION_ namespace the controller reserves for its own Pod env (sandbox
+// id, project id, accelerator, and any future one). Accepting a collision
+// here would let a client silently override sandbox-init's own view of its
+// identity/accelerator, so this fails closed with a clear error instead of
+// silently dropping or overriding it — see internal/k8s.SandboxPod.
+func checkSandboxEnvironment(env map[string]string) error {
+	if len(env) > maxEnvKeys {
+		return fmt.Errorf("too many environment variables")
+	}
+	for k := range env {
+		if !envNameRe.MatchString(k) {
+			return fmt.Errorf("environment key %q is not a valid environment variable name", k)
+		}
+		if strings.HasPrefix(k, "IGNITION_") {
+			return fmt.Errorf("environment key %q is reserved", k)
+		}
+	}
+	return nil
+}
+
 func checkLabels(labels map[string]string) error {
 	if len(labels) > maxLabels {
 		return fmt.Errorf("too many labels")

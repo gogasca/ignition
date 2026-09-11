@@ -163,6 +163,7 @@ Content-Type: application/json
   "workingDirectory": "/workspace",
   "nativeEntrypoint": false,
   "secretRefs": [{ "secretId": "sec_01J...", "version": "latest", "environmentName": "MODEL_TOKEN" }],
+  "environment": { "LOG_LEVEL": "info" },
   "resources": { "cpuMilli": 4000, "memoryMiB": 16384, "accelerator": { "type": "NVIDIA_L4", "count": 1 } },
   "placement": { "region": "us-central1", "computeEnvironment": "STANDARD" },
   "timeouts": { "startupSeconds": 120, "maximumRuntimeSeconds": 3600, "idleSeconds": 600, "terminationGraceSeconds": 20 },
@@ -177,6 +178,7 @@ Content-Type: application/json
 | `command` / `args` | Kubernetes `container.command` / `container.args` semantics, never shell-evaluated (≤32 words / 16 KiB each). **Managed** (`nativeEntrypoint: false`): `command` + `args` is the argv of the sandbox's main supervised process — created as a `Process` on the same request, so `exec` / PTY / idle-tracking apply to it — run verbatim; omit both and `sandbox-init` idles for `exec`. When the main process exits the sandbox stays up (reachable for `exec`) until idle/terminate/max-runtime. **Native** (`nativeEntrypoint: true`): `command` overrides the image `ENTRYPOINT`, `args` overrides the image `CMD`; either unset falls back to the image's own value. |
 | `nativeEntrypoint` | default `false`; `true` runs the image's own `Entrypoint`/`Cmd` (with `command`/`args` overriding them, Kubernetes-style) as PID 1 instead of `sandbox-init` — weaker readiness, no exec/idle-tracking, same security context (see [shipped architecture §5](ignition-shipped-architecture.md#isolation-invariants)) |
 | `secretRefs` | stored on create; resolved from Secret Manager and injected as env at Pod create; values never enter SQL |
+| `environment` | plain (non-secret) container env, applied regardless of `nativeEntrypoint`; ≤32 keys, POSIX-style names (`^[A-Za-z_][A-Za-z0-9_]*$`); a key in the `IGNITION_` namespace (reserved for the controller's own Pod env) is rejected with `INVALID_ARGUMENT`, never silently dropped or overridden. Anything sensitive belongs in `secretRefs` instead. |
 | `resources` / `placement` / `timeouts` / `network` | **optional** — unset fields come from the [default runtime](ignition-shipped-architecture.md#6-default-runtime) (CPU-only); the resolved `RuntimeSpec` is snapshotted onto the sandbox |
 | `accelerator.type` | `NVIDIA_L4` or `NONE`; `IGNITION_ALLOWED_ACCELERATORS` default `NONE,NVIDIA_L4`; no profile → `WORKLOAD_NOT_SUPPORTED`, no Pod |
 | `accelerator.count` | `1` for `NVIDIA_L4`, `0`/absent for `NONE` |
