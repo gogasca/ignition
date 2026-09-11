@@ -32,11 +32,22 @@ stratified delivery, and custom GCE lazy backends — is designed, not built.
 
 **Step 3 of the admission pipeline (verify registry identity, signature,
 provenance, and project policy before resolution) is not implemented.** The v0
-resolver (`internal/imagecatalog.RemoteResolver`) checks `sourceRef` only for
-length, then does a direct `go-containerregistry` `remote.Get` against whatever
-host the reference parses to — **no allowlist, no scheme restriction, no block on
-IP-literal / link-local / private-range / metadata destinations, and no resolve
-timeout independent of the client's connection.**
+resolver does not copy into an Ignition-owned registry, verify signatures or
+provenance, or scan.
+
+**The network-reachability hole is closed** (`internal/imagecatalog/guard.go`):
+`RemoteResolver` now rejects a `sourceRef` whose registry host is not on
+`IGNITION_IMAGE_REGISTRY_ALLOWLIST` *before any network call*, dials through a
+transport whose `Control` hook refuses every connection to a loopback /
+unspecified / multicast / link-local (incl. `169.254.169.254`) / RFC1918 /
+RFC4193 / `100.64.0.0/10` address — checked after DNS, so a rebinding hostname is
+caught — bounds the whole resolution with `IGNITION_IMAGE_RESOLVE_TIMEOUT_SECONDS`
+(default 30s, independent of the client connection), and returns a generic
+`IMAGE_UNAVAILABLE` / `IMAGE_SOURCE_NOT_ALLOWED` to the client while logging the
+underlying registry error server-side only (it was a topology oracle). The base
+overlay sets the allowlist to the Artifact Registry host; an empty allowlist
+logs a startup warning and imposes no *host* restriction (the address guard
+still applies).
 
 `POST /v1/projects/{project}/images` requires `image.create`, held by the same
 project roles that already hold `sandbox.create`. This is a new *capability* (the
@@ -49,10 +60,11 @@ The raw resolver error is returned to the client, distinguishing "nothing
 listening" from "connection refused" from "TLS/auth failure" — a topology oracle
 independent of whether resolution succeeds.
 
-**Until step 3 lands**, at minimum: validate the registry host against an
-explicit allowlist before any network call; reject
-private/link-local/loopback/metadata ranges; bound the resolve with a server-side
-timeout; and stop returning the raw resolver error.
+The interim mitigations above (host allowlist, address guard, resolve timeout,
+error sanitisation) are in place. Step 3 proper — registry-identity / signature /
+provenance / project-policy verification, and a same-region Ignition-owned copy
+(step 2) so resolution stops depending on the source registry at all — is still
+outstanding.
 
 ## 2. Admission pipeline (target)
 

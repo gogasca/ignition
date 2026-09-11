@@ -385,3 +385,41 @@ func TestLoadAudiencesCSV(t *testing.T) {
 		t.Fatalf("audiences = %v", cfg.OIDCAudiences)
 	}
 }
+
+func TestLoadImageRegistryAllowlistCSV(t *testing.T) {
+	t.Setenv("IGNITION_ENV", "dev")
+	t.Setenv("IGNITION_IMAGE_REGISTRY_ALLOWLIST", "us-central1-docker.pkg.dev, index.docker.io")
+	cfg, err := config.Load()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(cfg.ImageRegistryAllowlist) != 2 || cfg.ImageRegistryAllowlist[0] != "us-central1-docker.pkg.dev" {
+		t.Fatalf("allowlist = %v", cfg.ImageRegistryAllowlist)
+	}
+	if cfg.ImageResolveTimeout != 30*time.Second {
+		t.Fatalf("resolve timeout = %v, want 30s default", cfg.ImageResolveTimeout)
+	}
+}
+
+func TestValidateRejectsMalformedAllowlistEntry(t *testing.T) {
+	base := config.Config{Env: "dev", AssumedEagerPullMBps: 50}
+	base.ImageRegistryAllowlist = []string{"https://gcr.io"}
+	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "bare registry host") {
+		t.Fatalf("err = %v, want a 'bare registry host' complaint", err)
+	}
+	base.ImageRegistryAllowlist = []string{"gcr.io/some/path"}
+	if err := base.Validate(); err == nil {
+		t.Fatalf("path in allowlist entry should be rejected")
+	}
+	base.ImageRegistryAllowlist = []string{"us-central1-docker.pkg.dev"}
+	if err := base.Validate(); err != nil {
+		t.Fatalf("a bare host must validate: %v", err)
+	}
+}
+
+func TestValidateRejectsNegativeResolveTimeout(t *testing.T) {
+	base := config.Config{Env: "dev", AssumedEagerPullMBps: 50, ImageResolveTimeout: -1}
+	if err := base.Validate(); err == nil || !strings.Contains(err.Error(), "IMAGE_RESOLVE_TIMEOUT") {
+		t.Fatalf("err = %v", err)
+	}
+}

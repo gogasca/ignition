@@ -63,6 +63,16 @@ type Config struct {
 	NodeProvisionTime   time.Duration
 	GCPProject          string
 	SandboxImagePrefix  string
+	// ImageRegistryAllowlist, when non-empty, restricts which registry hosts
+	// the image-admission resolver (internal/imagecatalog) will contact —
+	// e.g. "us-central1-docker.pkg.dev,index.docker.io". Empty imposes no
+	// host restriction; the resolver still refuses to dial loopback /
+	// private / link-local / metadata addresses unconditionally. Set it in
+	// every real overlay. From IGNITION_IMAGE_REGISTRY_ALLOWLIST (CSV).
+	ImageRegistryAllowlist []string
+	// ImageResolveTimeout bounds a single image resolution independent of the
+	// client request. From IGNITION_IMAGE_RESOLVE_TIMEOUT_SECONDS (default 30).
+	ImageResolveTimeout time.Duration
 	// AssumedEagerPullMBps is a conservative, unmeasured placeholder pull
 	// throughput used only to estimate whether a streaming-ineligible
 	// image's eager pull can plausibly fit a sandbox's startupSeconds
@@ -174,18 +184,20 @@ func loadBase() (Config, error) {
 		EnabledRegion:     getenv("IGNITION_REGION", "us-central1"),
 		AllowedAccelerators: splitCSV(getenv("IGNITION_ALLOWED_ACCELERATORS",
 			getenv("IGNITION_ALLOWED_GPU_TYPES", defaultAccelerators))),
-		MaxActiveSandboxes:   maxActive,
-		KubeconfigPath:       os.Getenv("KUBECONFIG"),
-		K8sNamespace:         getenv("IGNITION_K8S_NAMESPACE", "ignition-sandboxes"),
-		MinWarm:              minWarm,
-		MaxWarm:              maxWarm,
-		MinWarmCPU:           minWarmCPU,
-		MaxWarmCPU:           maxWarmCPU,
-		WarmWindow:           warmWindow,
-		NodeProvisionTime:    nodeProvisionTime,
-		GCPProject:           strings.TrimSpace(os.Getenv("IGNITION_GCP_PROJECT")),
-		SandboxImagePrefix:   strings.TrimSpace(os.Getenv("IGNITION_SANDBOX_IMAGE_PREFIX")),
-		AssumedEagerPullMBps: floatEnv("IGNITION_ASSUMED_EAGER_PULL_MBPS", 50),
+		MaxActiveSandboxes:     maxActive,
+		KubeconfigPath:         os.Getenv("KUBECONFIG"),
+		K8sNamespace:           getenv("IGNITION_K8S_NAMESPACE", "ignition-sandboxes"),
+		MinWarm:                minWarm,
+		MaxWarm:                maxWarm,
+		MinWarmCPU:             minWarmCPU,
+		MaxWarmCPU:             maxWarmCPU,
+		WarmWindow:             warmWindow,
+		NodeProvisionTime:      nodeProvisionTime,
+		GCPProject:             strings.TrimSpace(os.Getenv("IGNITION_GCP_PROJECT")),
+		SandboxImagePrefix:     strings.TrimSpace(os.Getenv("IGNITION_SANDBOX_IMAGE_PREFIX")),
+		ImageRegistryAllowlist: splitCSV(os.Getenv("IGNITION_IMAGE_REGISTRY_ALLOWLIST")),
+		ImageResolveTimeout:    time.Duration(atoiEnv("IGNITION_IMAGE_RESOLVE_TIMEOUT_SECONDS", 30)) * time.Second,
+		AssumedEagerPullMBps:   floatEnv("IGNITION_ASSUMED_EAGER_PULL_MBPS", 50),
 	}
 	rt, err := parseDefaultRuntime(os.Getenv("IGNITION_DEFAULT_RUNTIME"))
 	if err != nil {
@@ -220,6 +232,14 @@ func (c Config) Validate() error {
 	}
 	if c.AssumedEagerPullMBps <= 0 {
 		return fmt.Errorf("IGNITION_ASSUMED_EAGER_PULL_MBPS (%v) must be > 0", c.AssumedEagerPullMBps)
+	}
+	if c.ImageResolveTimeout < 0 {
+		return fmt.Errorf("IGNITION_IMAGE_RESOLVE_TIMEOUT_SECONDS must not be negative")
+	}
+	for _, h := range c.ImageRegistryAllowlist {
+		if strings.ContainsAny(h, "/ ") || strings.Contains(h, "://") {
+			return fmt.Errorf("IGNITION_IMAGE_REGISTRY_ALLOWLIST entry %q must be a bare registry host (no scheme, no path)", h)
+		}
 	}
 	if c.MinWarmCPU < 0 || c.MaxWarmCPU < 0 || c.MinWarmCPU > c.MaxWarmCPU {
 		return fmt.Errorf("IGNITION_MIN_WARM_CPU (%d) and IGNITION_MAX_WARM_CPU (%d) must satisfy 0 <= min <= max", c.MinWarmCPU, c.MaxWarmCPU)
