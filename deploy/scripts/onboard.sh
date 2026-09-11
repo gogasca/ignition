@@ -192,6 +192,36 @@ gcloud container clusters get-credentials "${CLUSTER_NAME}" --region="${CLUSTER_
 
 kubectl get namespace ignition-system >/dev/null 2>&1 || kubectl apply -f "${RENDER_DIR}/k8s/base/namespaces.yaml"
 
+# Cluster-scoped, so no overlay owns them: internal/k8s/types.go hardcodes
+# PrioritySandbox="ignition-sandbox" (and PriorityBalloon) onto every
+# sandbox Pod the controller builds. Without these the controller can
+# never create a single sandbox Pod ("... is forbidden: no PriorityClass
+# with name ignition-sandbox was found") -- caught live: a CreateSandbox
+# call was admitted and sat in CREATING past its startup timeout with no
+# Pod ever created, and no state transition to FAILED either, because the
+# reconcile loop retries pod-create indefinitely rather than surfacing the
+# scheduling-prerequisite error to the sandbox's state. Values match the
+# implementation guide's manual runbook (docs/guides/ignition-implementation.md).
+kubectl apply -f - <<'PRIORITYCLASSES'
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata: { name: ignition-sandbox }
+value: 1000
+globalDefault: false
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata: { name: ignition-balloon }
+value: -10
+globalDefault: false
+---
+apiVersion: scheduling.k8s.io/v1
+kind: PriorityClass
+metadata: { name: ignition-infra-critical }
+value: 1000000
+globalDefault: false
+PRIORITYCLASSES
+
 STREAM_SECRET_FILE="${SECRETS_DIR}/stream_token_secret"
 [[ -f "${STREAM_SECRET_FILE}" ]] || { umask 077; openssl rand -base64 48 > "${STREAM_SECRET_FILE}"; }
 kubectl -n ignition-system create secret generic ignition-control-plane \
