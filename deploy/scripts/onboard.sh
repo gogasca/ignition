@@ -108,7 +108,12 @@ gcloud storage buckets describe "gs://${STATE_BUCKET}" >/dev/null 2>&1 || \
     --uniform-bucket-level-access
 
 SQL_PASSWORD_FILE="${SECRETS_DIR}/sql_password"
-[[ -f "${SQL_PASSWORD_FILE}" ]] || { umask 077; openssl rand -base64 32 > "${SQL_PASSWORD_FILE}"; }
+# hex, not base64: this value is embedded unescaped into a postgres:// DSN
+# below (and by Terraform into the Cloud SQL user). base64's +, /, = are
+# not URL-safe there — a stray "/" in a base64 password gets parsed as a
+# path separator, breaking the DSN with "invalid port ... after host"
+# (caught live). Hex has no such characters, so no encoding is needed.
+[[ -f "${SQL_PASSWORD_FILE}" ]] || { umask 077; openssl rand -hex 32 > "${SQL_PASSWORD_FILE}"; }
 SQL_PASSWORD="$(<"${SQL_PASSWORD_FILE}")"
 
 TFVARS="${REPO_ROOT}/deploy/terraform/${CUSTOMER_PROJECT_ID}.tfvars"
