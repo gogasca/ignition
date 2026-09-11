@@ -556,6 +556,15 @@ func (m *Memory) CreateProcess(_ context.Context, in CreateProcessInput) (Proces
 	if sb.State != "READY" {
 		return Process{}, nil, ErrFailedPrecondition
 	}
+	processCount := 0
+	for _, existing := range m.processes {
+		if existing.ProjectID == in.ProjectID && existing.SandboxID == in.SandboxID {
+			processCount++
+		}
+	}
+	if processCount >= maxProcessesPerSandbox {
+		return Process{}, nil, ErrQuotaExceeded
+	}
 	now := time.Now().UTC()
 	p := Process{
 		ID:               id.New("prc"),
@@ -707,11 +716,8 @@ func (m *Memory) ListSandboxesAll(_ context.Context) ([]Sandbox, error) {
 	return out, nil
 }
 
-// UpdateObserved mirrors Postgres.UpdateObserved: it applies a
-// controller-observed sandbox state and its operation, rejecting updates to
-// an already-terminal sandbox but performing no other monotonicity check.
-// See the doc comment there for why an unconditional forward-only guard is
-// not applied.
+// UpdateObserved mirrors Postgres.UpdateObserved and rejects stale state
+// observations using the same transition table.
 func (m *Memory) UpdateObserved(_ context.Context, in ObservedUpdate) error {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -727,7 +733,7 @@ func (m *Memory) UpdateObserved(_ context.Context, in ObservedUpdate) error {
 		}
 	}()
 	prev := sb.State
-	if prev == "FINISHED" || prev == "FAILED" {
+	if !validObservedTransition(prev, in.State) {
 		return nil
 	}
 	opID = sb.OperationID
@@ -807,6 +813,9 @@ func (m *Memory) UpdateProcessObserved(_ context.Context, in ProcessObserved) er
 		return ErrNotFound
 	}
 	now := time.Now().UTC()
+	if !validProcessTransition(p.State, in.State) {
+		return nil
+	}
 	p.State = in.State
 	switch in.State {
 	case "RUNNING", "STARTING":

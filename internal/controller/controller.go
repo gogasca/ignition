@@ -27,7 +27,7 @@ const defaultBalloonCooldown = 15 * time.Minute
 // counts; re-validating lease ownership mid-pass, rather than only once at
 // the start, keeps a standby replica that has since taken over the lease
 // from mutating Pods concurrently with the previous holder.
-const leaseRenewBatch = 50
+const leaseRenewBatch = 50 // retained as a lower bound on renewal checks
 
 // Options configure a Controller.
 type Options struct {
@@ -144,8 +144,9 @@ func (c *Controller) reconcileOnce(ctx context.Context) (error, bool, map[string
 		byState[sb.State]++
 	}
 	var reconcileErrs []error
+	nextRenew := c.opts.Now().Add(c.opts.LeaseTTL / 2)
 	for i, sb := range sbs {
-		if i > 0 && i%leaseRenewBatch == 0 && c.opts.HolderID != "" {
+		if c.opts.HolderID != "" && (c.opts.Now().After(nextRenew) || (i > 0 && i%leaseRenewBatch == 0)) {
 			ok, err := c.store.HoldLease(ctx, c.opts.HolderID, c.opts.Now().UTC(), c.opts.LeaseTTL)
 			if err != nil {
 				return err, false, byState
@@ -156,6 +157,7 @@ func (c *Controller) reconcileOnce(ctx context.Context) (error, bool, map[string
 				// this batch. The next tick picks up where this left off.
 				return nil, false, byState
 			}
+			nextRenew = c.opts.Now().Add(c.opts.LeaseTTL / 2)
 		}
 		if err := c.reconcileSandbox(ctx, sb); err != nil {
 			log.Printf("controller: sandbox %s: %v", sb.ID, err)
