@@ -135,7 +135,7 @@ func (c *Controller) reconcileBalloons(ctx context.Context, sbs []store.Sandbox)
 		}
 		for len(balloons) < want {
 			name := fmt.Sprintf("%s%d", prefix, len(balloons))
-			if err := c.pods.Create(k8s.BalloonPod(name, cl.profile)); err != nil && !errors.Is(err, k8s.ErrAlreadyExists) {
+			if err := c.pods.Create(k8s.BalloonPod(name, cl.profile, c.opts.BalloonImage)); err != nil && !errors.Is(err, k8s.ErrAlreadyExists) {
 				return err
 			}
 			balloons = append(balloons, k8s.Pod{Name: name})

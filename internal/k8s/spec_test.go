@@ -19,6 +19,23 @@ func TestPodNameRoundTrip(t *testing.T) {
 	}
 }
 
+func TestBalloonPodImageDefault(t *testing.T) {
+	profile, _ := k8s.ProfileFor(store.AcceleratorNone)
+	p := k8s.BalloonPod("balloon-none-0", profile, "")
+	if got := p.Spec.Containers[0].Image; got != k8s.DefaultBalloonImage {
+		t.Fatalf("image = %q, want default %q", got, k8s.DefaultBalloonImage)
+	}
+}
+
+func TestBalloonPodImageOverride(t *testing.T) {
+	profile, _ := k8s.ProfileFor(store.AcceleratorNone)
+	const mirror = "us-central1-docker.pkg.dev/proj/ignition/pause:3.9"
+	p := k8s.BalloonPod("balloon-none-0", profile, mirror)
+	if got := p.Spec.Containers[0].Image; got != mirror {
+		t.Fatalf("image = %q, want override %q", got, mirror)
+	}
+}
+
 func TestSandboxPodProfile(t *testing.T) {
 	sb := store.Sandbox{
 		ID:        "sbx_abc123def4567890ab",

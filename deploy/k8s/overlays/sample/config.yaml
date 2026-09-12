@@ -63,6 +63,18 @@ data:
   IGNITION_ENV: "prod"
   IGNITION_MIN_WARM: "0"
   IGNITION_MAX_WARM: "0"
+  # CPU warm pool, disabled by default for the same reason as MIN/MAX_WARM
+  # above: a standing buffer has a real node cost, so an install opts in
+  # explicitly rather than paying for it on upgrade. To enable, set both
+  # above 0 *and* IGNITION_BALLOON_IMAGE below — Terraform's default-deny
+  # node egress (deploy/terraform/main.tf) cannot reach registry.k8s.io, so
+  # the upstream pause image the balloon Pod runs must be mirrored into this
+  # install's own Artifact Registry first (docker pull/tag/push
+  # registry.k8s.io/pause:3.9 -> the ignition repo below) or every balloon
+  # Pod sits in ImagePullBackOff and the buffer never actually forms.
+  IGNITION_MIN_WARM_CPU: "0"
+  IGNITION_MAX_WARM_CPU: "0"
+  IGNITION_BALLOON_IMAGE: "us-central1-docker.pkg.dev/__ONBOARD_PROJECT__/ignition/pause:3.9"
   IGNITION_SANDBOX_IMAGE_PREFIX: "us-central1-docker.pkg.dev/__ONBOARD_PROJECT__/sandboxes"
 ---
 apiVersion: v1

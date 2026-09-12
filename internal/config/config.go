@@ -67,10 +67,16 @@ type Config struct {
 	MaxWarm             int
 	MinWarmCPU          int
 	MaxWarmCPU          int
-	WarmWindow          time.Duration
-	NodeProvisionTime   time.Duration
-	GCPProject          string
-	SandboxImagePrefix  string
+	// BalloonImage overrides the do-nothing container a warm balloon Pod
+	// runs; empty means k8s.DefaultBalloonImage (upstream registry.k8s.io
+	// pause). Set this to a same-registry mirror on a cluster whose node
+	// egress can't reach registry.k8s.io (Terraform's default-deny node
+	// egress policy, deploy/terraform/main.tf, is exactly such a cluster).
+	BalloonImage       string
+	WarmWindow         time.Duration
+	NodeProvisionTime  time.Duration
+	GCPProject         string
+	SandboxImagePrefix string
 	// ImageRegistryAllowlist, when non-empty, restricts which registry hosts
 	// the image-admission resolver (internal/imagecatalog) will contact —
 	// e.g. "us-central1-docker.pkg.dev,index.docker.io". Empty imposes no
@@ -199,6 +205,7 @@ func loadBase() (Config, error) {
 		MaxWarm:                maxWarm,
 		MinWarmCPU:             minWarmCPU,
 		MaxWarmCPU:             maxWarmCPU,
+		BalloonImage:           strings.TrimSpace(os.Getenv("IGNITION_BALLOON_IMAGE")),
 		WarmWindow:             warmWindow,
 		NodeProvisionTime:      nodeProvisionTime,
 		GCPProject:             strings.TrimSpace(os.Getenv("IGNITION_GCP_PROJECT")),
