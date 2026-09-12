@@ -174,7 +174,7 @@ Content-Type: application/json
 
 | Field | Rule |
 |---|---|
-| `imageId` | **required**; `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`; resolved under the Artifact Registry sandbox prefix (digest pinning is future work) |
+| `imageId` | **required**; `^[a-zA-Z0-9][a-zA-Z0-9._-]{0,127}$`; a key into this project's own image catalog, not a registry reference — must already be admitted via `POST .../images` (digest-pinned there, see [Image delivery](ignition-image-delivery.md)); `IMAGE_NOT_READY` if it isn't |
 | `command` / `args` | Kubernetes `container.command` / `container.args` semantics, never shell-evaluated (≤32 words / 16 KiB each). **Managed** (`nativeEntrypoint: false`): `command` + `args` is the argv of the sandbox's main supervised process — created as a `Process` on the same request, so `exec` / PTY / idle-tracking apply to it — run verbatim; omit both and `sandbox-init` idles for `exec`. When the main process exits the sandbox stays up (reachable for `exec`) until idle/terminate/max-runtime. **Native** (`nativeEntrypoint: true`): `command` overrides the image `ENTRYPOINT`, `args` overrides the image `CMD`; either unset falls back to the image's own value. |
 | `nativeEntrypoint` | default `false`; `true` runs the image's own `Entrypoint`/`Cmd` (with `command`/`args` overriding them, Kubernetes-style) as PID 1 instead of `sandbox-init` — weaker readiness, no exec/idle-tracking, same security context (see [shipped architecture §5](ignition-shipped-architecture.md#isolation-invariants)) |
 | `secretRefs` | stored on create; resolved from Secret Manager and injected as env at Pod create; values never enter SQL |
