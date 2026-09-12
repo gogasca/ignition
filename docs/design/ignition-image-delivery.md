@@ -24,8 +24,12 @@ stratified delivery, and custom GCE lazy backends — is designed, not built.
   `entrypoint`, `cmd`, `streamingEligible`. This is step 1 (resolve to a digest)
   and step 6 (static streaming-eligibility check) of the admission pipeline
   below.
-- `imageId` on `CreateSandbox` is **not** yet a pinned digest — the controller
-  resolves a bare path under the Artifact Registry sandbox prefix.
+- `imageId` on `CreateSandbox` is a key into this admission catalog, not a
+  registry reference: the controller schedules the catalog row's pinned
+  `registryRef` (digest) when one exists and is `READY`
+  (`internal/controller/controller.go`'s `ResolveImage` default), falling back
+  to a bare path under the Artifact Registry sandbox prefix only for a row with
+  none — pre-catalog `SeedImage` dev/test placeholders, kept working as before.
 - Stage-latency metric `ignition_sandbox_stage_latency_seconds`.
 
 ### Security status
