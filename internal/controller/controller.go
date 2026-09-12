@@ -43,6 +43,12 @@ type Options struct {
 	// deployments' spend.
 	MinWarmCPU int
 	MaxWarmCPU int
+	// BalloonImage is the do-nothing container a balloon Pod runs to reserve
+	// its node. Defaults to k8s.DefaultBalloonImage (the upstream pause
+	// image) when empty — override with a same-registry mirror on a cluster
+	// whose node egress can't reach registry.k8s.io (see
+	// k8s.DefaultBalloonImage's doc comment).
+	BalloonImage string
 	// WarmWindow is the rolling history used to calculate p95 creates/minute.
 	// NodeProvisionTime is the replenishment horizon covered by the buffer.
 	WarmWindow        time.Duration
@@ -238,6 +244,7 @@ func Run(cfg config.Config) error {
 		MaxWarm:           cfg.MaxWarm,
 		MinWarmCPU:        cfg.MinWarmCPU,
 		MaxWarmCPU:        cfg.MaxWarmCPU,
+		BalloonImage:      cfg.BalloonImage,
 		WarmWindow:        cfg.WarmWindow,
 		NodeProvisionTime: cfg.NodeProvisionTime,
 		ImagePrefix:       cfg.SandboxImagePrefix,

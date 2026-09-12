@@ -171,7 +171,21 @@ func sandboxContainer(sb store.Sandbox, imageRef string, profile Profile, cpu, m
 // keeps it warm. AnnotGPUType records the class (any accelerator type, not
 // just GPU — the annotation predates CPU balloon support) so the controller
 // can bucket balloons, busy sandboxes, and queued creates per class.
-func BalloonPod(name string, profile Profile) *Pod {
+// DefaultBalloonImage is the upstream Kubernetes pause image: a do-nothing
+// binary used only to reserve a warm node's resources, never actual sandbox
+// workload. It's the right default for a cluster with unrestricted node
+// egress, but Ignition's own Terraform (deploy/terraform/main.tf) ships a
+// default-deny node egress policy that allows Google APIs/Artifact Registry
+// via Private Google Access and nothing else — registry.k8s.io moved off
+// Google-owned infrastructure and isn't reachable from a locked-down sandbox
+// node pool. Deployments with that policy must set image to a mirror pushed
+// into their own Artifact Registry (IGNITION_BALLOON_IMAGE).
+const DefaultBalloonImage = "registry.k8s.io/pause:3.9"
+
+func BalloonPod(name string, profile Profile, image string) *Pod {
+	if image == "" {
+		image = DefaultBalloonImage
+	}
 	p := &Pod{
 		Name:        name,
 		Namespace:   Namespace,
@@ -189,7 +203,7 @@ func BalloonPod(name string, profile Profile) *Pod {
 			SeccompRuntimeDefault:        true,
 			Containers: []Container{{
 				Name:           "pause",
-				Image:          "registry.k8s.io/pause:3.9",
+				Image:          image,
 				Command:        []string{"/pause"},
 				CPUMilli:       100,
 				MemoryMiB:      128,
