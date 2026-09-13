@@ -102,7 +102,7 @@ func TestBalloonsScaleDown(t *testing.T) {
 	fake := k8s.NewFake()
 	gpu, _ := k8s.ProfileFor(store.AcceleratorNVIDIAL4)
 	for _, name := range []string{"balloon-nvidia-l4-0", "balloon-nvidia-l4-1", "balloon-nvidia-l4-2"} {
-		if err := fake.Create(k8s.BalloonPod(name, gpu)); err != nil {
+		if err := fake.Create(k8s.BalloonPod(name, gpu, "")); err != nil {
 			t.Fatal(err)
 		}
 	}
@@ -127,7 +127,7 @@ func TestBalloonsScaleDownWaitsForCooldown(t *testing.T) {
 	fake := k8s.NewFake()
 	gpu, _ := k8s.ProfileFor(store.AcceleratorNVIDIAL4)
 	for _, name := range []string{"balloon-nvidia-l4-0", "balloon-nvidia-l4-1", "balloon-nvidia-l4-2"} {
-		if err := fake.Create(k8s.BalloonPod(name, gpu)); err != nil {
+		if err := fake.Create(k8s.BalloonPod(name, gpu, "")); err != nil {
 			t.Fatal(err)
 		}
 	}

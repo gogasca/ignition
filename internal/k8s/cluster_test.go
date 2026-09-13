@@ -118,7 +118,7 @@ func TestClusterFakeClientset(t *testing.T) {
 	fc := fake.NewSimpleClientset()
 	c := k8s.NewClusterWithClient(fc, k8s.Namespace)
 	profile, _ := k8s.ProfileFor(store.AcceleratorNVIDIAL4)
-	p := k8s.BalloonPod("balloon-0", profile)
+	p := k8s.BalloonPod("balloon-0", profile, "")
 	if err := c.Create(p); err != nil {
 		t.Fatal(err)
 	}
