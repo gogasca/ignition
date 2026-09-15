@@ -387,7 +387,13 @@ GKE sandbox node with runtime dependencies available and no customer sandbox.
   (negative priority, full device request) keep the Cluster Autoscaler from
   removing warm nodes. A real sandbox Pod (`ignition-sandbox`) preempts a balloon
   instantly, landing on a `Ready` node; the autoscaler replenishes the balloon in
-  the background (**outside** the startup SLO).
+  the background (**outside** the startup SLO). The balloon runs
+  `k8s.DefaultBalloonImage` (upstream `registry.k8s.io/pause`), which is
+  unreachable under this repo's own default-deny node egress policy
+  (`deploy/terraform/main.tf`); a deployment with that policy must set
+  `IGNITION_BALLOON_IMAGE` to a mirror pushed into its own Artifact Registry,
+  or the balloon Pod sits in `ImagePullBackOff` and never actually holds the
+  node.
 - **Scale-in:** when warm nodes exceed target for a cooldown (default 15 min) the
   controller deletes balloons and lets the autoscaler remove empty nodes. Nodes
   hosting a sandbox are never candidates (the Pod blocks removal, plus a
@@ -418,6 +424,26 @@ Each stage is measured independently. **Outside** the SLO (separate metrics
 cold-node target p95 ≤ 4 min): new-node provisioning, first-ever pull of a
 non-streamable image, application init (weight loading), and requests queued on
 exhausted capacity.
+
+**First real measurement (single sample, not a load-tested p95):** CPU
+(`NONE` accelerator), `img_seed`, `prj_customer` on the `anyscale-demo` GKE
+cluster, `IGNITION_MIN_WARM_CPU=1`/`MAX_WARM_CPU=4`.
+
+```text
+warm (balloon preempted, node already Ready):   5.07 s  API submit -> READY
+cold (node provisioned from zero by GKE's own
+      Cluster Autoscaler, no warm buffer):     78.75 s  API submit -> READY
+```
+
+The warm sample is within the 9s budget above (single sample; the `ignition_sandbox_stage_latency_seconds`
+metric this budget is built from still needs a real load run — many concurrent
+creates against the warm buffer — before this is a defensible p95, not an
+anecdote). The cold sample's own stage split matches this doc's model:
+`SCHEDULED` (node exists, Pod scheduled) landed at +71.27s, `READY` at +78.75s
+— i.e. ~71s waiting on a brand-new node to exist and ~7.5s of actual container
+start (`sandbox-init`/`runsc`/image mount), the latter roughly matching the
+warm path's own container-start cost. The warm buffer does not speed up the
+sandbox itself; it removes the node-wait stage entirely.
 
 ## 8. Exec data plane
 
