@@ -131,6 +131,8 @@ CREATE TABLE IF NOT EXISTS processes (
     pty                 BOOLEAN NOT NULL DEFAULT FALSE,
     pty_rows            INT NOT NULL DEFAULT 0,
     pty_cols            INT NOT NULL DEFAULT 0,
+    -- '' is a native process; 'WASI' runs command[0] as a WebAssembly module.
+    runtime             TEXT NOT NULL DEFAULT '',
     create_time         TIMESTAMPTZ NOT NULL,
     start_time          TIMESTAMPTZ,
     exit_time           TIMESTAMPTZ,

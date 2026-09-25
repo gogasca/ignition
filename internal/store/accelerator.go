@@ -7,6 +7,13 @@ const (
 	AcceleratorNVIDIAL4 = "NVIDIA_L4"
 )
 
+// Process runtimes are the public JSON form of proto ProcessRuntime (the
+// PROCESS_RUNTIME_ prefix is stripped). A native process is stored as "".
+const (
+	ProcessRuntimeNative = "NATIVE"
+	ProcessRuntimeWASI   = "WASI"
+)
+
 var acceleratorTypes = map[string]struct{}{
 	AcceleratorNone:     {},
 	AcceleratorNVIDIAL4: {},

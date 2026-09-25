@@ -16,6 +16,7 @@ type processJSON struct {
 	WorkingDirectory  string            `json:"workingDirectory"`
 	Environment       map[string]string `json:"environment"`
 	PTY               bool              `json:"pty"`
+	Runtime           string            `json:"runtime"`
 	CreateTime        string            `json:"createTime"`
 	StartTime         string            `json:"startTime"`
 	ExitTime          string            `json:"exitTime"`
@@ -44,8 +45,10 @@ func cmdExec(e *env, args []string) error {
 		noStream bool
 		deadline int
 		envs     kvSlice
+		wasi     bool
 	)
 	fs.BoolVar(&pty, "tty", false, "request a PTY")
+	fs.BoolVar(&wasi, "wasi", false, "run the command's first word (a .wasm file) as a WebAssembly module")
 	fs.StringVar(&workdir, "workdir", "", "working directory inside the sandbox")
 	fs.BoolVar(&noWait, "no-wait", false, "return after creating the process")
 	fs.BoolVar(&showTok, "attach-token", false, "also print a gateway attach token")
@@ -84,6 +87,9 @@ func cmdExec(e *env, args []string) error {
 	body := map[string]any{"command": command, "pty": pty}
 	if workdir != "" {
 		body["workingDirectory"] = workdir
+	}
+	if wasi {
+		body["runtime"] = "WASI"
 	}
 	if len(envs) > 0 {
 		body["environment"] = map[string]string(envs)
@@ -325,6 +331,9 @@ func renderProcess(e *env, p processJSON) {
 		e.printf("Workdir:   %s\n", p.WorkingDirectory)
 	}
 	e.printf("PTY:       %t\n", p.PTY)
+	if p.Runtime != "" {
+		e.printf("Runtime:   %s\n", p.Runtime)
+	}
 	e.printf("Created:   %s\n", orDash(p.CreateTime))
 	if p.StartTime != "" {
 		e.printf("Started:   %s\n", p.StartTime)

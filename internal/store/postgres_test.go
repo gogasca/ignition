@@ -791,3 +791,36 @@ func TestPostgresSandboxEnvironmentRoundTrips(t *testing.T) {
 		t.Fatalf("ListSandboxes environment = %+v", list)
 	}
 }
+
+func TestPostgresProcessRuntimeRoundTrips(t *testing.T) {
+	ctx := context.Background()
+	p := postgresForTest(t)
+	project := "prj_pg_" + t.Name()
+	p.SeedImage(project, "img_a")
+	res, err := p.CreateSandbox(ctx, store.CreateSandboxInput{
+		ProjectID: project, Principal: "alice", IdemKey: "k1", IdemHash: "k1",
+		SandboxSpec: store.SandboxSpec{ImageID: "img_a", Resources: spec()},
+		MaxActive:   10,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.SetSandboxState(project, res.Sandbox.ID, "READY")
+
+	for _, tc := range []struct{ key, runtime string }{{"native", ""}, {"wasi", store.ProcessRuntimeWASI}} {
+		proc, _, err := p.CreateProcess(ctx, store.CreateProcessInput{
+			ProjectID: project, SandboxID: res.Sandbox.ID, Principal: "alice",
+			IdemKey: tc.key, IdemHash: tc.key, Command: []string{"tool.wasm"}, Runtime: tc.runtime,
+		})
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := p.GetProcess(ctx, project, res.Sandbox.ID, proc.ID)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if got.Runtime != tc.runtime {
+			t.Fatalf("%s: runtime = %q, want %q", tc.key, got.Runtime, tc.runtime)
+		}
+	}
+}

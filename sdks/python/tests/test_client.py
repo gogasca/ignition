@@ -98,8 +98,10 @@ class FakeAPI(BaseHTTPRequestHandler):
             self.sandboxes[sid]["state"] = "FINISHED"
             return self._json(202, {"sandbox": self.sandboxes[sid], "operation": {"id": "op_2", "state": "SUCCEEDED"}})
         if p.endswith("/processes"):
-            self._read_body()
+            body = self._read_body()
             pr = {"id": "prc_1", "sandboxId": "sbx_1", "state": "RUNNING", "command": ["echo", "hi"]}
+            if "runtime" in body:
+                pr["runtime"] = body["runtime"]
             self.procs["prc_1"] = pr
             return self._json(200, pr)
         if p.endswith(":attach"):
@@ -184,6 +186,11 @@ class SDKTest(unittest.TestCase):
         proc.cancel()
         self.assertTrue(proc.is_terminal)
         self.assertEqual(proc.exit_code, 0)
+
+    def test_exec_wasi_runtime(self):
+        sb = self.client().sandboxes.create("img_seed")
+        self.assertEqual(sb.exec(["tool.wasm"], runtime="WASI").raw.get("runtime"), "WASI")
+        self.assertNotIn("runtime", sb.exec(["echo", "hi"]).raw)
 
     def test_run_polls_when_no_gateway(self):
         # gateway_url is "" → run() skips streaming and polls to terminal.

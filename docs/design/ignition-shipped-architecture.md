@@ -456,7 +456,7 @@ runtime](ignition-deferred-runtime.md).
 
 - **Desired → supervisor.** The controller writes the
   `ignition.io/process-desired` annotation (JSON map `processId → {command,
-  workingDirectory, environment, pty, ptyRows, ptyCols, signal, cancel}`). A
+  workingDirectory, environment, pty, ptyRows, ptyCols, runtime, signal, cancel}`). A
   `downwardAPI` projected volume mirrors it to `/etc/ignition/pod/process-desired`,
   which `sandbox-init` polls. The sandbox holds no Kubernetes credential.
 - **Observed → controller.** `sandbox-init` runs/signals/reaps the processes and
@@ -470,6 +470,19 @@ desired-state until the supervisor reports `EXITED`/`FAILED`. When `pty: true`
 `Setsid` + `Setctty`, initial `TIOCSWINSZ` — and the master is the single
 bidirectional stream endpoint; output is merged on the stdout channel. Mid-session
 resize is not wired.
+
+**WASI processes.** A process with `runtime: WASI` is not exec'd: `sandbox-init`
+compiles `command[0]` with an embedded, pure-Go WebAssembly engine (wazero; the
+image stays `CGO_ENABLED=0` static) and instantiates it in-process with WASI
+preview 1. The module is confined twice — by the Wasm sandbox (only
+`workingDirectory` mounted at `/`, only the requested env, linear memory capped
+at 1 GiB) and by the gVisor Pod around it — and it shares the same stdio fan-out,
+scratch capture, idle tracking, and exec stream as a native process. Compilation
+runs off the reconcile loop while the process is `STARTING` and is cached for the
+life of the sandbox, so repeated tool calls against one module pay it once.
+Signals and cancel cancel the module's context (interrupting loops via the
+engine's context checks) and close its stdin pipe. An unknown `runtime` fails
+closed: the process ends `FAILED` and is never exec'd natively.
 
 **Idle timeout.** `sandbox-init` reports `idleSeconds` — time with no process in
 `STARTING`/`RUNNING` and no attached exec stream (0 while active). When a `READY`

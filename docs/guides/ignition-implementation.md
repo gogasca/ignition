@@ -167,6 +167,7 @@ Tables (`internal/store/schema.sql`, embedded by the API): `projects`, `role_bin
 Because it is not a migration chain, a **new column on an existing dev/staging database** is not added by a redeploy — recreate the database, or add the column by hand. Columns added since the first cut:
 
 - `processes.pty_rows` / `processes.pty_cols` — `ALTER TABLE processes ADD COLUMN IF NOT EXISTS pty_rows INT NOT NULL DEFAULT 0;` (and `pty_cols` likewise).
+- `processes.runtime` — `ALTER TABLE processes ADD COLUMN IF NOT EXISTS runtime TEXT NOT NULL DEFAULT '';`
 - `sandboxes.args` — `ALTER TABLE sandboxes ADD COLUMN IF NOT EXISTS args JSONB NOT NULL DEFAULT '[]' CHECK (jsonb_typeof(args) = 'array');`
 
 ### Environment variables

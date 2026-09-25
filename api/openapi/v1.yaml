@@ -754,6 +754,11 @@ components:
                     type: integer
                 ptyRows:
                     type: integer
+                runtime:
+                    type: string
+                    enum:
+                        - NATIVE
+                        - WASI
                 sandboxId:
                     type: string
                 workingDirectory:
@@ -1058,6 +1063,11 @@ components:
                     type: integer
                 ptyRows:
                     type: integer
+                runtime:
+                    type: string
+                    enum:
+                        - NATIVE
+                        - WASI
                 sandboxId:
                     type: string
                 startTime:

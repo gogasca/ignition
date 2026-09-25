@@ -313,6 +313,7 @@ type processDesired struct {
 	PTY              bool              `json:"pty,omitempty"`
 	PTYRows          int               `json:"ptyRows,omitempty"`
 	PTYCols          int               `json:"ptyCols,omitempty"`
+	Runtime          string            `json:"runtime,omitempty"`
 	Signal           string            `json:"signal,omitempty"`
 	Cancel           bool              `json:"cancel,omitempty"`
 }
@@ -336,6 +337,7 @@ func (c *Controller) syncProcesses(ctx context.Context, sb store.Sandbox, pod *k
 			PTY:              p.PTY,
 			PTYRows:          p.PTYRows,
 			PTYCols:          p.PTYCols,
+			Runtime:          p.Runtime,
 			Signal:           p.TerminatingSignal,
 			Cancel:           p.State == "CANCELLING",
 		}

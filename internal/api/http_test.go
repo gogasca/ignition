@@ -472,6 +472,35 @@ func TestProcessAcceptsPTYDimensions(t *testing.T) {
 	}
 }
 
+func TestProcessRuntime(t *testing.T) {
+	h := newHarness(t)
+	created := decode(t, h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "prc-rt", createBody))
+	sbx := created["sandbox"].(map[string]any)["id"].(string)
+	h.mem.SetSandboxState("prj_dev", sbx, "READY")
+	path := "/v1/projects/prj_dev/sandboxes/" + sbx + "/processes"
+
+	proc := decode(t, h.do(t, http.MethodPost, path, "alice", "p-wasi", `{"command":["/work/tool.wasm","--x"],"runtime":"WASI"}`))
+	if proc["runtime"] != "WASI" {
+		t.Fatalf("process = %v", proc)
+	}
+	// NATIVE is the default and is not echoed.
+	proc = decode(t, h.do(t, http.MethodPost, path, "alice", "p-native", `{"command":["true"],"runtime":"NATIVE"}`))
+	if _, ok := proc["runtime"]; ok || proc["state"] != "CREATING" {
+		t.Fatalf("native process = %v", proc)
+	}
+
+	for key, body := range map[string]string{
+		"p-bad": `{"command":["x"],"runtime":"DOCKER"}`,
+		"p-pty": `{"command":["x.wasm"],"runtime":"WASI","pty":true}`,
+	} {
+		resp := h.do(t, http.MethodPost, path, "alice", key, body)
+		out := decode(t, resp)
+		if resp.StatusCode != http.StatusBadRequest || out["code"] != "INVALID_ARGUMENT" {
+			t.Fatalf("%s: status=%d body=%v", key, resp.StatusCode, out)
+		}
+	}
+}
+
 func TestProcessLifecycleAndAttachToken(t *testing.T) {
 	h := newHarness(t)
 	created := decode(t, h.do(t, http.MethodPost, "/v1/projects/prj_dev/sandboxes", "alice", "prc-ok", createBody))

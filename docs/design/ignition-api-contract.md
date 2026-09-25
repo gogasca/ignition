@@ -289,6 +289,17 @@ dimensions require `pty: true`). The supervisor allocates a real PTY; stdout and
 stderr are then merged on the `stdout` channel. Mid-session resize is not yet
 part of the contract.
 
+`CreateProcess` accepts `runtime`: `NATIVE` (the default; not echoed) or `WASI`.
+With `WASI`, `command[0]` is a WebAssembly module (WASI preview 1) in the sandbox
+filesystem, resolved against `workingDirectory`, and `command` is its argv; the
+sandbox's supervisor runs it in an embedded engine inside the same sandbox. The
+module sees only `workingDirectory`, mounted at `/`, and only `environment` (no
+inherited supervisor env). Any allowlisted signal, and cancel, stops the module
+immediately (`exitCode` 128+signal, `terminatingSignal` set); a trap exits `1`
+with the reason on `stderr`; a module that cannot be read or compiled ends
+`FAILED`. `WASI` with `pty: true`, or any other `runtime`, is
+`400 INVALID_ARGUMENT`.
+
 For a `READY` sandbox, successful attach has **p95 latency ≤ 1s** from the
 gateway receiving an authenticated request to the client receiving the stream
 acknowledgement.

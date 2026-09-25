@@ -16,6 +16,8 @@ const sb = await ignition.sandboxes.create("img_seed", {
 });
 
 const result = await sb.run(["echo", "hello"]); // streams stdio via ignition-gateway
+// A .wasm module in the sandbox, run by sandbox-init's WebAssembly engine:
+await sb.run(["/scratch/tool.wasm", "--x"], { runtime: "WASI" });
 console.log(result.exitCode, new TextDecoder().decode(result.stdout));
 
 for await (const snap of sb.watch()) {          // SSE; break to stop

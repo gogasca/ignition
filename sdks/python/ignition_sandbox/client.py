@@ -269,9 +269,15 @@ class Sandbox(SandboxModel):
         pty: bool = False,
         pty_rows: int = 0,
         pty_cols: int = 0,
+        runtime: str | None = None,
         idempotency_key: str | None = None,
     ) -> "Process":
-        """Create a process and return a handle. Does not stream output."""
+        """Create a process and return a handle. Does not stream output.
+
+        ``runtime="WASI"`` runs ``command[0]`` (a ``.wasm`` file in the sandbox)
+        as a WebAssembly module in ``sandbox-init``'s embedded engine; the
+        working directory is its only filesystem. Unset is a native process.
+        """
         return self.processes.create(
             command,
             env=env,
@@ -279,6 +285,7 @@ class Sandbox(SandboxModel):
             pty=pty,
             pty_rows=pty_rows,
             pty_cols=pty_cols,
+            runtime=runtime,
             idempotency_key=idempotency_key,
         )
 
@@ -294,6 +301,7 @@ class Sandbox(SandboxModel):
         timeout: float | None = None,
         stream: bool = True,
         capture: bool = False,
+        runtime: str | None = None,
     ) -> ExecResult:
         """Create a process, stream its stdio through ``ignition-gateway``, and
         return its exit code. Falls back to polling when no gateway is
@@ -304,7 +312,7 @@ class Sandbox(SandboxModel):
         ``stderr`` sink you pass). The polling fallback has no output to capture,
         so those stay empty there.
         """
-        proc = self.exec(command, env=env, working_directory=working_directory)
+        proc = self.exec(command, env=env, working_directory=working_directory, runtime=runtime)
         cap_out = io.BytesIO() if capture else None
         cap_err = io.BytesIO() if capture else None
         if capture:
@@ -377,6 +385,7 @@ class Processes:
         pty: bool = False,
         pty_rows: int = 0,
         pty_cols: int = 0,
+        runtime: str | None = None,
         idempotency_key: str | None = None,
     ) -> "Process":
         body: dict[str, Any] = {"command": command}
@@ -390,6 +399,8 @@ class Processes:
                 body["ptyRows"] = pty_rows
             if pty_cols:
                 body["ptyCols"] = pty_cols
+        if runtime:
+            body["runtime"] = runtime
         raw = self._t.post(self._base(), body, idempotent=True, idempotency_key=idempotency_key)
         return Process(self._c, self.sandbox_id, raw)
 
