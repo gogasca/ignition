@@ -89,6 +89,10 @@ type ProcessManager struct {
 	// does not pay compilation again.
 	wasiMemoryMiB int
 	wasiCache     wazero.CompilationCache
+	// wasiCompiling serializes compiles of identical modules (by sha256) so
+	// N processes launched together with a new module compile it once and
+	// the rest hit wasiCache, instead of N concurrent compiles.
+	wasiCompiling sync.Map // [sha256.Size]byte -> *sync.Mutex
 
 	mu   sync.Mutex
 	proc map[string]*procState

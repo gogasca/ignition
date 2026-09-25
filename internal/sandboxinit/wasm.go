@@ -3,11 +3,13 @@ package sandboxinit
 import (
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sync"
 	"syscall"
 
 	"github.com/tetratelabs/wazero"
@@ -127,7 +129,10 @@ func (m *ProcessManager) runWASI(ctx context.Context, p *procState, d desired, c
 	if _, err := wasi_snapshot_preview1.Instantiate(ctx, rt); err != nil {
 		return stoppedOr(ctx, err)
 	}
+	mu, _ := m.wasiCompiling.LoadOrStore(sha256.Sum256(bin), &sync.Mutex{})
+	mu.(*sync.Mutex).Lock()
 	compiled, err := rt.CompileModule(ctx, bin)
+	mu.(*sync.Mutex).Unlock()
 	if err != nil {
 		return stoppedOr(ctx, fmt.Errorf("compile %s: %w", d.Command[0], err))
 	}

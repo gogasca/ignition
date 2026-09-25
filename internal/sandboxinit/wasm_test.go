@@ -234,3 +234,28 @@ func TestUnknownRuntimeFailsClosed(t *testing.T) {
 		t.Fatalf("unknown runtime ran natively: %q", got)
 	}
 }
+
+func TestWASIConcurrentLaunchesCompileOnce(t *testing.T) {
+	pm, df := newManager(t) // fresh cache: nothing compiled yet
+	want := map[string]desired{}
+	for _, id := range []string{"prc_a", "prc_b", "prc_c", "prc_d"} {
+		want[id] = desired{Command: wasiCmd(t, "exit", "0"), Runtime: RuntimeWASI}
+	}
+	start := time.Now()
+	writeDesired(t, df, map[string]desired{"prc_a": want["prc_a"]})
+	waitForSlow(t, pm, "prc_a", "EXITED")
+	one := time.Since(start)
+
+	pm2, df2 := newManager(t)
+	start = time.Now()
+	writeDesired(t, df2, want)
+	for id := range want {
+		waitForSlow(t, pm2, id, "EXITED")
+	}
+	four := time.Since(start)
+	// Four duplicate compiles would take ~4x one; one compile plus three cache
+	// hits stays well under 2x.
+	if four > 2*one+time.Second {
+		t.Fatalf("4 concurrent launches took %v vs %v for one: module compiled more than once", four, one)
+	}
+}
