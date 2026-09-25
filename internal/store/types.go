@@ -194,6 +194,7 @@ type Process struct {
 	PTY               bool              `json:"pty"`
 	PTYRows           int               `json:"ptyRows,omitempty"`
 	PTYCols           int               `json:"ptyCols,omitempty"`
+	Runtime           string            `json:"runtime,omitempty"` // "" (native) or ProcessRuntimeWASI
 	CreateTime        time.Time         `json:"createTime"`
 	StartTime         *time.Time        `json:"startTime,omitempty"`
 	ExitTime          *time.Time        `json:"exitTime,omitempty"`
@@ -241,6 +242,7 @@ type CreateProcessInput struct {
 	PTY         bool
 	PTYRows     int
 	PTYCols     int
+	Runtime     string
 }
 
 type IdempotencyReplay struct {

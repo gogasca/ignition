@@ -41,6 +41,8 @@ export interface ExecOptions {
   pty?: boolean;
   ptyRows?: number;
   ptyCols?: number;
+  /** "WASI" runs command[0] (a .wasm file) in sandbox-init's WebAssembly engine; unset is native. */
+  runtime?: "NATIVE" | "WASI";
   idempotencyKey?: string;
 }
 
@@ -287,6 +289,7 @@ class Processes {
       if (o.ptyRows) body.ptyRows = o.ptyRows;
       if (o.ptyCols) body.ptyCols = o.ptyCols;
     }
+    if (o.runtime) body.runtime = o.runtime;
     const raw = await this.c.t.post(this.base(), body, {
       idempotent: true,
       idempotencyKey: o.idempotencyKey,

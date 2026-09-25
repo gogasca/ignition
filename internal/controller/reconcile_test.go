@@ -2,6 +2,7 @@ package controller_test
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"testing"
 	"time"
@@ -602,6 +603,41 @@ func TestProcessStaysCreatingUntilInitObserves(t *testing.T) {
 	}
 	if pod.Annotations[k8s.AnnotProcDesired] == "" {
 		t.Fatal("desired process annotation missing")
+	}
+}
+
+func TestProcessRuntimeReachesDesiredAnnotation(t *testing.T) {
+	m := store.NewMemory()
+	fake := k8s.NewFake()
+	c := controller.New(m, fake, fake, controller.Options{})
+	res := admit(t, m, store.TimeoutSpec{})
+	ctx := context.Background()
+	_ = c.Reconcile(ctx)
+	name := k8s.PodName(res.Sandbox.ID)
+	fake.SetReady(name, "GPU-1")
+	_ = c.Reconcile(ctx)
+	p, _, err := m.CreateProcess(ctx, store.CreateProcessInput{
+		ProjectID: "prj_dev", SandboxID: res.Sandbox.ID, Principal: "alice",
+		IdemKey: "p", IdemHash: "ph", Command: []string{"tool.wasm"}, Runtime: store.ProcessRuntimeWASI,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := c.Reconcile(ctx); err != nil {
+		t.Fatal(err)
+	}
+	pod, err := fake.Get(name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var desired map[string]struct {
+		Runtime string `json:"runtime"`
+	}
+	if err := json.Unmarshal([]byte(pod.Annotations[k8s.AnnotProcDesired]), &desired); err != nil {
+		t.Fatal(err)
+	}
+	if desired[p.ID].Runtime != store.ProcessRuntimeWASI {
+		t.Fatalf("desired = %s", pod.Annotations[k8s.AnnotProcDesired])
 	}
 }
 

@@ -14,6 +14,8 @@ with Client() as ignition:  # server/token/project from IGNITION_SERVER/TOKEN/PR
         wait=True,                 # block until READY
     )
     result = sb.run(["echo", "hello"])   # streams stdio through ignition-gateway
+    # A .wasm module in the sandbox, run by sandbox-init's WebAssembly engine:
+    sb.run(["/scratch/tool.wasm", "--x"], runtime="WASI")
     print(result.exit_code)
 
     for snapshot in sb.watch():          # SSE, stops when you break

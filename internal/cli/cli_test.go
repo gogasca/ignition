@@ -126,6 +126,11 @@ func (f *fakeAPI) handleProcess(w http.ResponseWriter, r *http.Request, p string
 	case tail == "" && r.Method == "POST":
 		id := "prc_1"
 		pr := map[string]any{"id": id, "sandboxId": sbID, "state": "CREATING", "command": []string{"echo", "hi"}}
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		if rt, ok := body["runtime"]; ok {
+			pr["runtime"] = rt
+		}
 		f.procs[id] = pr
 		writeJSONT(w, 200, pr)
 	case tail == "" && r.Method == "GET":
@@ -309,6 +314,17 @@ func TestExecPropagatesExitCode(t *testing.T) {
 		t.Fatalf("want exit 7, got %d (%v)", ExitCode(err), err)
 	}
 	_exitCode = 0
+}
+
+func TestExecWASI(t *testing.T) {
+	h := setup(t)
+	h.login()
+	if _, _, err := h.run("exec", "--wasi", "--no-wait", "sbx_1", "--", "tool.wasm", "--x"); err != nil {
+		t.Fatalf("exec --wasi: %v", err)
+	}
+	if out, _, err := h.run("process", "get", "sbx_1", "prc_1"); err != nil || !strings.Contains(out, "Runtime:   WASI") {
+		t.Fatalf("process get: %v / %q", err, out)
+	}
 }
 
 func TestProcessSubcommands(t *testing.T) {

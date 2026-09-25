@@ -19,6 +19,7 @@ type createProcessBody struct {
 	PTY              bool              `json:"pty"`
 	PTYRows          int               `json:"ptyRows"`
 	PTYCols          int               `json:"ptyCols"`
+	Runtime          string            `json:"runtime"`
 }
 
 type signalProcessBody struct {
@@ -73,6 +74,11 @@ func (s *Server) createProcess(w http.ResponseWriter, r *http.Request) {
 		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", "ptyRows/ptyCols must be between 0 and 1000", false, 0)
 		return
 	}
+	runtime, err := processRuntime(body.Runtime, body.PTY)
+	if err != nil {
+		writeStatus(w, rid, http.StatusBadRequest, "INVALID_ARGUMENT", err.Error(), false, 0)
+		return
+	}
 	p, replay, err := s.store.CreateProcess(r.Context(), store.CreateProcessInput{
 		ProjectID:   project,
 		SandboxID:   sandboxID,
@@ -85,6 +91,7 @@ func (s *Server) createProcess(w http.ResponseWriter, r *http.Request) {
 		PTY:         body.PTY,
 		PTYRows:     body.PTYRows,
 		PTYCols:     body.PTYCols,
+		Runtime:     runtime,
 	})
 	if err != nil {
 		writeStoreError(w, rid, err)
@@ -266,6 +273,22 @@ func (s *Server) cancelProcess(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, p)
+}
+
+// processRuntime validates CreateProcess.runtime and returns its stored form:
+// "" for a native process.
+func processRuntime(runtime string, pty bool) (string, error) {
+	switch runtime {
+	case "", store.ProcessRuntimeNative:
+		return "", nil
+	case store.ProcessRuntimeWASI:
+		if pty {
+			return "", fmt.Errorf("pty is not supported for runtime WASI")
+		}
+		return store.ProcessRuntimeWASI, nil
+	default:
+		return "", fmt.Errorf("runtime must be NATIVE or WASI")
+	}
 }
 
 func requireIdempotency(w http.ResponseWriter, requestID string, r *http.Request) (string, bool) {

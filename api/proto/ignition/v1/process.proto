@@ -36,6 +36,22 @@ message Process {
   // Terminating signal name, if the process was signaled.
   string terminating_signal = 13;
   Status error = 14;
+  // How command runs. Unset is a native process.
+  ProcessRuntime runtime = 17;
+}
+
+// Public JSON drops the prefix: PROCESS_RUNTIME_WASI → "WASI".
+enum ProcessRuntime {
+  // A native Linux process (the default).
+  PROCESS_RUNTIME_UNSPECIFIED = 0;
+  PROCESS_RUNTIME_NATIVE = 1;
+  // command[0] is a WebAssembly module (WASI preview 1) in the sandbox
+  // filesystem, run by sandbox-init's embedded engine inside the sandbox;
+  // command is its argv. The working directory is the module's only
+  // filesystem, mounted at "/"; the environment is exactly `environment`.
+  // Any allowlisted signal, and cancel, stops the module immediately (exit
+  // 128+signal). A trap exits 1. pty is not supported.
+  PROCESS_RUNTIME_WASI = 2;
 }
 
 enum ProcessState {
@@ -59,6 +75,8 @@ message CreateProcessRequest {
   // Initial PTY window size (0-1000). Requires pty = true.
   int32 pty_rows = 8;
   int32 pty_cols = 9;
+  // How command runs; unset is NATIVE. WASI requires pty = false.
+  ProcessRuntime runtime = 10;
 }
 
 message GetProcessRequest {

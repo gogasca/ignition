@@ -75,9 +75,16 @@ before(async () => {
       return json(res, 202, { sandbox: state.sandboxes[id], operation: { id: "op_2", state: "SUCCEEDED" } });
     }
     if (path.endsWith("/processes")) {
-      const pr = { id: "prc_1", sandboxId: "sbx_1", state: "RUNNING", command: ["echo", "hi"] };
-      state.procs["prc_1"] = pr;
-      return json(res, 200, pr);
+      let data = "";
+      req.on("data", (c) => (data += c));
+      req.on("end", () => {
+        const body = data ? JSON.parse(data) : {};
+        const pr: Record<string, unknown> = { id: "prc_1", sandboxId: "sbx_1", state: "RUNNING", command: ["echo", "hi"] };
+        if (body.runtime) pr.runtime = body.runtime;
+        state.procs["prc_1"] = pr;
+        json(res, 200, pr);
+      });
+      return;
     }
     if (path.endsWith(":attach"))
       return json(res, 200, { streamToken: "stok", gatewayUrl: gatewayURL, expireTime: "2030-01-01T00:00:00Z" });
@@ -133,6 +140,12 @@ test("process lifecycle", async () => {
   await proc.cancel();
   assert.ok(proc.isTerminal);
   assert.equal(proc.exitCode, 0);
+});
+
+test("exec with runtime WASI", async () => {
+  const sb = await client().sandboxes.create("img_seed");
+  assert.equal((await sb.exec(["tool.wasm"], { runtime: "WASI" })).raw.runtime, "WASI");
+  assert.equal((await sb.exec(["echo", "hi"])).raw.runtime, undefined);
 });
 
 // -- exec streaming against a raw-TCP fake gateway --------------------

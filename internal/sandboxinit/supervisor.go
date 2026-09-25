@@ -10,11 +10,13 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"github.com/tetratelabs/wazero"
 )
 
 // DefaultDesiredFile is where the controller's `ignition.io/process-desired`
 // annotation is projected by a downwardAPI volume. It holds one JSON object:
-// {processID: {command, workingDirectory, environment, pty, signal, cancel}}.
+// {processID: {command, workingDirectory, environment, pty, runtime, signal, cancel}}.
 const DefaultDesiredFile = "/etc/ignition/pod/process-desired"
 
 // DefaultWorkRoot is the base for per-process scratch (cwd + captured output).
@@ -28,6 +30,7 @@ type desired struct {
 	PTY              bool              `json:"pty,omitempty"`
 	PTYRows          int               `json:"ptyRows,omitempty"`
 	PTYCols          int               `json:"ptyCols,omitempty"`
+	Runtime          string            `json:"runtime,omitempty"` // "" (native) or RuntimeWASI
 	Signal           string            `json:"signal,omitempty"`
 	Cancel           bool              `json:"cancel,omitempty"`
 }
@@ -53,6 +56,16 @@ type procState struct {
 	io       *procIO
 	stdin    io.WriteCloser
 	ptmx     *os.File // PTY master, when d.PTY; nil otherwise
+	wasm     *wasmRun // set instead of cmd for a WASI module
+}
+
+// live reports whether the process has something to signal: a started native
+// child or a WASI module. Callers hold m.mu.
+func (p *procState) live() bool {
+	if p.state == "EXITED" || p.state == "FAILED" {
+		return false
+	}
+	return p.wasm != nil || (p.cmd != nil && p.cmd.Process != nil)
 }
 
 // lookup returns the tracked process for id, if any.
@@ -71,6 +84,11 @@ type ProcessManager struct {
 	workRoot    string
 	gracePeriod time.Duration
 	now         func() time.Time
+	// wasiMemoryMiB caps each WASI module's linear memory (0: the default);
+	// wasiCache shares compiled modules across runs so a repeated tool call
+	// does not pay compilation again.
+	wasiMemoryMiB int
+	wasiCache     wazero.CompilationCache
 
 	mu   sync.Mutex
 	proc map[string]*procState
@@ -96,6 +114,7 @@ func NewProcessManager(desiredFile, workRoot string) *ProcessManager {
 		now:          time.Now,
 		proc:         map[string]*procState{},
 		lastActiveAt: time.Now(),
+		wasiCache:    wazero.NewCompilationCache(),
 	}
 }
 
@@ -190,18 +209,27 @@ func (m *ProcessManager) apply(id string, d desired) {
 
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if p.state == "EXITED" || p.state == "FAILED" || p.cmd == nil || p.cmd.Process == nil {
+	if !p.live() {
 		return
 	}
 	if d.Cancel && !p.canceled {
 		p.canceled = true
+		if p.wasm != nil {
+			// No handlers to run in a grace period: stop it now.
+			p.wasm.terminate(syscall.SIGKILL)
+			return
+		}
 		go m.cancel(p)
 		return
 	}
 	if d.Signal != "" && d.Signal != p.sigSent {
 		p.sigSent = d.Signal
 		if sig := unixSignal(d.Signal); sig != 0 {
-			_ = p.cmd.Process.Signal(sig)
+			if p.wasm != nil {
+				p.wasm.terminate(sig)
+			} else {
+				_ = p.cmd.Process.Signal(sig)
+			}
 		}
 	}
 }
@@ -214,21 +242,46 @@ func (m *ProcessManager) start(id string, d desired) {
 	if cwd == "" {
 		cwd = dir
 	}
-	cmd := exec.Command(d.Command[0], d.Command[1:]...)
-	cmd.Dir = cwd
-	cmd.Env = flattenEnv(d.Environment)
-
 	pio := newProcIO()
 	// stdout/stderr go to both a scratch file (for polling clients) and the
 	// live fan-out consumed by the attach WebSocket.
 	stdoutW := []io.Writer{pio.writer(ChanStdout)}
 	stderrW := []io.Writer{pio.writer(ChanStderr)}
+	var files []io.Closer
 	if f, err := os.Create(filepath.Join(dir, "stdout")); err == nil {
 		stdoutW = append(stdoutW, f)
+		files = append(files, f)
 	}
 	if f, err := os.Create(filepath.Join(dir, "stderr")); err == nil {
 		stderrW = append(stderrW, f)
+		files = append(files, f)
 	}
+
+	switch d.Runtime {
+	case "":
+	case RuntimeWASI:
+		p := &procState{id: id, state: "STARTING", done: make(chan struct{}), io: pio}
+		m.startWASI(p, d, cwd, io.MultiWriter(stdoutW...), io.MultiWriter(stderrW...), files)
+		return
+	default:
+		// An API newer than this supervisor: fail rather than guess, and
+		// never exec the command natively.
+		_, _ = io.MultiWriter(stderrW...).Write([]byte("ignition: unsupported process runtime " + d.Runtime + "\n"))
+		m.mu.Lock()
+		m.proc[id] = &procState{id: id, state: "FAILED", done: make(chan struct{}), io: pio}
+		close(m.proc[id].done)
+		m.lastActiveAt = m.now()
+		m.mu.Unlock()
+		for _, f := range files {
+			_ = f.Close()
+		}
+		pio.close()
+		return
+	}
+
+	cmd := exec.Command(d.Command[0], d.Command[1:]...)
+	cmd.Dir = cwd
+	cmd.Env = flattenEnv(d.Environment)
 
 	var stdin io.WriteCloser
 	var ptmx *os.File
